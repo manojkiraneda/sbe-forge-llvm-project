@@ -66,6 +66,7 @@
 #include "llvm/Transforms/IPO/MemProfContextDisambiguation.h"
 #include "llvm/Transforms/IPO/MergeFunctions.h"
 #include "llvm/Transforms/IPO/ModuleInliner.h"
+#include "llvm/Transforms/IPO/NoInlineFuncCalledOnce.h"
 #include "llvm/Transforms/IPO/OpenMPOpt.h"
 #include "llvm/Transforms/IPO/PartialInlining.h"
 #include "llvm/Transforms/IPO/SCCP.h"
@@ -147,6 +148,12 @@
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
 
 using namespace llvm;
+
+namespace llvm {
+cl::opt<bool> EnableNoInlineFuncCalledOnce(
+    "no-inline-functions-called-once", cl::init(false), cl::Hidden,
+    cl::desc("Mark TU-local functions called exactly once as noinline"));
+} // namespace llvm
 
 static cl::opt<InliningAdvisorMode> UseInlineAdvisor(
     "enable-ml-inliner", cl::init(InliningAdvisorMode::Default), cl::Hidden,
@@ -1271,6 +1278,9 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
                  PGOOpt->Action == PGOOptions::SampleUse))
     MPM.addPass(PGOForceFunctionAttrsPass(PGOOpt->ColdOptType));
 
+  if (EnableNoInlineFuncCalledOnce)
+    MPM.addPass(NoInlineFuncCalledOncePass());
+
   MPM.addPass(AlwaysInlinerPass(/*InsertLifetimeIntrinsics=*/true));
 
   if (EnableModuleInliner)
@@ -1443,6 +1453,9 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
                                              ThinOrFullLTOPhase LTOPhase) {
   const bool LTOPreLink = isLTOPreLink(LTOPhase);
   ModulePassManager MPM;
+
+  if (EnableNoInlineFuncCalledOnce)
+    MPM.addPass(NoInlineFuncCalledOncePass());
 
   // Run partial inlining pass to partially inline functions that have
   // large bodies.
@@ -1751,6 +1764,9 @@ PassBuilder::buildThinLTOPreLinkDefaultPipeline(OptimizationLevel Level) {
     return MPM;
   }
 
+  if (EnableNoInlineFuncCalledOnce)
+    MPM.addPass(NoInlineFuncCalledOncePass());
+
   // Run partial inlining pass to partially inline functions that have
   // large bodies.
   // FIXME: It isn't clear whether this is really the right place to run this
@@ -1996,6 +2012,9 @@ PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
 
   // Lower variadic functions for supported targets prior to inlining.
   MPM.addPass(ExpandVariadicsPass(ExpandVariadicsMode::Optimize));
+
+  if (EnableNoInlineFuncCalledOnce)
+    MPM.addPass(NoInlineFuncCalledOncePass());
 
   // Note: historically, the PruneEH pass was run first to deduce nounwind and
   // generally clean up exception handling overhead. It isn't clear this is
