@@ -84,6 +84,7 @@ enum SpillOpcodeKey {
   SOK_DMRSpill,
   SOK_SPESpill,
   SOK_PairedG8Spill,
+  SOK_VDRSpill,       // PPE42 Virtual Doubleword Register (LVD/STVD)
   SOK_LastOpcodeSpill // This must be last on the enum.
 };
 
@@ -121,7 +122,8 @@ enum PPCMachineCombinerPattern : unsigned {
    NoInstr,                                                                    \
    NoInstr,                                                                    \
    PPC::EVLDD,                                                                 \
-   PPC::RESTORE_QUADWORD}
+   PPC::RESTORE_QUADWORD,                                                      \
+   PPC::LVD}
 
 #define Pwr9LoadOpcodes                                                        \
   {PPC::LWZ,                                                                   \
@@ -142,7 +144,8 @@ enum PPCMachineCombinerPattern : unsigned {
    NoInstr,                                                                    \
    NoInstr,                                                                    \
    NoInstr,                                                                    \
-   PPC::RESTORE_QUADWORD}
+   PPC::RESTORE_QUADWORD,                                                      \
+   NoInstr}
 
 #define Pwr10LoadOpcodes                                                       \
   {PPC::LWZ,                                                                   \
@@ -163,7 +166,8 @@ enum PPCMachineCombinerPattern : unsigned {
    NoInstr,                                                                    \
    NoInstr,                                                                    \
    NoInstr,                                                                    \
-   PPC::RESTORE_QUADWORD}
+   PPC::RESTORE_QUADWORD,                                                      \
+   NoInstr}
 
 #define FutureLoadOpcodes                                                      \
   {PPC::LWZ,                                                                   \
@@ -184,7 +188,8 @@ enum PPCMachineCombinerPattern : unsigned {
    PPC::RESTORE_DMRP,                                                          \
    PPC::RESTORE_DMR,                                                           \
    NoInstr,                                                                    \
-   PPC::RESTORE_QUADWORD}
+   PPC::RESTORE_QUADWORD,                                                      \
+   NoInstr}
 
 #define Pwr8StoreOpcodes                                                       \
   {PPC::STW,                                                                   \
@@ -205,7 +210,8 @@ enum PPCMachineCombinerPattern : unsigned {
    NoInstr,                                                                    \
    NoInstr,                                                                    \
    PPC::EVSTDD,                                                                \
-   PPC::SPILL_QUADWORD}
+   PPC::SPILL_QUADWORD,                                                        \
+   PPC::STVD}
 
 #define Pwr9StoreOpcodes                                                       \
   {PPC::STW,                                                                   \
@@ -226,7 +232,8 @@ enum PPCMachineCombinerPattern : unsigned {
    NoInstr,                                                                    \
    NoInstr,                                                                    \
    NoInstr,                                                                    \
-   PPC::SPILL_QUADWORD}
+   PPC::SPILL_QUADWORD,                                                        \
+   NoInstr}
 
 #define Pwr10StoreOpcodes                                                      \
   {PPC::STW,                                                                   \
@@ -247,7 +254,8 @@ enum PPCMachineCombinerPattern : unsigned {
    NoInstr,                                                                    \
    NoInstr,                                                                    \
    NoInstr,                                                                    \
-   PPC::SPILL_QUADWORD}
+   PPC::SPILL_QUADWORD,                                                        \
+   NoInstr}
 
 #define FutureStoreOpcodes                                                     \
   {PPC::STW,                                                                   \
@@ -268,7 +276,8 @@ enum PPCMachineCombinerPattern : unsigned {
    PPC::SPILL_DMRP,                                                            \
    PPC::SPILL_DMR,                                                             \
    NoInstr,                                                                    \
-   PPC::SPILL_QUADWORD}
+   PPC::SPILL_QUADWORD,                                                        \
+   NoInstr}
 
 // Initialize arrays for load and store spill opcodes on supported subtargets.
 #define StoreOpcodesForSpill                                                   \
