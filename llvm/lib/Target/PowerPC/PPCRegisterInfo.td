@@ -34,6 +34,8 @@ let Namespace = "PPC" in {
   def sub_gp8_x1 : SubRegIndex<64, 64>;
   def sub_fp0 : SubRegIndex<64>;
   def sub_fp1 : SubRegIndex<64, 64>;
+  def sub_gpr_hi : SubRegIndex<32>;
+  def sub_gpr_lo : SubRegIndex<32, 32>;
 }
 
 class PPCReg<string n> : Register<n> {
@@ -157,6 +159,27 @@ foreach Index = 0-31 in {
                     DwarfRegNum<[!add(Index, 1200), !add(Index, 1200)]>;
 
 }
+
+// VDR - Virtual Doubleword Registers (PPE42)
+// Register tuples representing pairs of consecutive GPRs for 64-bit operations
+// VDR(r) = {GPR(r), GPR(r+1)} where GPR(r) is high 32 bits, GPR(r+1) is low 32 bits
+// Using RegisterTuples ensures both GPRs are allocated together
+
+// Define register tuples for valid PPE42 VDR pairs
+// Valid VDR base registers: 0, 2-9, 28-31
+def VDRTuples : RegisterTuples<
+  [sub_gpr_hi, sub_gpr_lo],
+  // High registers (first in pair)
+  [(add R0, R2, R3, R4, R5, R6, R7, R8, R9, R28, R29, R30, R31),
+   // Low registers (second in pair)
+   (add R1, R3, R4, R5, R6, R7, R8, R9, R10, R29, R30, R31, R0)]>;
+
+// Note: The tuple generator will create:
+// VD_R0_R1, VD_R2_R3, VD_R3_R4, VD_R4_R5, VD_R5_R6, VD_R6_R7, VD_R7_R8,
+// VD_R8_R9, VD_R9_R10, VD_R28_R29, VD_R29_R30, VD_R30_R31, VD_R31_R0
+
+// Define the register class containing the tuples
+def VDRC : RegisterClass<"PPC", [i64], 64, (add VDRTuples)>;
 
 // Floating-point registers
 foreach Index = 0-31 in {
@@ -323,7 +346,14 @@ def GPRC : PPCGPRRegisterClass<[i32,f32], 32,
              // https://www.ibm.com/docs/en/ssw_aix_72/assembler/assembler_pdf.pdf.
              // This also helps setting the correct `NumOfGPRsSaved' in traceback table.
              (add (sequence "R%u", 2, 12),
-                  (sequence "R%u", 31, 13), R0, R1, FP, BP)>;
+                  (sequence "R%u", 31, 13), R0, R1, FP, BP)> {
+  let AltOrders = [(add (sub GPRC, R2), R2),
+                   (add (sequence "R%u", 2, 12),
+                        (sequence "R%u", 31, 13), R0, R1, FP, BP),
+                   (add (sequence "R%u", 3, 10),
+                        (sequence "R%u", 31, 28),
+                        R0, R1, R2, R13)];
+}
 
 def G8RC : PPCGPRRegisterClass<[i64], 64,
              (add (sequence "X%u", 2, 12),
@@ -344,7 +374,14 @@ def GPRC_NOR0 : PPCGPRRegisterClass<[i32,f32], 32,
                   // put it at the end of the list.
                   (add (sub GPRC_NOR0, R2), R2),
                   (add (sequence "R%u", 2, 12),
-                       (sequence "R%u", 31, 13), R1, FP, BP, ZERO)>;
+                       (sequence "R%u", 31, 13), R1, FP, BP, ZERO)> {
+  let AltOrders = [(add (sub GPRC_NOR0, R2), R2),
+                   (add (sequence "R%u", 2, 12),
+                        (sequence "R%u", 31, 13), R1, FP, BP, ZERO),
+                   (add (sequence "R%u", 3, 10),
+                        (sequence "R%u", 31, 28),
+                        R1, R2, R13, ZERO)];
+}
 
 def G8RC_NOX0 : PPCGPRRegisterClass<[i64], 64,
                   (add (sub G8RC, X0), ZERO8),
@@ -500,6 +537,14 @@ defm VSSRC : PPCRegOperand<"isVSRegNumber">;
 defm CRBITRC : PPCRegOperand<"isCRBitNumber">;
 defm CRRC : PPCRegOperand<"isCCRegNumber">;
 defm G8pRC : PPCRegOperand<"isEvenRegNumber">;
+
+def PPCRegVDRCAsmOperand : AsmOperandClass {
+  let Name = "RegVDRC"; let PredicateMethod = "isVDRRegNumber";
+}
+def vdrc : RegisterOperand<VDRC> {
+  let ParserMatchClass = PPCRegVDRCAsmOperand;
+  let PrintMethod = "printVDRCOperand";
+}
 
 // Special case: spe4rc uses GPRC register class and its AsmOperandClass
 def spe4rc : PPCRegOperandOnly<"GPRC">;
