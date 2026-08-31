@@ -242,6 +242,12 @@ static DecodeStatus DecodeVSRpRCRegisterClass(MCInst &Inst, uint64_t RegNo,
   return decodeRegisterClass(Inst, RegNo, VSRpRegs);
 }
 
+static DecodeStatus DecodeVDRCRegisterClass(MCInst &Inst, uint64_t RegNo,
+                                            uint64_t Address,
+                                            const MCDisassembler *Decoder) {
+  return decodeRegisterClass(Inst, RegNo, VDRRegs);
+}
+
 #define DecodeQSRCRegisterClass DecodeQFRCRegisterClass
 #define DecodeQBRCRegisterClass DecodeQFRCRegisterClass
 
@@ -395,6 +401,13 @@ DecodeStatus PPCDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
 
   // Read the instruction in the proper endianness.
   uint64_t Inst = ReadFunc(Bytes.data());
+
+  if (STI.hasFeature(PPC::FeaturePPE42)) {
+    DecodeStatus result =
+        decodeInstruction(DecoderTablePPE4232, MI, Inst, Address, this, STI);
+    if (result != MCDisassembler::Fail)
+      return result;
+  }
 
   if (STI.hasFeature(PPC::FeatureSPE)) {
     DecodeStatus result =
