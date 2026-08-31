@@ -24,6 +24,10 @@ def sub_gp8_x0 : SubRegIndex<64>;
 def sub_gp8_x1 : SubRegIndex<64, 64>;
 def sub_fp0 : SubRegIndex<64>;
 def sub_fp1 : SubRegIndex<64, 64>;
+// VDR subregister indices for PPE42 register tuples
+// VDR represents pairs of consecutive GPRs for 64-bit operations
+def sub_gpr_hi : SubRegIndex<32>;      // High 32 bits (first GPR in pair)
+def sub_gpr_lo : SubRegIndex<32, 32>;  // Low 32 bits (second GPR in pair)
 }
 
 
@@ -149,6 +153,26 @@ foreach Index = 0-31 in {
 
 }
 
+// VDR - Virtual Doubleword Registers (PPE42)
+// Register tuples representing pairs of consecutive GPRs for 64-bit operations
+// VDR(r) = {GPR(r), GPR(r+1)} where GPR(r) is high 32 bits, GPR(r+1) is low 32 bits
+// Using RegisterTuples ensures both GPRs are allocated together
+
+// Define register tuples for valid PPE42 VDR pairs
+// Valid VDR base registers: 0, 2-9, 28-31
+def VDRTuples : RegisterTuples<
+  [sub_gpr_hi, sub_gpr_lo],
+  // High registers (first in pair)
+  [(add R0, R2, R3, R4, R5, R6, R7, R8, R9, R28, R29, R30, R31),
+   // Low registers (second in pair)
+   (add R1, R3, R4, R5, R6, R7, R8, R9, R10, R29, R30, R31, R0)]>;
+
+// Note: The tuple generator will create:
+// VD_R0_R1, VD_R2_R3, VD_R3_R4, VD_R4_R5, VD_R5_R6, VD_R6_R7, VD_R7_R8,
+// VD_R8_R9, VD_R9_R10, VD_R28_R29, VD_R29_R30, VD_R30_R31, VD_R31_R0
+
+// Define the register class containing the tuples
+def VDRC : RegisterClass<"PPC", [i64], 64, (add VDRTuples)>;
 
 // Floating-point registers
 foreach Index = 0-31 in {
@@ -339,9 +363,18 @@ def GPRC : RegisterClass<"PPC", [i32,f32], 32, (add (sequence "R%u", 2, 12),
   // On AIX, CSRs are allocated starting from R31 according to:
   // https://www.ibm.com/docs/en/ssw_aix_72/assembler/assembler_pdf.pdf.
   // This also helps setting the correct `NumOfGPRsSaved' in traceback table.
+  //
+  // AltOrder index 2: PPE42 EABI.
+  // Allocatable GPRs: R3-R10 (volatile), R28-R31 (callee-saved), R0 (scratch).
+  // R1 (SP), R2 (SDA2), R13 (SDA) are reserved and listed last so they are
+  // only used as a last resort by the allocator (getReservedRegs also blocks
+  // R2 and R13 from being assigned).
   let AltOrders = [(add (sub GPRC, R2), R2),
                    (add (sequence "R%u", 2, 12),
-                        (sequence "R%u", 31, 13), R0, R1, FP, BP)];
+                        (sequence "R%u", 31, 13), R0, R1, FP, BP),
+                   (add (sequence "R%u", 3, 10),
+                        (sequence "R%u", 31, 28),
+                        R0, R1, R2, R13)];
   let AltOrderSelect = [{
     return MF.getSubtarget<PPCSubtarget>().getGPRAllocationOrderIdx();
   }];
@@ -366,9 +399,15 @@ def G8RC : RegisterClass<"PPC", [i64], 64, (add (sequence "X%u", 2, 12),
 def GPRC_NOR0 : RegisterClass<"PPC", [i32,f32], 32, (add (sub GPRC, R0), ZERO)> {
   // On non-Darwin PPC64 systems, R2 can be allocated, but must be restored, so
   // put it at the end of the list.
+  //
+  // AltOrder index 2: PPE42 EABI — same set as GPRC but without R0.
+  // R0 is excluded here as it has special meaning in instructions using NOR0.
   let AltOrders = [(add (sub GPRC_NOR0, R2), R2),
                    (add (sequence "R%u", 2, 12),
-                        (sequence "R%u", 31, 13), R1, FP, BP, ZERO)];
+                        (sequence "R%u", 31, 13), R1, FP, BP, ZERO),
+                   (add (sequence "R%u", 3, 10),
+                        (sequence "R%u", 31, 28),
+                        R1, R2, R13, ZERO)];
   let AltOrderSelect = [{
     return MF.getSubtarget<PPCSubtarget>().getGPRAllocationOrderIdx();
   }];
@@ -492,6 +531,11 @@ def LR8RC : RegisterClass<"PPC", [i64], 64, (add LR8)> {
 }
 
 def VRSAVERC : RegisterClass<"PPC", [i32], 32, (add VRSAVE)>;
+
+// VDR register class for PPE42 64-bit load/store operations
+// Note: RegisterTuples automatically creates the VDRC register class
+// containing all the tuple registers (VD_R0_R1, VD_R2_R3, etc.)
+
 def CARRYRC : RegisterClass<"PPC", [i32], 32, (add CARRY, XER)> {
   let CopyCost = -1;
   let isAllocatable = 0;
@@ -612,6 +656,13 @@ def PPCRegSPE4RCAsmOperand : AsmOperandClass {
 }
 def spe4rc : RegisterOperand<GPRC> {
   let ParserMatchClass = PPCRegSPE4RCAsmOperand;
+}
+def PPCRegVDRCAsmOperand : AsmOperandClass {
+  let Name = "RegVDRC"; let PredicateMethod = "isVDRRegNumber";
+}
+def vdrc : RegisterOperand<VDRC> {
+  let ParserMatchClass = PPCRegVDRCAsmOperand;
+  let PrintMethod = "printVDRCOperand";
 }
 
 def PPCU1ImmAsmOperand : AsmOperandClass {

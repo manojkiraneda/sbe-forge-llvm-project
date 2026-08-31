@@ -294,7 +294,13 @@ public:
 
   // Select allocation orders of GPRC and G8RC. It should be strictly consistent
   // with corresponding AltOrders in PPCRegisterInfo.td.
+  // Index 0: default (R2-R12, R30-R13, R31, R0, R1)
+  // Index 1: 64-bit ELF ABI (R2 moved to end)
+  // Index 2: AIX ABI
+  // Index 3: PPE42 EABI (R3-R10, R31-R28, R0; R2/R13 reserved by EABI)
   unsigned getGPRAllocationOrderIdx() const {
+    if (isPPE42())
+      return 3;
     if (is64BitELFABI())
       return 1;
     if (isAIXABI())

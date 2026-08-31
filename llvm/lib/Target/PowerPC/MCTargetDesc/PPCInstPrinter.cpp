@@ -684,3 +684,27 @@ void PPCInstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   assert(Op.isExpr() && "unknown operand kind in printOperand");
   MAI.printExpr(O, *Op.getExpr());
 }
+
+void PPCInstPrinter::printVDRCOperand(const MCInst *MI, unsigned OpNo,
+                                      const MCSubtargetInfo &STI, raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  if (Op.isReg()) {
+    MCRegister Reg = Op.getReg();
+    // VDR registers are tuples - extract the base (high) register number
+    MCRegister BaseReg = MRI.getSubReg(Reg, PPC::sub_gpr_hi);
+    if (BaseReg == 0)
+      BaseReg = Reg; // Fallback if not a tuple
+
+    // Get the register number (e.g., R4 -> 4)
+    unsigned RegNum = BaseReg - PPC::R0;
+
+    // Print as "d<num>" instead of "r<num>"
+    if (showRegistersWithPercentPrefix(getRegisterName(BaseReg)))
+      O << "%";
+    O << "d" << RegNum;
+    return;
+  }
+
+  // Fallback to regular operand printing
+  printOperand(MI, OpNo, STI, O);
+}

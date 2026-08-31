@@ -438,6 +438,12 @@ public:
                                        && isUInt<5>(getExprCRVal())) ||
                                       (Kind == Immediate
                                        && isUInt<5>(getImm())); }
+  bool isVDRRegNumber() const {
+    // VDR registers: d0, d2-d9, d28-d31
+    if (Kind != Immediate) return false;
+    int64_t Reg = getImm();
+    return Reg == 0 || (Reg >= 2 && Reg <= 9) || (Reg >= 28 && Reg <= 31);
+  }
 
   bool isEvenRegNumber() const { return isRegNumber() && (getImm() & 1) == 0; }
 
@@ -540,6 +546,11 @@ public:
   void addRegSPERCOperands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     Inst.addOperand(MCOperand::createReg(SPERegs[getRegNum()]));
+  }
+
+  void addRegVDRCOperands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    Inst.addOperand(MCOperand::createReg(VDRRegs[getRegNum()]));
   }
 
   void addRegACCRCOperands(MCInst &Inst, unsigned N) const {
@@ -1334,6 +1345,11 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
     IntVal = 256;
   else if (Name.starts_with("r"))
     RegNo = isPPC64() ? XRegs[IntVal] : RRegs[IntVal];
+  else if (Name.starts_with("d")) {
+    // VDR registers for PPE42 (d0, d2-d9, d28-d31)
+    // These are already matched by MatchRegisterName, just extract the number
+    // IntVal already contains the register number from line 1342
+  }
 
   getParser().Lex();
   return RegNo;

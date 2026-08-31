@@ -5227,20 +5227,38 @@ bool PPCDAGToDAGISel::tryAsSingleRLDIMI(SDNode *N) {
   // We won't get fewer instructions if the imm is 32-bit integer.
   // rldimi requires the imm to have consecutive ones with both sides zero.
   // Also, make sure the first Op has only one use, otherwise this may increase
-  // register pressure since rldimi is destructive.
+  // register pressure since rldimi is destructive (for PPC64).
   if (!isInt64Immediate(N->getOperand(1).getNode(), Imm64) ||
       isUInt<32>(Imm64) || !isRunOfOnes64(Imm64, MB, ME) || !N0.hasOneUse())
     return false;
 
   unsigned SH = 63 - ME;
   SDLoc Dl(N);
-  // Use select64Imm for making LI instr instead of directly putting Imm64
-  SDValue Ops[] = {
-      N->getOperand(0),
-      SDValue(selectI64Imm(CurDAG, getI64Imm(-1, Dl).getNode()), 0),
-      getI32Imm(SH, Dl), getI32Imm(MB, Dl)};
-  CurDAG->SelectNodeTo(N, PPC::RLDIMI, MVT::i64, Ops);
-  return true;
+
+  if (Subtarget->isPPE42()) {
+    // PPE42 RLDIMI_VDR has 4 independent operands (not destructive)
+    // Format: rldimi RA, RS, SH, MBE
+    // Use LI8_VDR pseudo to materialize -1 into VDR register pair
+    SDValue Ops[] = {
+        N->getOperand(0),
+        SDValue(CurDAG->getMachineNode(PPC::LI8_VDR, Dl, MVT::i64,
+                                       getI64Imm(-1, Dl)), 0),
+        getI32Imm(SH, Dl), getI32Imm(MB, Dl)};
+    CurDAG->SelectNodeTo(N, PPC::RLDIMI_VDR, MVT::i64, Ops);
+    return true;
+  } else if (Subtarget->isPPC64()) {
+    // PPC64 RLDIMI is destructive (uses RegConstraint)
+    // Use select64Imm for making LI instr instead of directly putting Imm64
+    SDValue Ops[] = {
+        N->getOperand(0),
+        SDValue(selectI64Imm(CurDAG, getI64Imm(-1, Dl).getNode()), 0),
+        getI32Imm(SH, Dl), getI32Imm(MB, Dl)};
+    CurDAG->SelectNodeTo(N, PPC::RLDIMI, MVT::i64, Ops);
+    return true;
+  }
+
+  // For other 32-bit PPC targets, don't use RLDIMI
+  return false;
 }
 
 // Select - Convert the specified operand from a target-independent to a
@@ -5342,7 +5360,7 @@ void PPCDAGToDAGISel::Select(SDNode *N) {
                   "ppc-trap-reason") &&
              "Unsupported annotation data type!");
       for (unsigned i = 1; i < MD->getNumOperands(); i++) {
-        assert(isa<MDString>(MD->getOperand(i)) && 
+        assert(isa<MDString>(MD->getOperand(i)) &&
                "Invalid data type for annotation ppc-trap-reason!");
         OpsWithMD.push_back(
             getI32Imm(std::stoi(cast<MDString>(

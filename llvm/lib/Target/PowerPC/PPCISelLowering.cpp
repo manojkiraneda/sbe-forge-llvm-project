@@ -778,6 +778,14 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     setOperationAction(ISD::SHL_PARTS, MVT::i32, Custom);
     setOperationAction(ISD::SRA_PARTS, MVT::i32, Custom);
     setOperationAction(ISD::SRL_PARTS, MVT::i32, Custom);
+    
+    // PPE42: 32-bit architecture with limited 64-bit support via VDR registers
+    // VDR registers are pairs of consecutive GPRs used for 64-bit load/store
+    if (Subtarget.isPPE42()) {
+      addRegisterClass(MVT::i64, &PPC::VDRCRegClass);
+      // VDR supports load/store and basic bitwise operations
+      // We use REG_SEQUENCE instead of BUILD_PAIR for better register allocation
+    }
   }
 
   // PowerPC has better expansions for funnel shifts than the generic
@@ -1434,7 +1442,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setStackPointerRegisterToSaveRestore(isPPC64 ? PPC::X1 : PPC::R1);
 
   // We have target-specific dag combine patterns for the following nodes:
-  setTargetDAGCombine({ISD::AND, ISD::ADD, ISD::SHL, ISD::SRA, ISD::SRL,
+  setTargetDAGCombine({ISD::AND, ISD::OR, ISD::ADD, ISD::SHL, ISD::SRA, ISD::SRL,
                        ISD::MUL, ISD::FMA, ISD::SINT_TO_FP, ISD::BUILD_VECTOR});
   if (Subtarget.hasFPCVT())
     setTargetDAGCombine(ISD::UINT_TO_FP);
@@ -5665,7 +5673,7 @@ buildCallOperands(SmallVectorImpl<SDValue> &Ops,
     Ops.push_back(DAG.getRegister(Subtarget.getTOCPointerRegister(), RegVT));
 
   // Add implicit use of CR bit 6 for 32-bit SVR4 vararg calls
-  if (CFlags.IsVarArg && Subtarget.is32BitELFABI())
+  if (CFlags.IsVarArg && Subtarget.is32BitELFABI() && !Subtarget.isPPE42())
     Ops.push_back(DAG.getRegister(PPC::CR1EQ, MVT::i32));
 
   // Add a register mask operand representing the call-preserved registers.
@@ -6082,7 +6090,7 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
 
   // Set CR bit 6 to true if this is a vararg call with floating args passed in
   // registers.
-  if (IsVarArg) {
+  if (IsVarArg && !Subtarget.isPPE42()) {
     SDVTList VTs = DAG.getVTList(MVT::Other, MVT::Glue);
     SDValue Ops[] = { Chain, InGlue };
 
@@ -17173,6 +17181,66 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
   default: break;
   case ISD::ADD:
     return combineADD(N, DCI);
+  case ISD::OR: {
+    // PPE42: explicitly lower i64 OR-with-constant into 32-bit sub-word
+    // operations on the VDR register pair.
+    //
+    // Cases handled here:
+    //   - only high word affected  → OR the high sub-register, keep low
+    //   - only low word affected   → OR the low sub-register, keep high
+    //   - both words affected, NOT a run-of-ones → OR each sub-register
+    //
+    // IMPORTANT: when the constant spans both 32-bit halves AND is a
+    // run-of-ones (e.g. 0x00000003FF000000), we must leave the ISD::OR node
+    // intact so that tryAsSingleRLDIMI() in instruction selection can pick
+    // RLDIMI_VDR.  Single-word constants (only hi or only lo) are always
+    // handled here — they produce a cheaper oris/ori rather than RLDIMI.
+    if (!Subtarget.isPPE42() || N->getValueType(0) != MVT::i64)
+      break;
+
+    ConstantSDNode *ConstOp = dyn_cast<ConstantSDNode>(N->getOperand(1));
+    if (!ConstOp)
+      break;
+
+    uint64_t Imm64 = ConstOp->getZExtValue();
+    uint32_t ImmHi = (Imm64 >> 32) & 0xFFFFFFFF;
+    uint32_t ImmLo = Imm64 & 0xFFFFFFFF;
+
+    // Nothing to do for a zero constant.
+    if (ImmHi == 0 && ImmLo == 0)
+      break;
+
+    // When the constant spans both halves and forms a run-of-ones, defer to
+    // tryAsSingleRLDIMI() so it can emit a single RLDIMI_VDR instruction.
+    // Single-word constants (ImmHi==0 or ImmLo==0) are always cheaper as
+    // oris/ori, so we handle them here even if they are technically a
+    // single-bit run-of-ones.
+    if (ImmHi != 0 && ImmLo != 0) {
+      unsigned MB, ME;
+      if (isRunOfOnes64(Imm64, MB, ME))
+        break;
+    }
+
+    SDValue N0 = N->getOperand(0);
+    SDValue HiWord = DAG.getTargetExtractSubreg(PPC::sub_gpr_hi, dl, MVT::i32, N0);
+    SDValue LoWord = DAG.getTargetExtractSubreg(PPC::sub_gpr_lo, dl, MVT::i32, N0);
+
+    // OR only the half-words where the constant is non-zero; leave the other
+    // half-word unchanged (no instruction emitted for the zero half).
+    SDValue NewHi = (ImmHi != 0)
+        ? DAG.getNode(ISD::OR, dl, MVT::i32, HiWord,
+                      DAG.getConstant(ImmHi, dl, MVT::i32))
+        : HiWord;
+    SDValue NewLo = (ImmLo != 0)
+        ? DAG.getNode(ISD::OR, dl, MVT::i32, LoWord,
+                      DAG.getConstant(ImmLo, dl, MVT::i32))
+        : LoWord;
+
+    // Reassemble the VDR pair from the two (possibly updated) sub-registers.
+    SDValue Result = DAG.getTargetInsertSubreg(PPC::sub_gpr_hi, dl, MVT::i64, N0, NewHi);
+    Result = DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64, Result, NewLo);
+    return Result;
+  }
   case ISD::AND: {
     // We don't want (and (zext (shift...)), C) if C fits in the width of the
     // original input as that will prevent us from selecting optimal rotates.

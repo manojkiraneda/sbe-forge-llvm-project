@@ -1972,6 +1972,11 @@ unsigned PPCInstrInfo::getSpillIndex(const TargetRegisterClass *RC) const {
     OpcodeIndex = SOK_DMRpSpill;
   } else if (PPC::DMRRCRegClass.hasSubClassEq(RC)) {
     OpcodeIndex = SOK_DMRSpill;
+  } else if (PPC::VDRCRegClass.hasSubClassEq(RC)) {
+    // PPE42 VDR register pair: spill/reload using STVD/LVD (single 64-bit
+    // D-form store/load).  Only valid when targeting PPE42 (getSpillTarget()==0
+    // — Pwr8 row), which is the only subtarget that defines VDRC.
+    OpcodeIndex = SOK_VDRSpill;
   } else {
     llvm_unreachable("Unknown regclass!");
   }
@@ -3173,6 +3178,54 @@ bool PPCInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     MI.setDesc(get(PPC::UNENCODED_NOP));
     MI.removeOperand(1);
     MI.removeOperand(0);
+    return true;
+  }
+  case PPC::LI8_VDR: {
+    // Expand LI8_VDR pseudo to load a 64-bit immediate into a VDR register pair.
+    //
+    // Each 32-bit word is materialised using the most compact sequence:
+    //
+    //   (a) LI   rX, word[15:0]          -- when word[31:16] == 0 and
+    //                                        word[15] == 0 (no sign-extension
+    //                                        into the upper half)
+    //   (b) LIS  rX, word[31:16]          -- when word[15:0] == 0
+    //       ORI  rX, rX, word[15:0]       -- appended when word[15:0] != 0
+    //
+    // LI sign-extends a 16-bit value to 32 bits, so it is ONLY safe when the
+    // upper 16 bits are zero AND bit 15 of the lower 16 bits is also zero
+    // (otherwise LI would corrupt the upper half with sign-extension).
+
+    Register DestReg = MI.getOperand(0).getReg();
+    int64_t Imm = MI.getOperand(1).getImm();
+
+    const TargetRegisterInfo *TRI = &getRegisterInfo();
+    Register HiReg = TRI->getSubReg(DestReg, PPC::sub_gpr_hi);
+    Register LoReg = TRI->getSubReg(DestReg, PPC::sub_gpr_lo);
+
+    uint32_t ImmLo = static_cast<uint32_t>(Imm & 0xFFFFFFFF);
+    uint32_t ImmHi = static_cast<uint32_t>((Imm >> 32) & 0xFFFFFFFF);
+
+    // Helper: emit the minimal sequence for one 32-bit word into Reg.
+    auto EmitWord = [&](Register Reg, uint32_t Word) {
+      uint32_t Hi16 = (Word >> 16) & 0xFFFF;
+      uint32_t Lo16 = Word & 0xFFFF;
+      if (Hi16 == 0 && (Lo16 & 0x8000) == 0) {
+        // Upper 16 bits are zero and bit 15 is clear: a single LI suffices.
+        BuildMI(MBB, MI, DL, get(PPC::LI), Reg).addImm(Lo16);
+      } else {
+        // General case: LIS to set the upper half (zeroes the lower half),
+        // then ORI to fill in any non-zero lower 16 bits.
+        BuildMI(MBB, MI, DL, get(PPC::LIS), Reg)
+            .addImm(static_cast<int16_t>(Hi16));
+        if (Lo16 != 0)
+          BuildMI(MBB, MI, DL, get(PPC::ORI), Reg).addReg(Reg).addImm(Lo16);
+      }
+    };
+
+    EmitWord(HiReg, ImmHi);
+    EmitWord(LoReg, ImmLo);
+
+    MI.eraseFromParent();
     return true;
   }
   case TargetOpcode::LOAD_STACK_GUARD: {

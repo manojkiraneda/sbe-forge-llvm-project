@@ -1078,7 +1078,8 @@ let hasSideEffects = 0 in {
 defm RLDIMI : MDForm_1r<30, 3, (outs g8rc:$RA),
                         (ins g8rc:$RAi, g8rc:$RS, u6imm:$SH, u6imm:$MBE),
                         "rldimi", "$RA, $RS, $SH, $MBE", IIC_IntRotateDI,
-                        []>, isPPC64, RegConstraint<"$RAi = $RA">;
+                        []>, isPPC64, Requires<[IsPPC64]>,
+                        RegConstraint<"$RAi = $RA">;
 
 // Rotate instructions.
 defm RLDCL  : MDSForm_1r<30, 8,
@@ -1376,7 +1377,8 @@ def LWZUX8 : XForm_1_memOp<31, 55, (outs g8rc:$RST, ptr_rc_nor0:$ea_result),
 let PPC970_Unit = 2 in {
 def LD   : DSForm_1<58, 0, (outs g8rc:$RST), (ins (memrix $D, $RA):$addr),
                     "ld $RST, $addr", IIC_LdStLD,
-                    [(set i64:$RST, (load DSForm:$addr))]>, isPPC64;
+                    [(set i64:$RST, (load DSForm:$addr))]>, isPPC64,
+                    Requires<[IsPPC64]>;
 // The following four definitions are selected for small code model only.
 // Otherwise, we need to create two instructions to form a 32-bit offset,
 // so we have a custom matcher for TOC_ENTRY in PPCDAGToDAGIsel::Select().
@@ -1399,7 +1401,8 @@ def LDtocBA: PPCEmitTimePseudo<(outs g8rc:$rD), (ins tocentry:$disp, g8rc:$reg),
 
 def LDX  : XForm_1_memOp<31,  21, (outs g8rc:$RST), (ins (memrr $RA, $RB):$addr),
                         "ldx $RST, $addr", IIC_LdStLD,
-                        [(set i64:$RST, (load XForm:$addr))]>, isPPC64;
+                        [(set i64:$RST, (load XForm:$addr))]>, isPPC64,
+                        Requires<[IsPPC64]>;
 
 let Predicates = [IsISA2_06] in {
 def LDBRX : XForm_1_memOp<31,  532, (outs g8rc:$RST), (ins (memrr $RA, $RB):$addr),
@@ -1643,11 +1646,12 @@ def STWX8 : XForm_8_memOp<31, 151, (outs), (ins g8rc:$RST, (memrr $RA, $RB):$add
 // Normal 8-byte stores.
 def STD  : DSForm_1<62, 0, (outs), (ins g8rc:$RST, (memrix $D, $RA):$addr),
                     "std $RST, $addr", IIC_LdStSTD,
-                    [(store i64:$RST, DSForm:$addr)]>, isPPC64;
+                    [(store i64:$RST, DSForm:$addr)]>, isPPC64,
+                    Requires<[IsPPC64]>;
 def STDX  : XForm_8_memOp<31, 149, (outs), (ins g8rc:$RST, (memrr $RA, $RB):$addr),
                           "stdx $RST, $addr", IIC_LdStSTD,
                           [(store i64:$RST, XForm:$addr)]>, isPPC64,
-                          PPC970_DGroup_Cracked;
+                          PPC970_DGroup_Cracked, Requires<[IsPPC64]>;
 
 let Predicates = [IsISA2_06] in {
 def STDBRX: XForm_8_memOp<31, 660, (outs), (ins g8rc:$RST, (memrr $RA, $RB):$addr),

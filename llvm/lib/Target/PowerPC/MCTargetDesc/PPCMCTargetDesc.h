@@ -283,7 +283,12 @@ using llvm::MCPhysReg;
   static const MCPhysReg DMRROWpRegs[32] = PPC_REGS0_31(PPC::DMRROWp);         \
   static const MCPhysReg DMRROWRegs[64] = PPC_REGS0_63(PPC::DMRROW);           \
   static const MCPhysReg DMRRegs[8] = PPC_REGS0_7(PPC::DMR);                   \
-  static const MCPhysReg DMRpRegs[4] = PPC_REGS0_3(PPC::DMRp);
+  static const MCPhysReg DMRpRegs[4] = PPC_REGS0_3(PPC::DMRp);                 \
+  static const MCPhysReg VDRRegs[32] = {                                       \
+      PPC::R0_R1, 0, PPC::R2_R3, PPC::R3_R4, PPC::R4_R5,                       \
+      PPC::R5_R6, PPC::R6_R7, PPC::R7_R8, PPC::R8_R9,                          \
+      PPC::R9_R10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,       \
+      PPC::R28_R29, PPC::R29_R30, PPC::R30_R31, PPC::R31_R0};
 
 namespace llvm {
 namespace PPC {

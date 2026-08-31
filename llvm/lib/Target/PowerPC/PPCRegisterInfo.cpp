@@ -137,6 +137,15 @@ PPCRegisterInfo::PPCRegisterInfo(const PPCTargetMachine &TM)
   ImmToIdxMap[PPC::SPESTW] = PPC::SPESTWX;
   ImmToIdxMap[PPC::SPELWZ] = PPC::SPELWZX;
 
+  // PPE42 VDR (D-form LVD/STVD).
+  // Self-mapped as interim: enables the D-form immediate fast-path in
+  // eliminateFrameIndex() for normal frames (offset fits in 16 bits).
+  // If a frame ever exceeds 32 KB the X-form conversion path will fire,
+  // assert on the missing X-form opcode, and make P2-A (lvdx/stvdx)
+  // mandatory.  Change to LVD→LVDX / STVD→STVDX once P2-A lands.
+  ImmToIdxMap[PPC::LVD]  = PPC::LVD;
+  ImmToIdxMap[PPC::STVD] = PPC::STVD;
+
   // Power10
   ImmToIdxMap[PPC::PLBZ]   = PPC::LBZX; ImmToIdxMap[PPC::PLBZ8]   = PPC::LBZX8;
   ImmToIdxMap[PPC::PLHZ]   = PPC::LHZX; ImmToIdxMap[PPC::PLHZ8]   = PPC::LHZX8;
@@ -391,6 +400,39 @@ BitVector PPCRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 
     if (Subtarget.isSVR4ABI())
       markSuperRegs(Reserved, PPC::R13); // Small Data Area pointer register.
+  }
+
+  // PPE42 EABI: R2 is the Small Data Area 2 (SDA2) pointer and R13 is the
+  // Small Data Area (SDA) pointer — neither may be modified by compiled code.
+  // Additionally, R11, R12 and R14–R27 are not implemented in PPE42 hardware;
+  // reserve them unconditionally so the allocator never assigns them.
+  if (Subtarget.isPPE42()) {
+    markSuperRegs(Reserved, PPC::R2);  // SDA2 pointer — must not be modified
+    markSuperRegs(Reserved, PPC::R13); // SDA pointer  — must not be modified
+    // Non-existent hardware registers on PPE42
+    for (MCPhysReg R : {PPC::R11, PPC::R12,
+                        PPC::R14, PPC::R15, PPC::R16, PPC::R17,
+                        PPC::R18, PPC::R19, PPC::R20, PPC::R21,
+                        PPC::R22, PPC::R23, PPC::R24, PPC::R25,
+                        PPC::R26, PPC::R27})
+      markSuperRegs(Reserved, R);
+
+    // PPE42 implements only CR0. Reserving CR1-CR7 and their individual
+    // condition bits prevents compares and branches from encoding a nonzero
+    // CR field. Such branch encodings violate the PPE42 requirement that
+    // instruction bits 11:13 are zero and trap as illegal instructions.
+    for (MCPhysReg CR : {PPC::CR1, PPC::CR2, PPC::CR3, PPC::CR4,
+                         PPC::CR5, PPC::CR6, PPC::CR7})
+      markSuperRegs(Reserved, CR);
+    for (MCPhysReg CRBit : {
+             PPC::CR1LT, PPC::CR1GT, PPC::CR1EQ, PPC::CR1UN,
+             PPC::CR2LT, PPC::CR2GT, PPC::CR2EQ, PPC::CR2UN,
+             PPC::CR3LT, PPC::CR3GT, PPC::CR3EQ, PPC::CR3UN,
+             PPC::CR4LT, PPC::CR4GT, PPC::CR4EQ, PPC::CR4UN,
+             PPC::CR5LT, PPC::CR5GT, PPC::CR5EQ, PPC::CR5UN,
+             PPC::CR6LT, PPC::CR6GT, PPC::CR6EQ, PPC::CR6UN,
+             PPC::CR7LT, PPC::CR7GT, PPC::CR7EQ, PPC::CR7UN})
+      markSuperRegs(Reserved, CRBit);
   }
 
   // On PPC64, r13 is the thread pointer. Never allocate this register.

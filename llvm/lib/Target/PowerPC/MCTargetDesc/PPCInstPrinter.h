@@ -108,6 +108,8 @@ public:
                         const MCSubtargetInfo &STI, raw_ostream &O);
   void printMemRegReg(const MCInst *MI, unsigned OpNo,
                       const MCSubtargetInfo &STI, raw_ostream &O);
+  void printVDRCOperand(const MCInst *MI, unsigned OpNo,
+                        const MCSubtargetInfo &STI, raw_ostream &O);
 };
 } // end namespace llvm
 
