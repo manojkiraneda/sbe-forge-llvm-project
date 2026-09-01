@@ -1,0 +1,112 @@
+name: PPE42 toolchain
+
+on:
+  pull_request:
+    paths:
+      - 'llvm/**'
+      - 'clang/**'
+      - 'lld/**'
+      - '.github/workflows/ppe42-toolchain.yml'
+  push:
+    branches: ['ppe42/llvm-21']
+    tags: ['ppe42-toolchain-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ppe42-toolchain-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  BUILD_DIR: build/ppe42
+  INSTALL_DIR: install/ppe42-toolchain
+  ASSET_NAME: sbe-ppe42-toolchain-linux-x86_64
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: ${{ startsWith(github.ref, 'refs/tags/') && 'write' || 'read' }}
+      id-token: ${{ startsWith(github.ref, 'refs/tags/') && 'write' || 'none' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build and integration dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache cmake ninja-build meson zstd
+
+      - name: Cache compiler objects
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ppe42-ccache-${{ runner.os }}-
+
+      - name: Configure
+        run: |
+          cmake -S llvm -B "$BUILD_DIR" -G Ninja \
+            -DLLVM_ENABLE_PROJECTS='clang;lld' \
+            -DLLVM_TARGETS_TO_BUILD=PowerPC \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_CCACHE_BUILD=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/$INSTALL_DIR"
+
+      - name: Build and run PowerPC tests
+        run: |
+          cmake --build "$BUILD_DIR"
+          cmake --build "$BUILD_DIR" --target check-llvm-codegen-powerpc check-llvm-mc-powerpc
+          cmake --install "$BUILD_DIR"
+
+      - name: Test candidate toolchain against SBE Forge
+        env:
+          SBE_FORGE_REPOSITORY: ${{ vars.SBE_FORGE_REPOSITORY || 'manojkiraneda/sbe-forge' }}
+        run: |
+          git clone --depth 1 "https://github.com/${SBE_FORGE_REPOSITORY}.git" sbe-forge-integration
+          SBE_LLVM_INSTALL_DIR="$GITHUB_WORKSPACE/$INSTALL_DIR" \
+            sbe-forge-integration/scripts/test-firmware.sh
+
+      - name: Create toolchain package
+        run: |
+          cp .github/ppe42-toolchain-manifest.json "$INSTALL_DIR/manifest.json"
+          sed -i \
+            -e "s/@LLVM_SHA@/${GITHUB_SHA}/g" \
+            -e "s/@LLVM_REF@/${GITHUB_REF_NAME}/g" \
+            "$INSTALL_DIR/manifest.json"
+          tar --zstd -C install -cf "$ASSET_NAME.tar.zst" ppe42-toolchain
+          sha256sum "$ASSET_NAME.tar.zst" > "$ASSET_NAME.tar.zst.sha256"
+
+      - name: Upload candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET_NAME }}-${{ github.sha }}
+          path: |
+            ${{ env.ASSET_NAME }}.tar.zst
+            ${{ env.ASSET_NAME }}.tar.zst.sha256
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$ASSET_NAME.tar.zst" \
+            "$ASSET_NAME.tar.zst.sha256" \
+            --verify-tag \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"
+
+      - name: Attest tagged package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.ASSET_NAME }}.tar.zst

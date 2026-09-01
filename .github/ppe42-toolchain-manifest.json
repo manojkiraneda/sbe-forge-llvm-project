@@ -1,0 +1,10 @@
+{
+  "name": "sbe-ppe42-toolchain",
+  "llvm_sha": "@LLVM_SHA@",
+  "llvm_ref": "@LLVM_REF@",
+  "host": "linux-x86_64",
+  "projects": ["clang", "lld"],
+  "targets": ["PowerPC"],
+  "build_type": "Release",
+  "assertions": true
+}
