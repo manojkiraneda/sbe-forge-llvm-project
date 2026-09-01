@@ -5,6 +5,7 @@
   "host": "linux-x86_64",
   "projects": ["clang", "lld"],
   "targets": ["PowerPC"],
+  "tools": ["clang", "ld.lld", "llvm-objcopy", "llvm-objdump", "llvm-nm"],
   "build_type": "Release",
   "assertions": true
 }
