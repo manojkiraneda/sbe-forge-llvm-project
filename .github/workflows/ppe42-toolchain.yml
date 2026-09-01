@@ -42,21 +42,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ccache cmake ninja-build meson zstd
 
-      - name: Cache compiler objects
-        uses: actions/cache@v4
+      - name: Restore compiler object cache
+        id: ccache
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
-          save-always: true
           restore-keys: |
             ppe42-ccache-${{ runner.os }}-
 
-      - name: Cache CMake and Ninja build tree
-        uses: actions/cache@v4
+      - name: Restore CMake and Ninja build tree
+        id: build-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.BUILD_DIR }}
           key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
-          save-always: true
           restore-keys: |
             ppe42-build-v1-${{ runner.os }}-
 
@@ -76,12 +76,12 @@ jobs:
       - name: Incrementally build required tools
         run: |
           cmake --build "$BUILD_DIR" --target \
-            clang lld llvm-objcopy llvm-objdump llvm-nm
+            clang lld llvm-ar llvm-objcopy llvm-objdump llvm-nm
 
       - name: Stage minimal toolchain
         run: |
           mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib/clang"
-          for tool in clang ld.lld llvm-objcopy llvm-objdump llvm-nm; do
+          for tool in clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
             cp --dereference "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
             strip "$PACKAGE_DIR/bin/$tool"
           done
@@ -139,3 +139,17 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: ${{ env.ASSET_NAME }}.tar.zst
+
+      - name: Save CMake and Ninja build tree
+        if: always() && steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.BUILD_DIR }}
+          key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
+
+      - name: Save compiler object cache
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
