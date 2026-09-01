@@ -2931,6 +2931,13 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
   } else
     return false;
 
+  // PPE42 represents i64 values with VDR register pairs. Its update-form VDR
+  // loads and stores are not implemented by the backend yet, so forming a
+  // pre-indexed node would make instruction selection choose the PPC64
+  // LDU/STDU instructions and introduce the invalid G8RC register class.
+  if (Subtarget.isPPE42() && VT == MVT::i64)
+    return false;
+
   // Do not generate pre-inc forms for specific loads that feed scalar_to_vector
   // instructions because we can fold these into a more efficient instruction
   // instead, (such as LXSD).
