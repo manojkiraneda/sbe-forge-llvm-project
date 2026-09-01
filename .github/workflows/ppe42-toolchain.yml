@@ -46,6 +46,7 @@ jobs:
         with:
           path: ~/.cache/ccache
           key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
+          save-always: true
           restore-keys: |
             ppe42-ccache-${{ runner.os }}-
 
@@ -54,6 +55,7 @@ jobs:
         with:
           path: ${{ env.BUILD_DIR }}
           key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
+          save-always: true
           restore-keys: |
             ppe42-build-v1-${{ runner.os }}-
 
