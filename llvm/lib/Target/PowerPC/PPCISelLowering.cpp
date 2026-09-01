@@ -17179,8 +17179,34 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
   SDLoc dl(N);
   switch (N->getOpcode()) {
   default: break;
-  case ISD::ADD:
+  case ISD::ADD: {
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64) {
+      SDValue LHS = N->getOperand(0);
+      SDValue RHS = N->getOperand(1);
+      SDValue LHSHi = DAG.getTargetExtractSubreg(
+          PPC::sub_gpr_hi, dl, MVT::i32, LHS);
+      SDValue LHSLo = DAG.getTargetExtractSubreg(
+          PPC::sub_gpr_lo, dl, MVT::i32, LHS);
+      SDValue RHSHi = DAG.getTargetExtractSubreg(
+          PPC::sub_gpr_hi, dl, MVT::i32, RHS);
+      SDValue RHSLo = DAG.getTargetExtractSubreg(
+          PPC::sub_gpr_lo, dl, MVT::i32, RHS);
+
+      // Add the low words and feed the resulting XER carry into the high-word
+      // addition. PPE42 has no 64-bit ALU instruction; VDRs are pairs of
+      // 32-bit GPRs.
+      SDVTList AddVTs = DAG.getVTList(MVT::i32, MVT::i32);
+      SDValue Lo = DAG.getNode(PPCISD::ADDC, dl, AddVTs, LHSLo, RHSLo);
+      SDValue Hi = DAG.getNode(PPCISD::ADDE, dl, AddVTs, LHSHi, RHSHi,
+                               Lo.getValue(1));
+
+      SDValue Result = DAG.getTargetInsertSubreg(
+          PPC::sub_gpr_hi, dl, MVT::i64, DAG.getUNDEF(MVT::i64), Hi);
+      return DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64,
+                                       Result, Lo);
+    }
     return combineADD(N, DCI);
+  }
   case ISD::OR: {
     // PPE42: explicitly lower i64 OR-with-constant into 32-bit sub-word
     // operations on the VDR register pair.
