@@ -21,7 +21,7 @@ concurrency:
 
 env:
   BUILD_DIR: build/ppe42
-  INSTALL_DIR: install/ppe42-toolchain
+  PACKAGE_DIR: package/ppe42-toolchain
   ASSET_NAME: sbe-ppe42-toolchain-linux-x86_64
 
 jobs:
@@ -30,6 +30,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v4
@@ -66,31 +67,49 @@ jobs:
             -DLLVM_TARGETS_TO_BUILD=PowerPC \
             -DLLVM_ENABLE_ASSERTIONS=ON \
             -DLLVM_CCACHE_BUILD=ON \
+            -DLLVM_BUILD_LLVM_DYLIB=OFF \
+            -DLLVM_LINK_LLVM_DYLIB=OFF \
+            -DCLANG_LINK_CLANG_DYLIB=OFF \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/$INSTALL_DIR"
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/ppe42-toolchain"
 
-      - name: Incrementally build and install
+      - name: Incrementally build required tools
         run: |
-          cmake --build "$BUILD_DIR"
-          cmake --install "$BUILD_DIR"
+          cmake --build "$BUILD_DIR" --target \
+            clang lld llvm-objcopy llvm-objdump llvm-nm
+
+      - name: Stage minimal toolchain
+        run: |
+          mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib/clang"
+          for tool in clang ld.lld llvm-objcopy llvm-objdump llvm-nm; do
+            cp --dereference "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
+            strip "$PACKAGE_DIR/bin/$tool"
+          done
+
+          resource_dir="$("$BUILD_DIR/bin/clang" --print-resource-dir)"
+          cp -a "$resource_dir" "$PACKAGE_DIR/lib/clang/"
+
+          jq \
+            --arg llvm_sha "$GITHUB_SHA" \
+            --arg llvm_ref "$GITHUB_REF_NAME" \
+            '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref' \
+            .github/ppe42-toolchain-manifest.json \
+            > "$PACKAGE_DIR/manifest.json"
+
+          du -sh "$PACKAGE_DIR"
+          find "$PACKAGE_DIR" -maxdepth 3 -type f -printf '%s %p\n' | sort -nr
 
       - name: Test candidate toolchain against SBE Forge
         env:
           SBE_FORGE_REPOSITORY: ${{ vars.SBE_FORGE_REPOSITORY || 'manojkiraneda/sbe-forge' }}
         run: |
           git clone --depth 1 "https://github.com/${SBE_FORGE_REPOSITORY}.git" sbe-forge-integration
-          SBE_LLVM_INSTALL_DIR="$GITHUB_WORKSPACE/$INSTALL_DIR" \
+          SBE_LLVM_INSTALL_DIR="$GITHUB_WORKSPACE/$PACKAGE_DIR" \
             sbe-forge-integration/scripts/test-firmware.sh
 
       - name: Create toolchain package
         run: |
-          jq \
-            --arg llvm_sha "$GITHUB_SHA" \
-            --arg llvm_ref "$GITHUB_REF_NAME" \
-            '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref' \
-            .github/ppe42-toolchain-manifest.json \
-            > "$INSTALL_DIR/manifest.json"
-          tar --zstd -C install -cf "$ASSET_NAME.tar.zst" ppe42-toolchain
+          tar --zstd -C package -cf "$ASSET_NAME.tar.zst" ppe42-toolchain
           sha256sum "$ASSET_NAME.tar.zst" > "$ASSET_NAME.tar.zst.sha256"
 
       - name: Upload candidate artifact
