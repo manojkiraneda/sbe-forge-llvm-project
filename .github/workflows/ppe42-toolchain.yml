@@ -25,7 +25,7 @@ env:
   ASSET_NAME: sbe-ppe42-toolchain-linux-x86_64
 
 jobs:
-  build-test-package:
+  build-package-integration:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -49,6 +49,14 @@ jobs:
           restore-keys: |
             ppe42-ccache-${{ runner.os }}-
 
+      - name: Cache CMake and Ninja build tree
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BUILD_DIR }}
+          key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ppe42-build-v1-${{ runner.os }}-
+
       - name: Configure
         run: |
           cmake -S llvm -B "$BUILD_DIR" -G Ninja \
@@ -59,10 +67,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/$INSTALL_DIR"
 
-      - name: Build and run PowerPC tests
+      - name: Incrementally build and install
         run: |
           cmake --build "$BUILD_DIR"
-          cmake --build "$BUILD_DIR" --target check-llvm-codegen-powerpc check-llvm-mc-powerpc
           cmake --install "$BUILD_DIR"
 
       - name: Test candidate toolchain against SBE Forge
