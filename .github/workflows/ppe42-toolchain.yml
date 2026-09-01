@@ -82,11 +82,12 @@ jobs:
 
       - name: Create toolchain package
         run: |
-          cp .github/ppe42-toolchain-manifest.json "$INSTALL_DIR/manifest.json"
-          sed -i \
-            -e "s/@LLVM_SHA@/${GITHUB_SHA}/g" \
-            -e "s/@LLVM_REF@/${GITHUB_REF_NAME}/g" \
-            "$INSTALL_DIR/manifest.json"
+          jq \
+            --arg llvm_sha "$GITHUB_SHA" \
+            --arg llvm_ref "$GITHUB_REF_NAME" \
+            '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref' \
+            .github/ppe42-toolchain-manifest.json \
+            > "$INSTALL_DIR/manifest.json"
           tar --zstd -C install -cf "$ASSET_NAME.tar.zst" ppe42-toolchain
           sha256sum "$ASSET_NAME.tar.zst" > "$ASSET_NAME.tar.zst.sha256"
 
