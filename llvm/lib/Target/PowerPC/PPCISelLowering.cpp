@@ -1442,8 +1442,9 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setStackPointerRegisterToSaveRestore(isPPC64 ? PPC::X1 : PPC::R1);
 
   // We have target-specific dag combine patterns for the following nodes:
-  setTargetDAGCombine({ISD::AND, ISD::OR, ISD::ADD, ISD::SHL, ISD::SRA, ISD::SRL,
-                       ISD::MUL, ISD::FMA, ISD::SINT_TO_FP, ISD::BUILD_VECTOR});
+  setTargetDAGCombine({ISD::AND, ISD::OR, ISD::ADD, ISD::SUB, ISD::SHL,
+                       ISD::SRA, ISD::SRL, ISD::MUL, ISD::FMA,
+                       ISD::SINT_TO_FP, ISD::BUILD_VECTOR});
   if (Subtarget.hasFPCVT())
     setTargetDAGCombine(ISD::UINT_TO_FP);
   setTargetDAGCombine({ISD::LOAD, ISD::STORE, ISD::BR_CC});
@@ -17214,6 +17215,63 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     }
     return combineADD(N, DCI);
   }
+  case ISD::SUB: {
+    if (!Subtarget.isPPE42() || N->getValueType(0) != MVT::i64)
+      break;
+
+    SDValue LHS = N->getOperand(0);
+    SDValue RHS = N->getOperand(1);
+    SDValue LHSHi = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i32, LHS);
+    SDValue LHSLo = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_lo, dl, MVT::i32, LHS);
+    SDValue RHSHi = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i32, RHS);
+    SDValue RHSLo = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_lo, dl, MVT::i32, RHS);
+
+    // Subtract the low words and propagate the resulting XER carry (the
+    // inverse of borrow on PowerPC) through the high-word subtraction.
+    SDVTList SubVTs = DAG.getVTList(MVT::i32, MVT::i32);
+    SDValue Lo = DAG.getNode(PPCISD::SUBC, dl, SubVTs, LHSLo, RHSLo);
+    SDValue Hi = DAG.getNode(PPCISD::SUBE, dl, SubVTs, LHSHi, RHSHi,
+                             Lo.getValue(1));
+
+    SDValue Result = DAG.getTargetInsertSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i64, DAG.getUNDEF(MVT::i64), Hi);
+    return DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64,
+                                     Result, Lo);
+  }
+  case ISD::MUL: {
+    if (!Subtarget.isPPE42() || N->getValueType(0) != MVT::i64)
+      return combineMUL(N, DCI);
+
+    SDValue LHS = N->getOperand(0);
+    SDValue RHS = N->getOperand(1);
+    SDValue LHSHi = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i32, LHS);
+    SDValue LHSLo = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_lo, dl, MVT::i32, LHS);
+    SDValue RHSHi = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i32, RHS);
+    SDValue RHSLo = DAG.getTargetExtractSubreg(
+        PPC::sub_gpr_lo, dl, MVT::i32, RHS);
+
+    // Keep only the terms that contribute to the low 64 bits:
+    //   lo = low32(LHSLo * RHSLo)
+    //   hi = high32(LHSLo * RHSLo) + LHSHi * RHSLo + LHSLo * RHSHi
+    SDValue Lo = DAG.getNode(ISD::MUL, dl, MVT::i32, LHSLo, RHSLo);
+    SDValue Hi = DAG.getNode(ISD::MULHU, dl, MVT::i32, LHSLo, RHSLo);
+    SDValue Cross1 = DAG.getNode(ISD::MUL, dl, MVT::i32, LHSHi, RHSLo);
+    SDValue Cross2 = DAG.getNode(ISD::MUL, dl, MVT::i32, LHSLo, RHSHi);
+    Hi = DAG.getNode(ISD::ADD, dl, MVT::i32, Hi, Cross1);
+    Hi = DAG.getNode(ISD::ADD, dl, MVT::i32, Hi, Cross2);
+
+    SDValue Result = DAG.getTargetInsertSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i64, DAG.getUNDEF(MVT::i64), Hi);
+    return DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64,
+                                     Result, Lo);
+  }
   case ISD::OR: {
     // PPE42: explicitly lower i64 OR-with-constant into 32-bit sub-word
     // operations on the VDR register pair.
@@ -17304,8 +17362,6 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     return combineSRA(N, DCI);
   case ISD::SRL:
     return combineSRL(N, DCI);
-  case ISD::MUL:
-    return combineMUL(N, DCI);
   case ISD::FMA:
   case PPCISD::FNMSUB:
     return combineFMALike(N, DCI);
