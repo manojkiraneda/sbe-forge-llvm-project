@@ -78,9 +78,20 @@ jobs:
           cmake --build "$BUILD_DIR" --target \
             clang lld llvm-ar llvm-objcopy llvm-objdump llvm-nm
 
+      - name: Build PPE42 compiler runtime
+        run: |
+          mkdir -p "$BUILD_DIR/ppe42-runtime"
+          "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
+            -c compiler-rt/lib/builtins/ppc/ppe42-div.S \
+            -o "$BUILD_DIR/ppe42-runtime/ppe42-div.o"
+          "$BUILD_DIR/bin/llvm-ar" rcs \
+            "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
+            "$BUILD_DIR/ppe42-runtime/ppe42-div.o"
+
       - name: Stage minimal toolchain
         run: |
           mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib/clang"
+          mkdir -p "$PACKAGE_DIR/lib/ppe42"
           for tool in clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
             cp --dereference "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
             strip "$PACKAGE_DIR/bin/$tool"
@@ -88,6 +99,8 @@ jobs:
 
           resource_dir="$("$BUILD_DIR/bin/clang" --print-resource-dir)"
           cp -a "$resource_dir" "$PACKAGE_DIR/lib/clang/"
+          cp "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
+            "$PACKAGE_DIR/lib/ppe42/"
 
           jq \
             --arg llvm_sha "$GITHUB_SHA" \
