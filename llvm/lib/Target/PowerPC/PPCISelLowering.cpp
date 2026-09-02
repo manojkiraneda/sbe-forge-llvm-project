@@ -368,6 +368,17 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setOperationAction(ISD::UDIVREM, MVT::i64, Expand);
   setOperationAction(ISD::SDIVREM, MVT::i64, Expand);
 
+  // PPE42 has no integer divide instructions. Lower scalar division and
+  // remainder to compiler-rt libcalls instead of selecting PowerPC DIV*.
+  if (Subtarget.isPPE42()) {
+    for (MVT VT : {MVT::i32, MVT::i64}) {
+      setOperationAction(ISD::SDIV, VT, Expand);
+      setOperationAction(ISD::UDIV, VT, Expand);
+      setOperationAction(ISD::SREM, VT, Expand);
+      setOperationAction(ISD::UREM, VT, Expand);
+    }
+  }
+
   // Handle constrained floating-point operations of scalar.
   // TODO: Handle SPE specific operation.
   setOperationAction(ISD::STRICT_FADD, MVT::f32, Legal);

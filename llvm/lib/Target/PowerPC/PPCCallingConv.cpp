@@ -193,4 +193,32 @@ static bool CC_PPC32_SPE_RetF64(unsigned &ValNo, MVT &ValVT,
   return true;
 }
 
+// PPE42 keeps i64 values legal in VDR register tuples. Assign the tuple as a
+// single location so call lowering can copy the legal i64 value directly.
+static bool CC_PPE42_AssignI64Arg(unsigned &ValNo, MVT &ValVT, MVT &LocVT,
+                                  CCValAssign::LocInfo &LocInfo,
+                                  ISD::ArgFlagsTy &ArgFlags, CCState &State) {
+  static const MCPhysReg ArgRegs[] = {PPC::R3_R4, PPC::R5_R6, PPC::R7_R8,
+                                      PPC::R9_R10};
+  MCRegister Reg = State.AllocateReg(ArgRegs);
+  if (Reg) {
+    State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+    return true;
+  }
+
+  unsigned Offset = State.AllocateStack(8, Align(4));
+  State.addLoc(CCValAssign::getMem(ValNo, ValVT, Offset, LocVT, LocInfo));
+  return true;
+}
+
+static bool CC_PPE42_RetI64(unsigned &ValNo, MVT &ValVT, MVT &LocVT,
+                            CCValAssign::LocInfo &LocInfo,
+                            ISD::ArgFlagsTy &ArgFlags, CCState &State) {
+  MCRegister Reg = State.AllocateReg(PPC::R3_R4);
+  if (!Reg)
+    return false;
+  State.addLoc(CCValAssign::getReg(ValNo, ValVT, Reg, LocVT, LocInfo));
+  return true;
+}
+
 #include "PPCGenCallingConv.inc"
