@@ -71,6 +71,10 @@ def RetCC_PPC : CallingConv<[
   CCIfType<[i32, i1], CCIfSubtarget<"isPPC64()", CCPromoteToType<i64>>>,
   CCIfType<[i1], CCIfNotSubtarget<"isPPC64()", CCPromoteToType<i32>>>,
 
+  // PPE42 represents an i64 return value in the r3:r4 VDR pair.
+  CCIfType<[i64], CCIfSubtarget<"isPPE42()",
+                           CCCustom<"CC_PPE42_RetI64">>>,
+
   CCIfType<[i32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
   CCIfType<[i64], CCAssignToReg<[X3, X4, X5, X6]>>,
   CCIfType<[i128], CCAssignToReg<[X3, X4, X5, X6]>>,
@@ -194,6 +198,11 @@ def RetCC_PPC64_ELF_FIS : CallingConv<[
 
 def CC_PPC32_SVR4_Common : CallingConv<[
   CCIfType<[i1], CCPromoteToType<i32>>,
+
+  // PPE42 keeps i64 legal in VDR register pairs. Assign those values directly
+  // so libcalls receive operands in r3:r4, r5:r6, r7:r8, and r9:r10.
+  CCIfType<[i64], CCIfSubtarget<"isPPE42()",
+                           CCCustom<"CC_PPE42_AssignI64Arg">>>,
 
   // The ABI requires i64 to be passed in two adjacent registers with the first
   // register having an odd register number.
