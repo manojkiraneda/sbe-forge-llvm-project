@@ -86,6 +86,7 @@ jobs:
               -c "compiler-rt/lib/builtins/ppc/ppe42-div${width}.S" \
               -o "$BUILD_DIR/ppe42-runtime/ppe42-div${width}.o"
           done
+          cmake -E rm -f "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a"
           "$BUILD_DIR/bin/llvm-ar" rcs \
             "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
             "$BUILD_DIR/ppe42-runtime/ppe42-div32.o" \
