@@ -81,12 +81,15 @@ jobs:
       - name: Build PPE42 compiler runtime
         run: |
           mkdir -p "$BUILD_DIR/ppe42-runtime"
-          "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
-            -c compiler-rt/lib/builtins/ppc/ppe42-div.S \
-            -o "$BUILD_DIR/ppe42-runtime/ppe42-div.o"
+          for width in 32 64; do
+            "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
+              -c "compiler-rt/lib/builtins/ppc/ppe42-div${width}.S" \
+              -o "$BUILD_DIR/ppe42-runtime/ppe42-div${width}.o"
+          done
           "$BUILD_DIR/bin/llvm-ar" rcs \
             "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
-            "$BUILD_DIR/ppe42-runtime/ppe42-div.o"
+            "$BUILD_DIR/ppe42-runtime/ppe42-div32.o" \
+            "$BUILD_DIR/ppe42-runtime/ppe42-div64.o"
 
       - name: Stage minimal toolchain
         run: |
