@@ -1442,7 +1442,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setStackPointerRegisterToSaveRestore(isPPC64 ? PPC::X1 : PPC::R1);
 
   // We have target-specific dag combine patterns for the following nodes:
-  setTargetDAGCombine({ISD::AND, ISD::OR, ISD::ADD, ISD::SUB, ISD::SHL,
+  setTargetDAGCombine({ISD::AND, ISD::OR, ISD::XOR, ISD::ADD, ISD::SUB, ISD::SHL,
                        ISD::SRA, ISD::SRL, ISD::MUL, ISD::FMA,
                        ISD::SINT_TO_FP, ISD::BUILD_VECTOR});
   if (Subtarget.hasFPCVT())
@@ -17185,6 +17185,36 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
   SDLoc dl(N);
+  auto lowerPPE42Binary = [&](unsigned Opcode) {
+    SDValue LHS = N->getOperand(0), RHS = N->getOperand(1);
+    SDValue Hi = DAG.getNode(
+        Opcode, dl, MVT::i32,
+        DAG.getTargetExtractSubreg(PPC::sub_gpr_hi, dl, MVT::i32, LHS),
+        DAG.getTargetExtractSubreg(PPC::sub_gpr_hi, dl, MVT::i32, RHS));
+    SDValue Lo = DAG.getNode(
+        Opcode, dl, MVT::i32,
+        DAG.getTargetExtractSubreg(PPC::sub_gpr_lo, dl, MVT::i32, LHS),
+        DAG.getTargetExtractSubreg(PPC::sub_gpr_lo, dl, MVT::i32, RHS));
+    SDValue Result = DAG.getTargetInsertSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i64, DAG.getUNDEF(MVT::i64), Hi);
+    return DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64,
+                                     Result, Lo);
+  };
+  auto lowerPPE42Shift = [&](unsigned PartsOpcode) {
+    SDValue Value = N->getOperand(0);
+    SDValue Lo = DAG.getTargetExtractSubreg(PPC::sub_gpr_lo, dl, MVT::i32,
+                                            Value);
+    SDValue Hi = DAG.getTargetExtractSubreg(PPC::sub_gpr_hi, dl, MVT::i32,
+                                            Value);
+    SDValue Parts = DAG.getNode(PartsOpcode, dl,
+                                DAG.getVTList(MVT::i32, MVT::i32), Lo, Hi,
+                                N->getOperand(1));
+    SDValue Result = DAG.getTargetInsertSubreg(
+        PPC::sub_gpr_hi, dl, MVT::i64, DAG.getUNDEF(MVT::i64),
+        Parts.getValue(1));
+    return DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64,
+                                     Result, Parts);
+  };
   switch (N->getOpcode()) {
   default: break;
   case ISD::ADD: {
@@ -17291,7 +17321,7 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
 
     ConstantSDNode *ConstOp = dyn_cast<ConstantSDNode>(N->getOperand(1));
     if (!ConstOp)
-      break;
+      return lowerPPE42Binary(ISD::OR);
 
     uint64_t Imm64 = ConstOp->getZExtValue();
     uint32_t ImmHi = (Imm64 >> 32) & 0xFFFFFFFF;
@@ -17333,6 +17363,8 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     return Result;
   }
   case ISD::AND: {
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64)
+      return lowerPPE42Binary(ISD::AND);
     // We don't want (and (zext (shift...)), C) if C fits in the width of the
     // original input as that will prevent us from selecting optimal rotates.
     // This only matters if the input to the extend is i32 widened to i64.
@@ -17356,11 +17388,21 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     SDValue NarrowAnd = DAG.getNode(ISD::AND, dl, MVT::i32, NarrowOp, ConstOp);
     return DAG.getZExtOrTrunc(NarrowAnd, dl, N->getValueType(0));
   }
+  case ISD::XOR:
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64)
+      return lowerPPE42Binary(ISD::XOR);
+    break;
   case ISD::SHL:
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64)
+      return lowerPPE42Shift(ISD::SHL_PARTS);
     return combineSHL(N, DCI);
   case ISD::SRA:
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64)
+      return lowerPPE42Shift(ISD::SRA_PARTS);
     return combineSRA(N, DCI);
   case ISD::SRL:
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64)
+      return lowerPPE42Shift(ISD::SRL_PARTS);
     return combineSRL(N, DCI);
   case ISD::FMA:
   case PPCISD::FNMSUB:

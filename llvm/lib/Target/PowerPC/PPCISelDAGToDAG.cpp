@@ -5290,6 +5290,12 @@ void PPCDAGToDAGISel::Select(SDNode *N) {
 
   case ISD::Constant:
     if (N->getValueType(0) == MVT::i64) {
+      if (Subtarget->isPPE42()) {
+        ReplaceNode(N, CurDAG->getMachineNode(PPC::LI8_VDR, SDLoc(N), MVT::i64,
+                                              getI64Imm(N->getAsZExtVal(),
+                                                        SDLoc(N))));
+        return;
+      }
       ReplaceNode(N, selectI64Imm(CurDAG, N));
       return;
     }
