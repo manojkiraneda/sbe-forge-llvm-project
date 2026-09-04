@@ -2135,7 +2135,10 @@ class BitPermutationSelector {
       return V;
 
     assert(V.getValueSizeInBits() == 32);
-    SDValue SubRegIdx = CurDAG->getTargetConstant(PPC::sub_32, dl, MVT::i32);
+    const PPCSubtarget &Subtarget =
+        CurDAG->getMachineFunction().getSubtarget<PPCSubtarget>();
+    unsigned SubReg = Subtarget.isPPE42() ? PPC::sub_gpr_lo : PPC::sub_32;
+    SDValue SubRegIdx = CurDAG->getTargetConstant(SubReg, dl, MVT::i32);
     SDValue ImDef = SDValue(CurDAG->getMachineNode(PPC::IMPLICIT_DEF, dl,
                                                    MVT::i64), 0);
     SDValue ExtVal = SDValue(CurDAG->getMachineNode(PPC::INSERT_SUBREG, dl,
@@ -2149,7 +2152,10 @@ class BitPermutationSelector {
       return V;
 
     assert(V.getValueSizeInBits() == 64);
-    SDValue SubRegIdx = CurDAG->getTargetConstant(PPC::sub_32, dl, MVT::i32);
+    const PPCSubtarget &Subtarget =
+        CurDAG->getMachineFunction().getSubtarget<PPCSubtarget>();
+    unsigned SubReg = Subtarget.isPPE42() ? PPC::sub_gpr_lo : PPC::sub_32;
+    SDValue SubRegIdx = CurDAG->getTargetConstant(SubReg, dl, MVT::i32);
     SDValue SubVal = SDValue(CurDAG->getMachineNode(PPC::EXTRACT_SUBREG, dl,
                                                     MVT::i32, V, SubRegIdx), 0);
     return SubVal;
