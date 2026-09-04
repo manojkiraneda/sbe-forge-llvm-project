@@ -794,6 +794,10 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     // VDR registers are pairs of consecutive GPRs used for 64-bit load/store
     if (Subtarget.isPPE42()) {
       addRegisterClass(MVT::i64, &PPC::VDRCRegClass);
+      // Avoid selecting PPC64 extending loads such as LWZ8.  PPE42 represents
+      // i64 values in VDR register pairs, so form the extension from an i32
+      // load and rebuild the pair in PerformDAGCombine instead.
+      setLoadExtAction(ISD::ZEXTLOAD, MVT::i64, MVT::i32, Expand);
       // VDR supports load/store and basic bitwise operations
       // We use REG_SEQUENCE instead of BUILD_PAIR for better register allocation
     }
@@ -17434,8 +17438,18 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     }
     break;
   case ISD::SIGN_EXTEND:
-  case ISD::ZERO_EXTEND:
   case ISD::ANY_EXTEND:
+    return DAGCombineExtBoolTrunc(N, DCI);
+  case ISD::ZERO_EXTEND:
+    if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64 &&
+        N->getOperand(0).getValueType() == MVT::i32) {
+      SDValue Undef = DAG.getUNDEF(MVT::i64);
+      SDValue Zero = DAG.getConstant(0, dl, MVT::i32);
+      SDValue Result = DAG.getTargetInsertSubreg(
+          PPC::sub_gpr_hi, dl, MVT::i64, Undef, Zero);
+      return DAG.getTargetInsertSubreg(PPC::sub_gpr_lo, dl, MVT::i64,
+                                       Result, N->getOperand(0));
+    }
     return DAGCombineExtBoolTrunc(N, DCI);
   case ISD::TRUNCATE:
     return combineTRUNCATE(N, DCI);
