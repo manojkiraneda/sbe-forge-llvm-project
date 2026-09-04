@@ -1593,6 +1593,9 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
         return Error(S, "invalid register number");
       break;
     case AsmToken::Identifier:
+      if (getSTI().hasFeature(PPC::FeaturePPE42) &&
+          matchRegisterName(IntVal))
+        break;
       if (getParser().parseParenExpression(EVal, E))
         return Error(S, "identifier does not expand to register number");
       if (!EVal->evaluateAsAbsolute(IntVal) || IntVal < 0 || IntVal > 31)
@@ -1707,6 +1710,11 @@ bool PPCAsmParser::ParseDirective(AsmToken DirectiveID) {
     parseDirectiveAbiVersion(DirectiveID.getLoc());
   else if (IDVal == ".localentry")
     parseDirectiveLocalEntry(DirectiveID.getLoc());
+  else if (IDVal == ".list" || IDVal == ".nolist")
+    // GNU as listing controls do not affect the emitted object. Accept them
+    // so existing PPE assembly sources can be consumed by LLVM's integrated
+    // assembler without source-only compatibility rewrites.
+    getParser().parseEOL();
   else if (IDVal.starts_with(".gnu_attribute"))
     parseGNUAttribute(DirectiveID.getLoc());
   else
