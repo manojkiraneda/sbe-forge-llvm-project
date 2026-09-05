@@ -42,6 +42,7 @@ static uint64_t adjustFixupValue(unsigned Kind, uint64_t Value) {
   case PPC::fixup_ppc_br24_notoc:
     return Value & 0x3fffffc;
   case PPC::fixup_ppc_half16:
+  case PPC::fixup_ppc_sda21:
     return Value & 0xffff;
   case PPC::fixup_ppc_half16ds:
   case PPC::fixup_ppc_half16dq:
@@ -65,6 +66,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
     return 2;
   case FK_Data_4:
   case PPC::fixup_ppc_brcond14:
+  case PPC::fixup_ppc_sda21:
   case PPC::fixup_ppc_brcond14abs:
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24abs:
@@ -151,6 +153,7 @@ MCFixupKindInfo PPCAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_ppc_br24abs", 6, 24, 0},
       {"fixup_ppc_brcond14abs", 16, 14, 0},
       {"fixup_ppc_half16", 0, 16, 0},
+      {"fixup_ppc_sda21", 11, 21, 0},
       {"fixup_ppc_half16ds", 0, 14, 0},
       {"fixup_ppc_pcrel34", 0, 34, 0},
       {"fixup_ppc_imm34", 0, 34, 0},
@@ -163,6 +166,7 @@ MCFixupKindInfo PPCAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_ppc_br24abs", 2, 24, 0},
       {"fixup_ppc_brcond14abs", 2, 14, 0},
       {"fixup_ppc_half16", 0, 16, 0},
+      {"fixup_ppc_sda21", 0, 21, 0},
       {"fixup_ppc_half16ds", 2, 14, 0},
       {"fixup_ppc_pcrel34", 0, 34, 0},
       {"fixup_ppc_imm34", 0, 34, 0},

@@ -1413,6 +1413,7 @@ const MCExpr *PPCAsmParser::extractSpecifier(const MCExpr *E,
     case PPC::S_HIGHERA:
     case PPC::S_HIGHEST:
     case PPC::S_HIGHESTA:
+    case PPC::S_SDA21:
       if (Spec == PPC::S_None)
         Spec = getSpecifier(SRE);
       else
