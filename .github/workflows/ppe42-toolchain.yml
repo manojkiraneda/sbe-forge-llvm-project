@@ -87,6 +87,12 @@ jobs:
             lld/test/ELF/ppc32-sda21.s \
             lld/test/ELF/ppc32-sda21-invalid.s
 
+      - name: Test PPE42 fused compare-and-branch instructions
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
+            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
+
       - name: Build PPE42 compiler runtime
         run: |
           mkdir -p "$BUILD_DIR/ppe42-runtime"
