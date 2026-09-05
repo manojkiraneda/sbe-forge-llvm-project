@@ -76,7 +76,16 @@ jobs:
       - name: Incrementally build required tools
         run: |
           cmake --build "$BUILD_DIR" --target \
-            clang lld llvm-ar llvm-objcopy llvm-objdump llvm-nm
+            clang lld llvm-ar llvm-objcopy llvm-objdump llvm-nm \
+            llvm-mc llvm-readobj llvm-config FileCheck split-file not count
+
+      - name: Test PowerPC small-data relocations
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/MC/PowerPC/ppc32-sda21.s \
+            llvm/test/MC/PowerPC/ppc32-sda21-invalid.s \
+            lld/test/ELF/ppc32-sda21.s \
+            lld/test/ELF/ppc32-sda21-invalid.s
 
       - name: Build PPE42 compiler runtime
         run: |

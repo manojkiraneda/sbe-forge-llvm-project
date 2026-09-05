@@ -56,6 +56,7 @@ enum Specifier {
   S_HIGHERA,
   S_HIGHEST,
   S_HIGHESTA,
+  S_SDA21,          // symbol@sda21 (32-bit ELF small data)
 
   S_AIX_TLSGD,       // symbol@gd
   S_AIX_TLSGDM,      // symbol@m

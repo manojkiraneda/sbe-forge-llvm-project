@@ -41,6 +41,7 @@
 #undef R_PPC_PLT16_HI
 #undef R_PPC_PLT16_HA
 #undef R_PPC_SDAREL16
+#undef R_PPC_EMB_SDA21
 #undef R_PPC_SECTOFF
 #undef R_PPC_SECTOFF_LO
 #undef R_PPC_SECTOFF_HI
@@ -149,6 +150,7 @@ ELF_RELOC(R_PPC_GOT_DTPREL16_HI,        93)
 ELF_RELOC(R_PPC_GOT_DTPREL16_HA,        94)
 ELF_RELOC(R_PPC_TLSGD,                  95)
 ELF_RELOC(R_PPC_TLSLD,                  96)
+ELF_RELOC(R_PPC_EMB_SDA21,             109)
 ELF_RELOC(R_PPC_IRELATIVE,              248)
 ELF_RELOC(R_PPC_REL16,                  249)
 ELF_RELOC(R_PPC_REL16_LO,               250)
