@@ -733,7 +733,8 @@ def IsPPC6xx  : Predicate<"Subtarget->isPPC6xx()">;
 def IsE500  : Predicate<"Subtarget->isE500()">;
 def HasSPE  : Predicate<"Subtarget->hasSPE()">;
 def HasICBT : Predicate<"Subtarget->hasICBT()">;
-def IsPPE42 : Predicate<"Subtarget->isPPE42()">;
+def IsPPE42 : Predicate<"Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of FeaturePPE42), "PPE42">;
 def HasPartwordAtomics : Predicate<"Subtarget->hasPartwordAtomics()">;
 def HasQuadwordAtomics : Predicate<"Subtarget->hasQuadwordAtomics()">;
 def NoNaNsFPMath
@@ -4589,6 +4590,9 @@ def : InstAlias<"xnop", (XORI R0, R0, 0)>;
 
 def : InstAlias<"mtxer $Rx", (MTSPR 1, gprc:$Rx)>;
 def : InstAlias<"mfxer $Rx", (MFSPR gprc:$Rx, 1)>;
+
+// PPE42 Debug Address Compare Register (SPR 316).
+def : InstAlias<"mtdacr $Rx", (MTSPR 316, gprc:$Rx)>, Requires<[IsPPE42]>;
 
 //Disable this alias on AIX for now because as does not support them.
 let Predicates = [ModernAs] in {
