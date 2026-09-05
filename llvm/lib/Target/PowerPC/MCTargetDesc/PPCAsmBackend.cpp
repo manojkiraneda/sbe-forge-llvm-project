@@ -57,6 +57,13 @@ static uint64_t adjustFixupValue(MCContext &Ctx, const MCFixup &Fixup,
   case PPC::fixup_ppc_brcond14abs:
     checkBrFixup(14);
     return Value & 0xfffc;
+  case PPC::fixup_ppc_ppe42_br10:
+    if (!isInt<12>(static_cast<int64_t>(Value)))
+      Ctx.reportError(Fixup.getLoc(), "PPE42 branch target out of range");
+    if (Value & 3)
+      Ctx.reportError(Fixup.getLoc(),
+                      "PPE42 branch target must be 4-byte aligned");
+    return (Value & 0xffc) >> 2;
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24abs:
   case PPC::fixup_ppc_br24_notoc:
@@ -91,6 +98,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case FK_Data_4:
   case PPC::fixup_ppc_brcond14:
   case PPC::fixup_ppc_sda21:
+  case PPC::fixup_ppc_ppe42_br10:
   case PPC::fixup_ppc_brcond14abs:
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24abs:
@@ -177,6 +185,7 @@ MCFixupKindInfo PPCAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_ppc_br24", 6, 24, 0},
       {"fixup_ppc_br24_notoc", 6, 24, 0},
       {"fixup_ppc_brcond14", 16, 14, 0},
+      {"fixup_ppc_ppe42_br10", 21, 10, 0},
       {"fixup_ppc_br24abs", 6, 24, 0},
       {"fixup_ppc_brcond14abs", 16, 14, 0},
       {"fixup_ppc_half16", 0, 16, 0},
@@ -192,6 +201,7 @@ MCFixupKindInfo PPCAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_ppc_br24", 2, 24, 0},
       {"fixup_ppc_br24_notoc", 2, 24, 0},
       {"fixup_ppc_brcond14", 2, 14, 0},
+      {"fixup_ppc_ppe42_br10", 1, 10, 0},
       {"fixup_ppc_br24abs", 2, 24, 0},
       {"fixup_ppc_brcond14abs", 2, 14, 0},
       {"fixup_ppc_half16", 0, 16, 0},
