@@ -886,6 +886,17 @@ def condbrtarget : Operand<OtherVT> {
   let ParserMatchClass = PPCCondBrAsmOperand;
   let OperandType = "OPERAND_PCREL";
 }
+def PPCPPE42BrAsmOperand : AsmOperandClass {
+  let Name = "PPE42Br"; let PredicateMethod = "isPPE42Br";
+  let RenderMethod = "addBranchTargetOperands";
+}
+def ppe42brtarget : Operand<OtherVT> {
+  let PrintMethod = "printPPE42BranchOperand";
+  let EncoderMethod = "getPPE42BrEncoding";
+  let DecoderMethod = "decodePPE42BrTarget";
+  let ParserMatchClass = PPCPPE42BrAsmOperand;
+  let OperandType = "OPERAND_PCREL";
+}
 def abscondbrtarget : Operand<OtherVT> {
   let PrintMethod = "printAbsBranchOperand";
   let EncoderMethod = "getAbsCondBrEncoding";

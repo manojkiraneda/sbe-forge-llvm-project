@@ -478,6 +478,24 @@ void PPCInstPrinter::printBranchOperand(const MCInst *MI, uint64_t Address,
   }
 }
 
+void PPCInstPrinter::printPPE42BranchOperand(const MCInst *MI, uint64_t Address,
+                                             unsigned OpNo,
+                                             const MCSubtargetInfo &STI,
+                                             raw_ostream &O) {
+  if (!MI->getOperand(OpNo).isImm())
+    return printOperand(MI, OpNo, STI, O);
+  // The decoder reconstructs the signed byte offset directly; no further
+  // shifting is needed here, unlike standard PPC branch operands.
+  int32_t Imm = MI->getOperand(OpNo).getImm();
+  if (PrintBranchImmAsAddress) {
+    uint64_t Target = Address + Imm;
+    Target &= 0xffffffff;
+    O << formatHex(Target);
+  } else {
+    O << Imm;
+  }
+}
+
 void PPCInstPrinter::printAbsBranchOperand(const MCInst *MI, unsigned OpNo,
                                            const MCSubtargetInfo &STI,
                                            raw_ostream &O) {

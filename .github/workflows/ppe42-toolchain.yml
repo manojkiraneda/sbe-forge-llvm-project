@@ -47,9 +47,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
-          key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
+          key: ppe42-ccache-v2-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ppe42-ccache-${{ runner.os }}-
+            ppe42-ccache-v2-${{ runner.os }}-
 
       - name: Restore CMake and Ninja build tree
         id: build-cache
@@ -86,6 +86,12 @@ jobs:
             llvm/test/MC/PowerPC/ppc32-sda21-invalid.s \
             lld/test/ELF/ppc32-sda21.s \
             lld/test/ELF/ppc32-sda21-invalid.s
+
+      - name: Test PPE42 fused compare-and-branch instructions
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
+            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
 
       - name: Build PPE42 compiler runtime
         run: |
@@ -175,11 +181,11 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BUILD_DIR }}
-          key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
+          key: ppe42-build-v2-${{ runner.os }}-${{ github.sha }}
 
       - name: Save compiler object cache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/ccache
-          key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
+          key: ppe42-ccache-v2-${{ runner.os }}-${{ github.sha }}

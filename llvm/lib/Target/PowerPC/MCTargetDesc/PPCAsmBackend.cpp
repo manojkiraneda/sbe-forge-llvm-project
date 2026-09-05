@@ -13,6 +13,7 @@
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAssembler.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCMachObjectWriter.h"
 #include "llvm/MC/MCObjectWriter.h"
@@ -24,8 +25,9 @@
 #include "llvm/Support/ErrorHandling.h"
 using namespace llvm;
 
-static uint64_t adjustFixupValue(unsigned Kind, uint64_t Value) {
-  switch (Kind) {
+static uint64_t adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
+                                 MCContext &Ctx) {
+  switch (Fixup.getKind()) {
   default:
     llvm_unreachable("Unknown fixup kind!");
   case FK_Data_1:
@@ -37,6 +39,17 @@ static uint64_t adjustFixupValue(unsigned Kind, uint64_t Value) {
   case PPC::fixup_ppc_brcond14:
   case PPC::fixup_ppc_brcond14abs:
     return Value & 0xfffc;
+  case PPC::fixup_ppc_ppe42_br10:
+    if (!isInt<12>(static_cast<int64_t>(Value)))
+      Ctx.reportError(Fixup.getLoc(), "PPE42 branch target out of range");
+    if (Value & 3)
+      Ctx.reportError(Fixup.getLoc(),
+                      "PPE42 branch target must be 4-byte aligned");
+    // The 10-bit field sits at bits [21:30] of the 32-bit big-endian
+    // instruction (shift-from-LSB = 1).  applyFixup OR's the adjusted
+    // value directly into the instruction bytes, so pre-shift the field
+    // to the correct position: extract the 10 bits then place at bit 1.
+    return ((Value & 0xffc) >> 2) << 1;
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24abs:
   case PPC::fixup_ppc_br24_notoc:
@@ -67,6 +80,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case FK_Data_4:
   case PPC::fixup_ppc_brcond14:
   case PPC::fixup_ppc_sda21:
+  case PPC::fixup_ppc_ppe42_br10:
   case PPC::fixup_ppc_brcond14abs:
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24abs:
@@ -150,6 +164,7 @@ MCFixupKindInfo PPCAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_ppc_br24", 6, 24, 0},
       {"fixup_ppc_br24_notoc", 6, 24, 0},
       {"fixup_ppc_brcond14", 16, 14, 0},
+      {"fixup_ppc_ppe42_br10", 21, 10, 0},
       {"fixup_ppc_br24abs", 6, 24, 0},
       {"fixup_ppc_brcond14abs", 16, 14, 0},
       {"fixup_ppc_half16", 0, 16, 0},
@@ -163,6 +178,7 @@ MCFixupKindInfo PPCAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_ppc_br24", 2, 24, 0},
       {"fixup_ppc_br24_notoc", 2, 24, 0},
       {"fixup_ppc_brcond14", 2, 14, 0},
+      {"fixup_ppc_ppe42_br10", 1, 10, 0},
       {"fixup_ppc_br24abs", 2, 24, 0},
       {"fixup_ppc_brcond14abs", 2, 14, 0},
       {"fixup_ppc_half16", 0, 16, 0},
@@ -205,7 +221,7 @@ void PPCAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
   MCFixupKind Kind = Fixup.getKind();
   if (mc::isRelocation(Kind))
     return;
-  Value = adjustFixupValue(Kind, Value);
+  Value = adjustFixupValue(Fixup, Value, Asm->getContext());
   if (!Value)
     return; // Doesn't change encoding.
 
