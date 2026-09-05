@@ -415,6 +415,9 @@ public:
   bool isCondBr() const { return Kind == Expression ||
                                  (Kind == Immediate && isInt<16>(getImm()) &&
                                   (getImm() & 3) == 0); }
+  bool isPPE42Br() const { return Kind == Expression ||
+                                  (Kind == Immediate && isInt<12>(getImm()) &&
+                                   (getImm() & 3) == 0); }
   bool isImmZero() const { return Kind == Immediate && getImm() == 0; }
   bool isRegNumber() const { return Kind == Immediate && isUInt<5>(getImm()); }
   bool isACCRegNumber() const {
