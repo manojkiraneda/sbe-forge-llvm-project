@@ -891,7 +891,7 @@ def PPCPPE42BrAsmOperand : AsmOperandClass {
   let RenderMethod = "addBranchTargetOperands";
 }
 def ppe42brtarget : Operand<OtherVT> {
-  let PrintMethod = "printBranchOperand";
+  let PrintMethod = "printPPE42BranchOperand";
   let EncoderMethod = "getPPE42BrEncoding";
   let DecoderMethod = "decodePPE42BrTarget";
   let ParserMatchClass = PPCPPE42BrAsmOperand;
