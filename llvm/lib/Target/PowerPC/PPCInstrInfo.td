@@ -4810,6 +4810,9 @@ def : InstAlias<"xnop", (XORI R0, R0, 0)>;
 def : InstAlias<"mtxer $Rx", (MTSPR 1, gprc:$Rx)>;
 def : InstAlias<"mfxer $Rx", (MFSPR gprc:$Rx, 1)>;
 
+// PPE42 Debug Address Compare Register (SPR 316).
+def : InstAlias<"mtdacr $Rx", (MTSPR 316, gprc:$Rx)>, Requires<[IsPPE42]>;
+
 //Disable this alias on AIX for now because as does not support them.
 let Predicates = [ModernAs] in {
 

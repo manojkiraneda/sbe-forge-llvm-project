@@ -377,7 +377,8 @@ def IsPPC6xx  : Predicate<"Subtarget->isPPC6xx()">;
 def IsE500  : Predicate<"Subtarget->isE500()">;
 def HasSPE  : Predicate<"Subtarget->hasSPE()">;
 def HasICBT : Predicate<"Subtarget->hasICBT()">;
-def IsPPE42 : Predicate<"Subtarget->isPPE42()">;
+def IsPPE42 : Predicate<"Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of FeaturePPE42), "PPE42">;
 def HasPartwordAtomics : Predicate<"Subtarget->hasPartwordAtomics()">;
 def HasQuadwordAtomics : Predicate<"Subtarget->hasQuadwordAtomics()">;
 def NoNaNsFPMath
