@@ -71,6 +71,13 @@ static DecodeStatus decodeCondBrTarget(MCInst &Inst, unsigned Imm,
   return MCDisassembler::Success;
 }
 
+static DecodeStatus decodePPE42BrTarget(
+    MCInst &Inst, unsigned Imm, uint64_t /*Address*/,
+    const MCDisassembler * /*Decoder*/) {
+  Inst.addOperand(MCOperand::createImm(SignExtend32<12>(Imm << 2)));
+  return MCDisassembler::Success;
+}
+
 static DecodeStatus decodeDirectBrTarget(MCInst &Inst, unsigned Imm,
                                          uint64_t /*Address*/,
                                          const MCDisassembler * /*Decoder*/) {

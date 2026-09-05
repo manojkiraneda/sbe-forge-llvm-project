@@ -47,6 +47,7 @@ static void addFixup(SmallVectorImpl<MCFixup> &Fixups, uint32_t Offset,
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24_notoc:
   case PPC::fixup_ppc_brcond14:
+  case PPC::fixup_ppc_ppe42_br10:
   case PPC::fixup_ppc_pcrel34:
     PCRel = true;
   }
@@ -180,6 +181,17 @@ unsigned PPCMCCodeEmitter::getCondBrEncoding(const MCInst &MI, unsigned OpNo,
 
   // Add a fixup for the branch target.
   addFixup(Fixups, 0, MO.getExpr(), PPC::fixup_ppc_brcond14);
+  return 0;
+}
+
+unsigned PPCMCCodeEmitter::getPPE42BrEncoding(
+    const MCInst &MI, unsigned OpNo, SmallVectorImpl<MCFixup> &Fixups,
+    const MCSubtargetInfo &STI) const {
+  const MCOperand &MO = MI.getOperand(OpNo);
+  if (MO.isReg() || MO.isImm())
+    return getMachineOpValue(MI, MO, Fixups, STI) & 0x3ff;
+
+  addFixup(Fixups, 0, MO.getExpr(), PPC::fixup_ppc_ppe42_br10);
   return 0;
 }
 

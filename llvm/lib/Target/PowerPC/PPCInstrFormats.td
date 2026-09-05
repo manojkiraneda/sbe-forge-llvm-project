@@ -224,6 +224,25 @@ BForm_4<bits<6> opcode, bits<5> bo, bit aa, bit lk,
   let Inst{31}    = lk;
 }
 
+// PPE42 fused compare-and-branch format. BDX encodes a signed, word-aligned
+// 12-bit displacement in 10 bits.
+class FCBForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
+  : I<1, OOL, IOL, asmstr, IIC_BrB> {
+  bits<1> PX;
+  bits<2> BIX;
+  bits<5> RA;
+  bits<5> RB;
+  bits<10> BDX;
+
+  let Inst{6-7} = fcxo;
+  let Inst{8} = PX;
+  let Inst{9-10} = BIX;
+  let Inst{11-15} = RA;
+  let Inst{16-20} = RB;
+  let Inst{21-30} = BDX;
+  let Inst{31} = lk;
+}
+
 // 1.7.3 SC-Form
 class SCForm<bits<6> opcode, bits<1> xo1, bits<1> xo2,
                      dag OOL, dag IOL, string asmstr, InstrItinClass itin,
@@ -2385,4 +2404,3 @@ class PPCPostRAExpPseudo<dag OOL, dag IOL, string asmstr, list<dag> pattern>
 
 class PseudoXFormMemOp<dag OOL, dag IOL, string asmstr, list<dag> pattern>
     : PPCPostRAExpPseudo<OOL, IOL, asmstr, pattern>, XFormMemOp;
-
