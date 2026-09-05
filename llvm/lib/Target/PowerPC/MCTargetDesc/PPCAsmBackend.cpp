@@ -45,7 +45,11 @@ static uint64_t adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     if (Value & 3)
       Ctx.reportError(Fixup.getLoc(),
                       "PPE42 branch target must be 4-byte aligned");
-    return (Value & 0xffc) >> 2;
+    // The 10-bit field sits at bits [21:30] of the 32-bit big-endian
+    // instruction (shift-from-LSB = 1).  applyFixup OR's the adjusted
+    // value directly into the instruction bytes, so pre-shift the field
+    // to the correct position: extract the 10 bits then place at bit 1.
+    return ((Value & 0xffc) >> 2) << 1;
   case PPC::fixup_ppc_br24:
   case PPC::fixup_ppc_br24abs:
   case PPC::fixup_ppc_br24_notoc:
