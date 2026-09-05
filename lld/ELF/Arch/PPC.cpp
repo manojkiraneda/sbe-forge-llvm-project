@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "OutputSections.h"
+#include "SymbolTable.h"
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
@@ -224,6 +225,13 @@ RelExpr PPC::getRelExpr(RelType type, const Symbol &s,
   switch (type) {
   case R_PPC_NONE:
     return R_NONE;
+  case R_PPC_EMB_SDA21:
+    if (ctx.arg.isPic) {
+      Err(ctx) << getErrorLoc(ctx, loc)
+               << "R_PPC_EMB_SDA21 is not supported in shared objects or PIE";
+      return R_NONE;
+    }
+    return R_ABS;
   case R_PPC_ADDR16_HA:
   case R_PPC_ADDR16_HI:
   case R_PPC_ADDR16_LO:
@@ -321,6 +329,42 @@ void PPC::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
   RelType newType;
   std::tie(newType, val) = fromDTPREL(rel.type, val);
   switch (newType) {
+  case R_PPC_EMB_SDA21: {
+    // GNU tools locate this relocation at the start of the instruction.
+    // Select the base from the final output section, not the input section.
+    OutputSection *sec = rel.sym->getOutputSection();
+    StringRef name = sec ? sec->name : StringRef();
+    StringRef baseName;
+    unsigned reg;
+    if (name == ".sdata" || name == ".sbss") {
+      reg = 13;
+      baseName = "_SDA_BASE_";
+    } else if (name == ".sdata2" || name == ".sbss2") {
+      reg = 2;
+      baseName = "_SDA2_BASE_";
+    } else if (name == ".PPC.EMB.sdata0" || name == ".PPC.EMB.sbss0") {
+      reg = 0;
+    } else {
+      Err(ctx) << getErrorLoc(ctx, loc) << "R_PPC_EMB_SDA21 against "
+               << rel.sym << " requires a small-data output section";
+      return;
+    }
+    if (!baseName.empty()) {
+      Symbol *base = ctx.symtab->find(baseName);
+      if (!base || !base->isDefined()) {
+        Err(ctx) << getErrorLoc(ctx, loc) << "R_PPC_EMB_SDA21 requires "
+                 << baseName << " to be defined";
+        return;
+      }
+      val -= base->getVA(ctx);
+    }
+    // Addresses and differences wrap at 32 bits on this target.
+    val = SignExtend64<32>(val);
+    checkInt(ctx, loc, val, 16, rel);
+    write32(ctx, loc, (read32(ctx, loc) & ~0x001fffffU) | (reg << 16) |
+                          (val & 0xffff));
+    break;
+  }
   case R_PPC_ADDR16:
     checkIntUInt(ctx, loc, val, 16, rel);
     write16(ctx, loc, val);

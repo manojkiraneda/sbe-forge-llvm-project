@@ -34,6 +34,7 @@ const MCAsmInfo::AtSpecifier elfAtSpecifiers[] = {
     {PPC::S_HIGHEST, "highest"},
     {PPC::S_HIGHESTA, "highesta"},
     {PPC::S_LO, "l"},
+    {PPC::S_SDA21, "sda21"},
     {PPC::S_PCREL, "PCREL"},
     {PPC::S_PLT, "PLT"},
     {PPC::S_TLSGD, "tlsgd"},

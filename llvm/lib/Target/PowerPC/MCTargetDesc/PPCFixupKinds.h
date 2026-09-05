@@ -36,6 +36,11 @@ enum Fixups {
   /// 'li' or 'addis'.
   fixup_ppc_half16,
 
+  /// Small-data relocation covering the RA and D fields of a D-form
+  /// instruction. Unlike half16, the relocation is located at the start of the
+  /// instruction.
+  fixup_ppc_sda21,
+
   /// A 14-bit fixup corresponding to lo16(_foo) with implied 2 zero bits for
   /// instrs like 'std'.
   fixup_ppc_half16ds,
