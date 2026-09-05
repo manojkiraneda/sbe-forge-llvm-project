@@ -57,3 +57,68 @@ __umoddi3:
         addi    %r1, %r1, 16
         blr
         .size __umoddi3, .-__umoddi3
+
+        .section .text.__divdi3,"ax",@progbits
+        .align 2
+        .globl __divdi3
+        .type __divdi3, @function
+__divdi3:
+        mflr    %r0
+        stwu    %r1, -16(%r1)
+        stw     %r0, 20(%r1)
+        xor     %r7, %r3, %r5
+        stw     %r7, 8(%r1)
+        cmpwi   %r3, 0
+        bge     .Ldivdi_dividend_ready
+        subfic  %r4, %r4, 0
+        subfze  %r3, %r3
+.Ldivdi_dividend_ready:
+        cmpwi   %r5, 0
+        bge     .Ldivdi_divisor_ready
+        subfic  %r6, %r6, 0
+        subfze  %r5, %r5
+.Ldivdi_divisor_ready:
+        bl      __udivdi3
+        lwz     %r7, 8(%r1)
+        cmpwi   %r7, 0
+        bge     .Ldivdi_result_ready
+        subfic  %r4, %r4, 0
+        subfze  %r3, %r3
+.Ldivdi_result_ready:
+        lwz     %r0, 20(%r1)
+        mtlr    %r0
+        addi    %r1, %r1, 16
+        blr
+        .size __divdi3, .-__divdi3
+
+        .section .text.__moddi3,"ax",@progbits
+        .align 2
+        .globl __moddi3
+        .type __moddi3, @function
+__moddi3:
+        mflr    %r0
+        stwu    %r1, -16(%r1)
+        stw     %r0, 20(%r1)
+        stw     %r3, 8(%r1)
+        cmpwi   %r3, 0
+        bge     .Lmoddi_dividend_ready
+        subfic  %r4, %r4, 0
+        subfze  %r3, %r3
+.Lmoddi_dividend_ready:
+        cmpwi   %r5, 0
+        bge     .Lmoddi_divisor_ready
+        subfic  %r6, %r6, 0
+        subfze  %r5, %r5
+.Lmoddi_divisor_ready:
+        bl      __umoddi3
+        lwz     %r7, 8(%r1)
+        cmpwi   %r7, 0
+        bge     .Lmoddi_result_ready
+        subfic  %r4, %r4, 0
+        subfze  %r3, %r3
+.Lmoddi_result_ready:
+        lwz     %r0, 20(%r1)
+        mtlr    %r0
+        addi    %r1, %r1, 16
+        blr
+        .size __moddi3, .-__moddi3

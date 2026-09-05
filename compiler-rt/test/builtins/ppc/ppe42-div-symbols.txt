@@ -1,0 +1,11 @@
+# Verify that the staged PPE42 runtime contains the complete signed and
+# unsigned division ABI for both integer widths.
+
+# CHECK-DAG: T __divsi3
+# CHECK-DAG: T __modsi3
+# CHECK-DAG: T __udivsi3
+# CHECK-DAG: T __umodsi3
+# CHECK-DAG: T __divdi3
+# CHECK-DAG: T __moddi3
+# CHECK-DAG: T __udivdi3
+# CHECK-DAG: T __umoddi3
