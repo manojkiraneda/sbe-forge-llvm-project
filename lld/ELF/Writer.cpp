@@ -189,8 +189,8 @@ void elf::addReservedSymbols(Ctx &ctx) {
     if (ctx.symtab->find("__gnu_local_gp"))
       ctx.sym.mipsLocalGp = addAbsolute("__gnu_local_gp");
   } else if (ctx.arg.emachine == EM_PPC) {
-    // glibc *crt1.o has a undefined reference to _SDA_BASE_. Since we don't
-    // support Small Data Area, define it arbitrarily as 0.
+    // Preserve the zero fallback required by glibc *crt1.o. Embedded small-data
+    // users define their actual bases in the linker script.
     addOptionalRegular(ctx, "_SDA_BASE_", nullptr, 0, STV_HIDDEN);
   } else if (ctx.arg.emachine == EM_PPC64) {
     addPPC64SaveRestore(ctx);

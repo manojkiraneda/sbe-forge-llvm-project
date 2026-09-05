@@ -42,6 +42,17 @@ unsigned PPCELFObjectWriter::getRelocType(const MCFixup &Fixup,
                                           bool IsPCRel) const {
   SMLoc Loc = Fixup.getValue()->getLoc();
   auto Spec = static_cast<PPCMCExpr::Specifier>(Target.getSpecifier());
+  if (Spec == PPC::S_SDA21) {
+    if (is64Bit()) {
+      reportError(Loc, "@sda21 is only supported for 32-bit PowerPC ELF");
+      return ELF::R_PPC_NONE;
+    }
+    if (IsPCRel || Fixup.getKind() != PPC::fixup_ppc_sda21) {
+      reportError(Loc, "@sda21 requires a D-form instruction operand");
+      return ELF::R_PPC_NONE;
+    }
+    return ELF::R_PPC_EMB_SDA21;
+  }
   switch (Spec) {
   case PPC::S_DTPMOD:
   case PPC::S_DTPREL:
