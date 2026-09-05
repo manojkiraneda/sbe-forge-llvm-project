@@ -26,6 +26,9 @@ enum Fixups {
   /// 14-bit PC relative relocation for conditional branches.
   fixup_ppc_brcond14,
 
+  /// 10-bit field encoding a signed 12-bit PC-relative PPE42 branch.
+  fixup_ppc_ppe42_br10,
+
   /// 24-bit absolute relocation for direct branches like 'ba' and 'bla'.
   fixup_ppc_br24abs,
 
