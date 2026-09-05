@@ -100,6 +100,10 @@ jobs:
             "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
             "$BUILD_DIR/ppe42-runtime/ppe42-div32.o" \
             "$BUILD_DIR/ppe42-runtime/ppe42-div64.o"
+          "$BUILD_DIR/bin/llvm-nm" --defined-only \
+            "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" | \
+            "$BUILD_DIR/bin/FileCheck" \
+              compiler-rt/test/builtins/ppc/ppe42-div-symbols.txt
 
       - name: Stage minimal toolchain
         run: |
