@@ -35,6 +35,7 @@ constexpr EnumStringDef<MCAsmInfo::AtSpecifierKind> ELFAtSpecifierDefs[] = {
     {{"highest"}, PPC::S_HIGHEST},
     {{"highesta"}, PPC::S_HIGHESTA},
     {{"l"}, PPC::S_LO},
+    {{"sda21"}, PPC::S_SDA21},
     {{"PCREL"}, PPC::S_PCREL},
     {{"PLT"}, PPC::S_PLT},
     {{"tlsgd"}, PPC::S_TLSGD},
