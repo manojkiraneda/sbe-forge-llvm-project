@@ -29,12 +29,12 @@
 # ENC: cmpwibeq 4, 0, .Lforward
 # ENC-NEXT: # fixup A - offset: 0, value: .Lforward, kind: fixup_ppc_ppe42_br10
 
-# DIS: cmplwbge 4, 3, 16
-# DIS: cmpwiblt 4, 0, 8
-# DIS: cmpwibeq 3, 0, 36
-# DIS: cmplwblt 3, 4, 12
-# DIS: cmpwibne 5, 0, -4
-# DIS: cmpwibeq 9, 0, 28
+# DIS: cmplwbge 4, 3, 0x10
+# DIS: cmpwiblt 4, 0, 0xc
+# DIS: cmpwibeq 3, 0, 0x2c
+# DIS: cmplwblt 3, 4, 0x18
+# DIS: cmpwibne 5, 0, 0xc
+# DIS: cmpwibeq 9, 0, 0x30
 # DIS: nop
-# DIS: cmpwibeq 3, 0, -4
-# DIS: cmpwibeq 4, 0, 8
+# DIS: cmpwibeq 3, 0, 0x18
+# DIS: cmpwibeq 4, 0, 0x24
