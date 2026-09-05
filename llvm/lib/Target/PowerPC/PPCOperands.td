@@ -430,3 +430,15 @@ def tlscall32 : Operand<i32> {
   let MIOperandInfo = (ops calltarget:$func, tlsgd32:$sym);
   let EncoderMethod = "getTLSCallEncoding";
 }
+
+def PPCPPE42BrAsmOperand : AsmOperandClass {
+  let Name = "PPE42Br"; let PredicateMethod = "isPPE42Br";
+  let RenderMethod = "addBranchTargetOperands";
+}
+def ppe42brtarget : Operand<OtherVT> {
+  let PrintMethod = "printBranchOperand";
+  let EncoderMethod = "getPPE42BrEncoding";
+  let DecoderMethod = "decodePPE42BrTarget";
+  let ParserMatchClass = PPCPPE42BrAsmOperand;
+  let OperandType = "OPERAND_PCREL";
+}

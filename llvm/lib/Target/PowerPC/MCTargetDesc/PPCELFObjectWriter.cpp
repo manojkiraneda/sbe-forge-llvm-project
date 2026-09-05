@@ -135,6 +135,10 @@ unsigned PPCELFObjectWriter::getRelocType(const MCFixup &Fixup,
     case PPC::fixup_ppc_brcond14abs:
       Type = ELF::R_PPC_REL14;
       break;
+    case PPC::fixup_ppc_ppe42_br10:
+      reportError(Loc, "PPE42 fused branch target must be locally resolvable");
+      Type = ELF::R_PPC_NONE;
+      break;
     case PPC::fixup_ppc_half16:
       switch (Spec) {
       default:
