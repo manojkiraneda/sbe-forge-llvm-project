@@ -181,7 +181,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BUILD_DIR }}
-          key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
+          key: ppe42-build-v2-${{ runner.os }}-${{ github.sha }}
 
       - name: Save compiler object cache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
