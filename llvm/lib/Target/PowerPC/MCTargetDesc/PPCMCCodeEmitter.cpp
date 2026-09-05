@@ -20,6 +20,7 @@
 #include "llvm/MC/MCFixup.h"
 #include "llvm/MC/MCInstrDesc.h"
 #include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/MCValue.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/MathExtras.h"
@@ -50,6 +51,15 @@ static void addFixup(SmallVectorImpl<MCFixup> &Fixups, uint32_t Offset,
     PCRel = true;
   }
   Fixups.push_back(MCFixup::create(Offset, Value, Kind, PCRel));
+}
+
+static bool isSDA21(const MCExpr *Expr) {
+  if (const auto *SE = dyn_cast<MCSpecifierExpr>(Expr))
+    return SE->getSpecifier() == PPC::S_SDA21;
+
+  MCValue Value;
+  return Expr->evaluateAsRelocatable(Value, nullptr) &&
+         Value.getSpecifier() == PPC::S_SDA21;
 }
 
 unsigned PPCMCCodeEmitter::
@@ -220,6 +230,10 @@ uint64_t PPCMCCodeEmitter::getImmEncoding(const MCInst &MI, unsigned OpNo,
   if (MO.isImm())
     return getMachineOpValue(MI, MO, Fixups, STI);
 
+  if (Fixup == PPC::fixup_ppc_half16 && isSDA21(MO.getExpr())) {
+    addFixup(Fixups, 0, MO.getExpr(), PPC::fixup_ppc_sda21);
+    return 0;
+  }
   uint32_t Offset = 0;
   if (Fixup == PPC::fixup_ppc_half16)
     Offset = IsLittleEndian ? 0 : 2;
@@ -237,7 +251,10 @@ unsigned PPCMCCodeEmitter::getDispRIEncoding(const MCInst &MI, unsigned OpNo,
     return getMachineOpValue(MI, MO, Fixups, STI) & 0xFFFF;
 
   // Add a fixup for the displacement field.
-  addFixup(Fixups, IsLittleEndian ? 0 : 2, MO.getExpr(), PPC::fixup_ppc_half16);
+  if (isSDA21(MO.getExpr()))
+    addFixup(Fixups, 0, MO.getExpr(), PPC::fixup_ppc_sda21);
+  else
+    addFixup(Fixups, IsLittleEndian ? 0 : 2, MO.getExpr(), PPC::fixup_ppc_half16);
   return 0;
 }
 
