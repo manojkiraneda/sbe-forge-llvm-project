@@ -37,4 +37,4 @@
 # DIS: cmpwibeq 9, 0, 0x30
 # DIS: nop
 # DIS: cmpwibeq 3, 0, 0x18
-# DIS: cmpwibeq 4, 0, 0x24
+# DIS: cmpwibeq 4, 0, 0x28
