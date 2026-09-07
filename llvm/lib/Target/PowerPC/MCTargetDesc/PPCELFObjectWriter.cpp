@@ -141,7 +141,7 @@ unsigned PPCELFObjectWriter::getRelocType(const MCFixup &Fixup,
       // even when it has global visibility (as is common for firmware
       // functions).  Keep rejecting genuinely external targets because the
       // linker cannot repair the 10-bit instruction field later.
-      if (!Target.getSymA() || !Target.getSymA()->getSymbol().isDefined())
+      if (!Target.getAddSym() || !Target.getAddSym()->isDefined())
         reportError(Loc, "PPE42 fused branch target must be locally resolvable");
       Type = ELF::R_PPC_NONE;
       break;
