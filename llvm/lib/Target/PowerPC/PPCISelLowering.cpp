@@ -16697,6 +16697,14 @@ static SDValue DAGCombineAddc(SDNode *N,
 
 SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
+  // PPE42 expands i64 into i32 pairs during type legalization. Before that
+  // happens, leave i64 nodes to the generic combiner/legalizer: the VDR
+  // combines below create machine subregister nodes which require legal i64
+  // registers and cannot themselves be expanded by the type legalizer.
+  if (Subtarget.isPPE42() && N->getValueType(0) == MVT::i64 &&
+      !isTypeLegal(MVT::i64))
+    return SDValue();
+
   SelectionDAG &DAG = DCI.DAG;
   SDLoc dl(N);
   auto lowerPPE42Binary = [&](unsigned Opcode) {
