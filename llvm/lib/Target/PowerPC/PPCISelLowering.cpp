@@ -776,13 +776,13 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     // PPE42: 32-bit architecture with limited 64-bit support via VDR registers
     // VDR registers are pairs of consecutive GPRs used for 64-bit load/store
     if (Subtarget.isPPE42()) {
-      addRegisterClass(MVT::i64, &PPC::VDRCRegClass);
-      // Avoid selecting PPC64 extending loads such as LWZ8.  PPE42 represents
-      // i64 values in VDR register pairs, so form the extension from an i32
-      // load and rebuild the pair in PerformDAGCombine instead.
-      setLoadExtAction(ISD::ZEXTLOAD, MVT::i64, MVT::i32, Expand);
-      // VDR supports load/store and basic bitwise operations
-      // We use REG_SEQUENCE instead of BUILD_PAIR for better register allocation
+      // VDR is an operand class for explicit lvd/stvd instructions, but it is
+      // not a general-purpose i64 register class.  PPE42 is a 32-bit target;
+      // making i64 legal here causes ordinary 64-bit C operations to enter
+      // the generic register/subregister pipeline with VDR subregisters, for
+      // which the 32-bit backend has no legal register-class mapping.  Keep
+      // i64 expanded into its normal pair of i32 values and reserve VDR for
+      // the explicit PPE42 load/store instructions.
     }
   }
 
