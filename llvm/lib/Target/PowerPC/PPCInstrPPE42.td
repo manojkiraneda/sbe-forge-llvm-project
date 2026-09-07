@@ -78,6 +78,7 @@ defm : PPE42FCBZeroAlias<"bwnz", 0, 2>;
 
 // PPE42X context save/restore instructions.  The hardware uses the DS-form
 // encoding with XO=3; the low DS bit is the context-save/restore selector.
+let Predicates = [IsPPE42] in {
 def STCXU : DSForm_1<62, 3, (outs),
                      (ins gprc:$RST, (memrix $D, $RA):$addr),
                      "stcxu $RST, $addr", IIC_LdStStore, []>;
@@ -104,3 +105,4 @@ def : InstAlias<"bb0wil $RA, $BNX, $BDX",
                 (BNBWIL 1, gprc:$RA, u5imm:$BNX, ppe42brtarget:$BDX)>;
 def : InstAlias<"bb1wil $RA, $BNX, $BDX",
                 (BNBWIL 0, gprc:$RA, u5imm:$BNX, ppe42brtarget:$BDX)>;
+}
