@@ -42,6 +42,24 @@ def STVD : DForm_1<6, (outs), (ins vdrc:$RST, (memri $D, $RA):$dst),
 }
 } // Predicates = [IsPPE42]
 
+// PPE42 uses all eleven low bits for these opcodes (there is no Rc bit).
+let Predicates = [IsPPE42], DecoderNamespace = "PPE42" in {
+def LVDX : XForm_1<31, 0, (outs vdrc:$RST),
+                   (ins gprc_nor0:$RA, gprc:$RB),
+                   "lvdx $RST, $RA, $RB", IIC_LdStLoad, []> {
+  let Inst{21-31} = 17;
+  let mayLoad = 1;
+  let hasSideEffects = 0;
+}
+def STVDX : XForm_1<31, 0, (outs),
+                    (ins vdrc:$RST, gprc_nor0:$RA, gprc:$RB),
+                    "stvdx $RST, $RA, $RB", IIC_LdStStore, []> {
+  let Inst{21-31} = 145;
+  let mayStore = 1;
+  let hasSideEffects = 0;
+}
+}
+
 // PPE42 64-bit rotate and insert using VDR registers
 // This is the PPE42 variant of RLDIMI that uses VDR register pairs
 // The destination register $RA must be the same as input register $RTi
