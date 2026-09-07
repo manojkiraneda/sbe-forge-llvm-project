@@ -229,13 +229,14 @@ BForm_4<bits<6> opcode, bits<5> bo, bit aa, bit lk,
 class FCBForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
   : I<1, OOL, IOL, asmstr, IIC_BrB> {
   bits<1> PX;
+  bits<2> BIX;
   bits<5> RA;
   bits<5> RB;
   bits<10> BDX;
 
   let Inst{6-7} = fcxo;
   let Inst{8} = PX;
-  let Inst{9-10} = 0;
+  let Inst{9-10} = BIX;
   let Inst{11-15} = RA;
   let Inst{16-20} = RB;
   let Inst{21-30} = BDX;
@@ -246,14 +247,13 @@ class FCBForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
 class FCBImmForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
   : I<1, OOL, IOL, asmstr, IIC_BrB> {
   bits<1> PX;
-  bits<2> BIX;
   bits<5> RA;
   bits<5> BNX;
   bits<10> BDX;
 
   let Inst{6-7} = fcxo;
   let Inst{8} = PX;
-  let Inst{9-10} = BIX;
+  let Inst{9-10} = 0;
   let Inst{11-15} = RA;
   let Inst{16-20} = BNX;
   let Inst{21-30} = BDX;
