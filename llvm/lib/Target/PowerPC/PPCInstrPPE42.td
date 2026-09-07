@@ -75,3 +75,32 @@ defm : PPE42FCBZeroAlias<"bwgtz", 1, 1>;
 defm : PPE42FCBZeroAlias<"bwgez", 0, 0>;
 defm : PPE42FCBZeroAlias<"bwz", 1, 2>;
 defm : PPE42FCBZeroAlias<"bwnz", 0, 2>;
+
+// PPE42X context save/restore instructions.  The hardware uses the DS-form
+// encoding with XO=3; the low DS bit is the context-save/restore selector.
+def STCXU : DSForm_1<62, 3, (outs),
+                     (ins gprc:$RST, (memrix $D, $RA):$addr),
+                     "stcxu $RST, $addr", IIC_LdStStore, []>;
+def LCXU : DSForm_1<58, 3, (outs gprc:$RST),
+                    (ins (memrix $D, $RA):$addr),
+                    "lcxu $RST, $addr", IIC_LdStLoad, []>;
+
+// Bit-test fused branches use FCBXO=3 and BBXOA=0.  The public spellings
+// below are the PPE42 extended mnemonics for the immediate-bit form.
+def BNBWI : FCBImmForm<3, 0, (outs),
+                    (ins u1imm:$PX, gprc:$RA, u5imm:$BNX,
+                         ppe42brtarget:$BDX),
+                    "bnbwi $PX, $RA, $BNX, $BDX">;
+
+def : InstAlias<"bb0wi $RA, $BNX, $BDX",
+                (BNBWI 1, gprc:$RA, u5imm:$BNX, ppe42brtarget:$BDX)>;
+def : InstAlias<"bb1wi $RA, $BNX, $BDX",
+                (BNBWI 0, gprc:$RA, u5imm:$BNX, ppe42brtarget:$BDX)>;
+def BNBWIL : FCBImmForm<3, 1, (outs),
+                        (ins u1imm:$PX, gprc:$RA, u5imm:$BNX,
+                             ppe42brtarget:$BDX),
+                        "bnbwil $PX, $RA, $BNX, $BDX">;
+def : InstAlias<"bb0wil $RA, $BNX, $BDX",
+                (BNBWIL 1, gprc:$RA, u5imm:$BNX, ppe42brtarget:$BDX)>;
+def : InstAlias<"bb1wil $RA, $BNX, $BDX",
+                (BNBWIL 0, gprc:$RA, u5imm:$BNX, ppe42brtarget:$BDX)>;
