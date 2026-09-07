@@ -1339,6 +1339,19 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
   std::string NameBuf = getParser().getTok().getString().lower();
   StringRef Name(NameBuf);
   MCRegister RegNo = MatchRegisterName(Name);
+  // PPE firmware commonly defines VDR names with .equiv (for example,
+  // d5 = 5).  Those names arrive here as identifiers rather than generated
+  // register tokens, so accept the PPE42 dN spelling directly.
+  if (!RegNo && getSTI().hasFeature(PPC::FeaturePPE42) &&
+      Name.consume_front("d")) {
+    if (!Name.getAsInteger(10, IntVal) &&
+        (IntVal == 0 || (IntVal >= 2 && IntVal <= 9) ||
+         (IntVal >= 28 && IntVal <= 31))) {
+      getParser().Lex();
+      return RRegs[IntVal];
+    }
+    return MCRegister();
+  }
   if (!RegNo)
     return RegNo;
 
@@ -1472,6 +1485,26 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
   SMLoc S = Parser.getTok().getLoc();
   SMLoc E = SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
   const MCExpr *EVal;
+
+  // VDR operands are spelled dN in PPE firmware and may be introduced by an
+  // .equiv directive, so recognize them before treating the identifier as a
+  // symbol expression.
+  if (getLexer().is(AsmToken::Identifier) &&
+      getSTI().hasFeature(PPC::FeaturePPE42)) {
+    StringRef Name = getParser().getTok().getString();
+    if (Name.consume_front("d")) {
+      int64_t IntVal;
+      if (!Name.getAsInteger(10, IntVal) &&
+          (IntVal == 0 || (IntVal >= 2 && IntVal <= 9) ||
+           (IntVal >= 28 && IntVal <= 31))) {
+        SMLoc End = getParser().getTok().getEndLoc();
+        getParser().Lex();
+        Operands.push_back(
+            PPCOperand::CreateImm(IntVal, S, End, isPPC64()));
+        return false;
+      }
+    }
+  }
 
   // Attempt to parse the next token as an immediate
   switch (getLexer().getKind()) {
