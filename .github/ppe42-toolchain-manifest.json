@@ -7,5 +7,5 @@
   "targets": ["PowerPC"],
   "tools": ["clang", "ld.lld", "llvm-ar", "llvm-objcopy", "llvm-objdump", "llvm-nm"],
   "build_type": "Release",
-  "assertions": true
+  "assertions": false
 }
