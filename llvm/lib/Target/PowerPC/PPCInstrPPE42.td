@@ -8,6 +8,16 @@
 
 let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
     isTerminator = 1, hasSideEffects = 1, Defs = [CR0], Uses = [XER] in {
+  def CMPWBC : FCBForm<0, 0, (outs),
+                       (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
+                            ppe42brtarget:$BDX),
+                       "cmpwbc $PX, $BIX, $RA, $RB, $BDX">;
+  def CMPWBCL : FCBForm<0, 1, (outs),
+                        (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
+                             ppe42brtarget:$BDX),
+                        "cmpwbcl $PX, $BIX, $RA, $RB, $BDX"> {
+    let Defs = [CR0, LR];
+  }
   def CMPLWBC : FCBForm<1, 0, (outs),
                         (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
                              ppe42brtarget:$BDX),
@@ -39,6 +49,22 @@ multiclass PPE42FCBRegAlias<string name, bits<1> px, bits<2> bix> {
                             ppe42brtarget:$BDX)>;
 }
 
+multiclass PPE42FCBSignedRegAlias<string name, bits<1> px, bits<2> bix> {
+  def : InstAlias<name#" $RA, $RB, $BDX",
+                  (CMPWBC px, bix, gprc:$RA, gprc:$RB,
+                          ppe42brtarget:$BDX)>;
+  def : InstAlias<name#"l $RA, $RB, $BDX",
+                  (CMPWBCL px, bix, gprc:$RA, gprc:$RB,
+                           ppe42brtarget:$BDX)>;
+}
+
+defm : PPE42FCBSignedRegAlias<"cmpwblt", 1, 0>;
+defm : PPE42FCBSignedRegAlias<"cmpwble", 0, 1>;
+defm : PPE42FCBSignedRegAlias<"cmpwbgt", 1, 1>;
+defm : PPE42FCBSignedRegAlias<"cmpwbge", 0, 0>;
+defm : PPE42FCBSignedRegAlias<"cmpwbeq", 1, 2>;
+defm : PPE42FCBSignedRegAlias<"cmpwbne", 0, 2>;
+
 defm : PPE42FCBRegAlias<"cmplwblt", 1, 0>;
 defm : PPE42FCBRegAlias<"cmplwble", 0, 1>;
 defm : PPE42FCBRegAlias<"cmplwbgt", 1, 1>;
@@ -61,6 +87,9 @@ defm : PPE42FCBImmAlias<"cmpwibgt", 1, 1>;
 defm : PPE42FCBImmAlias<"cmpwibge", 0, 0>;
 defm : PPE42FCBImmAlias<"cmpwibeq", 1, 2>;
 defm : PPE42FCBImmAlias<"cmpwibne", 0, 2>;
+
+defm : PPE42FCBImmAlias<"subwibz", 1, 3>;
+defm : PPE42FCBImmAlias<"subwibnz", 0, 3>;
 
 multiclass PPE42FCBZeroAlias<string name, bits<1> px, bits<2> bix> {
   def : InstAlias<name#" $RA, $BDX",
