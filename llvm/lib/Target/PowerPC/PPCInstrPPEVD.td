@@ -40,6 +40,22 @@ def STVD : DForm_1<6, (outs), (ins vdrc:$RST, (memri $D, $RA):$dst),
                    [(store i64:$RST, iaddr:$dst)]> {
   let DecoderNamespace = "PPE42";
 }
+
+def LVDU : DForm_1<9, (outs vdrc:$RST, ptr_rc_nor0:$ea_result),
+                    (ins (memri $D, $RA):$addr),
+                    "lvdu $RST, $addr", IIC_LdStLoadUpd, []>,
+                    RegConstraint<"$addr.reg = $ea_result">,
+                    NoEncode<"$ea_result"> {
+  let DecoderNamespace = "PPE42";
+}
+
+def STVDU : DForm_1<22, (outs ptr_rc_nor0:$ea_result),
+                     (ins vdrc:$RST, (memri $D, $RA):$addr),
+                     "stvdu $RST, $addr", IIC_LdStSTU, []>,
+                     RegConstraint<"$addr.reg = $ea_result">,
+                     NoEncode<"$ea_result"> {
+  let DecoderNamespace = "PPE42";
+}
 } // Predicates = [IsPPE42]
 
 // PPE42 uses all eleven low bits for these opcodes (there is no Rc bit).
