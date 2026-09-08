@@ -159,16 +159,16 @@ foreach Index = 0-31 in {
 // Using RegisterTuples ensures both GPRs are allocated together
 
 // Define register tuples for valid PPE42 VDR pairs
-// Valid VDR base registers: 0, 2-9, 28-31
+// Valid VDR base registers: 0-9, 28-31
 def VDRTuples : RegisterTuples<
   [sub_gpr_hi, sub_gpr_lo],
   // High registers (first in pair)
-  [(add R0, R2, R3, R4, R5, R6, R7, R8, R9, R28, R29, R30, R31),
+  [(add R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R28, R29, R30, R31),
    // Low registers (second in pair)
-   (add R1, R3, R4, R5, R6, R7, R8, R9, R10, R29, R30, R31, R0)]>;
+   (add R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R29, R30, R31, R0)]>;
 
 // Note: The tuple generator will create:
-// VD_R0_R1, VD_R2_R3, VD_R3_R4, VD_R4_R5, VD_R5_R6, VD_R6_R7, VD_R7_R8,
+// VD_R0_R1, VD_R1_R2, VD_R2_R3, VD_R3_R4, VD_R4_R5, VD_R5_R6, VD_R6_R7, VD_R7_R8,
 // VD_R8_R9, VD_R9_R10, VD_R28_R29, VD_R29_R30, VD_R30_R31, VD_R31_R0
 
 // Define the register class containing the tuples
