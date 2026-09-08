@@ -450,10 +450,10 @@ public:
                                       (Kind == Immediate
                                        && isUInt<5>(getImm())); }
   bool isVDRRegNumber() const {
-    // VDR registers: d0, d2-d9, d28-d31
+    // VDR registers: d0-d9, d28-d31
     if (Kind != Immediate) return false;
     int64_t Reg = getImm();
-    return Reg == 0 || (Reg >= 2 && Reg <= 9) || (Reg >= 28 && Reg <= 31);
+    return (Reg >= 0 && Reg <= 9) || (Reg >= 28 && Reg <= 31);
   }
 
   bool isEvenRegNumber() const { return isRegNumber() && (getImm() & 1) == 0; }
@@ -1345,7 +1345,7 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
   if (!RegNo && getSTI().hasFeature(PPC::FeaturePPE42) &&
       Name.consume_front("d")) {
     if (!Name.getAsInteger(10, IntVal) &&
-        (IntVal == 0 || (IntVal >= 2 && IntVal <= 9) ||
+        ((IntVal >= 0 && IntVal <= 9) ||
          (IntVal >= 28 && IntVal <= 31))) {
       getParser().Lex();
       return RRegs[IntVal];
@@ -1370,7 +1370,7 @@ MCRegister PPCAsmParser::matchRegisterName(int64_t &IntVal) {
   else if (Name.starts_with("r"))
     RegNo = isPPC64() ? XRegs[IntVal] : RRegs[IntVal];
   else if (Name.starts_with("d")) {
-    // VDR registers for PPE42 (d0, d2-d9, d28-d31)
+    // VDR registers for PPE42 (d0-d9, d28-d31)
     // These are already matched by MatchRegisterName, just extract the number
     // IntVal already contains the register number from line 1342
   }
