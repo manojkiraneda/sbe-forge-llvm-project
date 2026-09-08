@@ -119,6 +119,7 @@ jobs:
             cp --dereference "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
             strip "$PACKAGE_DIR/bin/$tool"
           done
+          ln -s clang "$PACKAGE_DIR/bin/clang++"
 
           resource_dir="$("$BUILD_DIR/bin/clang" --print-resource-dir)"
           cp -a "$resource_dir" "$PACKAGE_DIR/lib/clang/"
@@ -134,6 +135,8 @@ jobs:
 
           du -sh "$PACKAGE_DIR"
           find "$PACKAGE_DIR" -maxdepth 3 -type f -printf '%s %p\n' | sort -nr
+
+          "$PACKAGE_DIR/bin/clang++" --version
 
       - name: Test candidate toolchain against SBE Forge
         env:
