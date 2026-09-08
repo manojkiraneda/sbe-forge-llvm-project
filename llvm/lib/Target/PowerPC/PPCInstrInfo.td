@@ -2837,6 +2837,7 @@ def MCRXRX : X_BF3<31, 576, (outs crrc:$BF), (ins),
 } // hasSideEffects = 0
 
 def : InstAlias<"mtcr $rA", (MTCRF 255, gprc:$rA)>;
+def : InstAlias<"mtcr0 $rA", (MTCRF 128, gprc:$rA)>, Requires<[IsPPE42]>;
 
 let Predicates = [HasFPU] in {
 // Custom inserter instruction to perform FADD in round-to-zero mode.
