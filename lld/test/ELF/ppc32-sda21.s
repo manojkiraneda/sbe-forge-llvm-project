@@ -16,10 +16,10 @@
 ## Check preservation of the opcode and destination/source register, selection
 ## of all three bases, signed boundary offsets, addends and high 32-bit addresses.
 # BE:      Contents of section .text:
-# BE-NEXT: 1000 148d8000 188d0008 8062fffc 90620000
+# BE-NEXT: 1000 148d8000 188d8010 8062fffc 90620000
 # BE-NEXT: 1010 88c00100 98c00109 38ed7fff 810d8008
 # LE:      Contents of section .text:
-# LE-NEXT: 1000 00808d14 08008d18 fcff6280 00006290
+# LE-NEXT: 1000 00808d14 10808d18 fcff6280 00006290
 # LE-NEXT: 1010 0001c088 0901c098 ff7fed38 08800d81
 # PARTIAL: 0x0 R_PPC_EMB_SDA21
 # PARTIAL: 0x1C R_PPC_EMB_SDA21
