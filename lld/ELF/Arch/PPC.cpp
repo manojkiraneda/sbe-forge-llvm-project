@@ -334,14 +334,25 @@ void PPC::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
     // Select the base from the final output section, not the input section.
     OutputSection *sec = rel.sym->getOutputSection();
     StringRef name = sec ? sec->name : StringRef();
+    // Linker scripts commonly collect EABI small-data input sections into an
+    // image- or library-specific output section. Preserve the input section's
+    // SDA class in that case instead of requiring the output name to remain
+    // exactly .sdata/.sbss/.sdata2/.sbss2.
+    if (Defined *d = dyn_cast<Defined>(rel.sym)) {
+      StringRef inputName = d->section ? d->section->name : StringRef();
+      if (inputName.starts_with(".sdata") || inputName.starts_with(".sbss"))
+        name = inputName;
+    }
     StringRef baseName;
     unsigned reg;
-    if (name == ".sdata" || name == ".sbss") {
-      reg = 13;
-      baseName = "_SDA_BASE_";
-    } else if (name == ".sdata2" || name == ".sbss2") {
+    if (name == ".sdata2" || name.starts_with(".sdata2.") ||
+        name == ".sbss2" || name.starts_with(".sbss2.")) {
       reg = 2;
       baseName = "_SDA2_BASE_";
+    } else if (name == ".sdata" || name.starts_with(".sdata.") ||
+               name == ".sbss" || name.starts_with(".sbss.")) {
+      reg = 13;
+      baseName = "_SDA_BASE_";
     } else if (name == ".PPC.EMB.sdata0" || name == ".PPC.EMB.sbss0") {
       reg = 0;
     } else {
