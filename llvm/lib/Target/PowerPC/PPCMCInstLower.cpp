@@ -100,6 +100,8 @@ static MCOperand GetSymbolRef(const MachineOperand &MO, const MCSymbol *Symbol,
     RefKind = PPC::S_GOT_TLSLD_PCREL;
   else if (MO.getTargetFlags() == PPCII::MO_GOT_TPREL_PCREL_FLAG)
     RefKind = PPC::S_GOT_TPREL_PCREL;
+  else if (MO.getTargetFlags() == PPCII::MO_SDA21)
+    RefKind = PPC::S_SDA21;
   else if (MO.getTargetFlags() == PPCII::MO_TPREL_FLAG ||
            MO.getTargetFlags() == PPCII::MO_TLSLD_FLAG) {
     assert(MO.isGlobal() && "Only expecting a global MachineOperand here!");

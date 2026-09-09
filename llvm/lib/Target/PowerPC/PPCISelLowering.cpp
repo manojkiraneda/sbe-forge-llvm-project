@@ -23,6 +23,7 @@
 #include "PPCRegisterInfo.h"
 #include "PPCSubtarget.h"
 #include "PPCTargetMachine.h"
+#include "PPCTargetObjectFile.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/APSInt.h"
@@ -365,7 +366,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
   // PPE42 has no integer divide instructions. Lower scalar division and
   // remainder to compiler-rt libcalls instead of selecting PowerPC DIV*.
-  if (Subtarget.isPPE42()) {
+  if (Subtarget.is32BitELFABI()) {
     for (MVT VT : {MVT::i32, MVT::i64}) {
       setOperationAction(ISD::SDIV, VT, Expand);
       setOperationAction(ISD::UDIV, VT, Expand);
@@ -2848,6 +2849,13 @@ bool PPCTargetLowering::SelectAddressRegImm(
     return false;
 
   if (N.getOpcode() == ISD::ADD) {
+    if (N.getOperand(1).getOpcode() == ISD::TargetGlobalAddress &&
+        cast<GlobalAddressSDNode>(N.getOperand(1))->getTargetFlags() ==
+            PPCII::MO_SDA21) {
+      Disp = N.getOperand(1);
+      Base = N.getOperand(0);
+      return true;
+    }
     int16_t imm = 0;
     if (isIntS16Immediate(N.getOperand(1), imm) &&
         (!EncodingAlignment || isAligned(*EncodingAlignment, imm))) {
@@ -3726,6 +3734,21 @@ SDValue PPCTargetLowering::LowerGlobalAddress(SDValue Op,
   GlobalAddressSDNode *GSDN = cast<GlobalAddressSDNode>(Op);
   SDLoc DL(GSDN);
   const GlobalValue *GV = GSDN->getGlobal();
+
+  if (Subtarget.isPPE42()) {
+    const auto *TLOF = static_cast<const PPC64LinuxTargetObjectFile *>(
+        getTargetMachine().getObjFileLowering());
+    if (TLOF->isGlobalInSmallSection(GV, getTargetMachine())) {
+      Register BaseReg = TLOF->isGlobalInReadOnlySmallSection(
+                             GV, getTargetMachine())
+                             ? PPC::R2
+                             : PPC::R13;
+      SDValue Base = DAG.getRegister(BaseReg, PtrVT);
+      SDValue GA = DAG.getTargetGlobalAddress(
+          GV, DL, PtrVT, GSDN->getOffset(), PPCII::MO_SDA21);
+      return DAG.getNode(ISD::ADD, DL, PtrVT, Base, GA);
+    }
+  }
 
   // 64-bit SVR4 ABI & AIX ABI code is always position-independent.
   // The actual address of the GlobalValue is stored in the TOC.
