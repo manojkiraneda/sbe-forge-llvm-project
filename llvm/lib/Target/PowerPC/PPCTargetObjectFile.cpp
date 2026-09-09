@@ -8,6 +8,9 @@
 
 #include "PPCTargetObjectFile.h"
 #include "MCTargetDesc/PPCMCAsmInfo.h"
+#include "llvm/BinaryFormat/ELF.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
@@ -18,10 +21,38 @@ void
 PPC64LinuxTargetObjectFile::
 Initialize(MCContext &Ctx, const TargetMachine &TM) {
   TargetLoweringObjectFileELF::Initialize(Ctx, TM);
+  SmallDataSection = Ctx.getELFSection(
+      ".sdata", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
+  SmallBSSSection = Ctx.getELFSection(
+      ".sbss", ELF::SHT_NOBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
 }
 
 MCSection *PPC64LinuxTargetObjectFile::SelectSectionForGlobal(
     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
+  const auto *GVar = dyn_cast<GlobalVariable>(GO);
+  if (TM.getTargetTriple().isPPC32() && GVar && !GVar->hasSection() &&
+      !GVar->isDeclaration() && !GVar->hasCommonLinkage() &&
+      GVar->getValueType()->isSized()) {
+    uint64_t Size = GVar->getDataLayout().getTypeAllocSize(GVar->getValueType());
+    if (Size > 0 && Size <= SSThreshold) {
+      bool EmitUniquedSection = TM.getDataSections();
+      if (Kind.isBSS()) {
+        if (EmitUniquedSection)
+          return getContext().getELFSection(
+              (Twine(".sbss.") + GO->getName()).str(), ELF::SHT_NOBITS,
+              ELF::SHF_WRITE | ELF::SHF_ALLOC);
+        return SmallBSSSection;
+      }
+      if (Kind.isData()) {
+        if (EmitUniquedSection)
+          return getContext().getELFSection(
+              (Twine(".sdata.") + GO->getName()).str(), ELF::SHT_PROGBITS,
+              ELF::SHF_WRITE | ELF::SHF_ALLOC);
+        return SmallDataSection;
+      }
+    }
+  }
+
   // Here override ReadOnlySection to DataRelROSection for PPC64 SVR4 ABI
   // when we have a constant that contains global relocations.  This is
   // necessary because of this ABI's handling of pointers to functions in
@@ -47,6 +78,18 @@ MCSection *PPC64LinuxTargetObjectFile::SelectSectionForGlobal(
   return TargetLoweringObjectFileELF::SelectSectionForGlobal(GO, Kind, TM);
 }
 
+void PPC64LinuxTargetObjectFile::getModuleMetadata(Module &M) {
+  TargetLoweringObjectFileELF::getModuleMetadata(M);
+  SmallVector<Module::ModuleFlagEntry, 8> ModuleFlags;
+  M.getModuleFlagsMetadata(ModuleFlags);
+  for (const auto &MFE : ModuleFlags) {
+    if (MFE.Key->getString() == "SmallDataLimit") {
+      SSThreshold = mdconst::extract<ConstantInt>(MFE.Val)->getZExtValue();
+      break;
+    }
+  }
+}
+
 const MCExpr *PPC64LinuxTargetObjectFile::
 getDebugThreadLocalSymbol(const MCSymbol *Sym) const {
   const MCExpr *Expr =
@@ -55,4 +98,3 @@ getDebugThreadLocalSymbol(const MCSymbol *Sym) const {
                                  MCConstantExpr::create(0x8000, getContext()),
                                  getContext());
 }
-
