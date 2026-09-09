@@ -90,6 +90,18 @@ def RLDIMI_VDR : MDForm_1<30, 3, (outs vdrc:$RA),
                           NoEncode<"$RTi"> {
   let DecoderNamespace = "PPE42";
 }
+
+def SLVD : XForm_6<31, 59, (outs vdrc:$RA),
+                    (ins vdrc:$RST, gprc:$RB),
+                    "slvd $RA, $RST, $RB", IIC_IntGeneral, []> {
+  let DecoderNamespace = "PPE42";
+}
+
+def SRVD : XForm_6<31, 571, (outs vdrc:$RA),
+                    (ins vdrc:$RST, gprc:$RB),
+                    "srvd $RA, $RST, $RB", IIC_IntGeneral, []> {
+  let DecoderNamespace = "PPE42";
+}
 }
 
 // Pseudo-instruction to load 64-bit immediate into VDR register pair
