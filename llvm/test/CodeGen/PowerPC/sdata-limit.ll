@@ -12,7 +12,7 @@ define i32 @read_small_data() {
 }
 
 define i32 @read_small_const() {
-  %value = load i32, ptr @small_const
+  %value = load volatile i32, ptr @small_const
   ret i32 %value
 }
 
