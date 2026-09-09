@@ -174,6 +174,7 @@ class ModulePass;
     /// MO_LO, MO_HA - lo16(symbol) and ha16(symbol)
     MO_LO,
     MO_HA,
+    MO_SDA21,
 
     MO_TPREL_LO,
     MO_TPREL_HA,

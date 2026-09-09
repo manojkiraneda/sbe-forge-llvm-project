@@ -54,10 +54,8 @@ SECTIONS {
   .PPC.EMB.sdata0 0x100 : { *(.PPC.EMB.sdata0) }
   .PPC.EMB.sbss0 0x108 : { *(.PPC.EMB.sbss0) }
   .text 0x1000 : { *(.text) }
-  .sdata 0xfff00000 : { *(.sdata) }
-  .sbss 0xfff08000 : { *(.sbss) }
-  .sdata2 0xfff10000 : { *(.sdata2) }
-  .sbss2 0xfff10008 : { *(.sbss2) }
-  _SDA_BASE_ = ADDR(.sdata) + 0x8000;
-  _SDA2_BASE_ = ADDR(.sdata2) + 8;
+  .image_data 0xfff00000 : { *(.sdata) *(.sbss) }
+  .image_rodata 0xfff10000 : { *(.sdata2) *(.sbss2) }
+  _SDA_BASE_ = ADDR(.image_data) + 0x8000;
+  _SDA2_BASE_ = ADDR(.image_rodata) + 8;
 }

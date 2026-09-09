@@ -14,6 +14,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCSectionELF.h"
 
 using namespace llvm;
 
@@ -25,31 +26,55 @@ Initialize(MCContext &Ctx, const TargetMachine &TM) {
       ".sdata", ELF::SHT_PROGBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
   SmallBSSSection = Ctx.getELFSection(
       ".sbss", ELF::SHT_NOBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
+  SmallData2Section =
+      Ctx.getELFSection(".sdata2", ELF::SHT_PROGBITS, ELF::SHF_ALLOC);
+}
+
+bool PPC64LinuxTargetObjectFile::isGlobalInSmallSection(
+    const GlobalValue *GV, const TargetMachine &TM) const {
+  const auto *GVar = dyn_cast<GlobalVariable>(GV);
+  if (!TM.getTargetTriple().isPPC32() || !GVar)
+    return false;
+  if (GVar->hasSection())
+    return GVar->getSection() == ".sdata" || GVar->getSection() == ".sbss" ||
+           GVar->getSection() == ".sdata2" || GVar->getSection() == ".sbss2";
+  if (GVar->isDeclaration() || GVar->hasCommonLinkage() ||
+      !GVar->getValueType()->isSized())
+    return false;
+  uint64_t Size = GVar->getDataLayout().getTypeAllocSize(GVar->getValueType());
+  return Size > 0 && Size <= SSThreshold;
+}
+
+bool PPC64LinuxTargetObjectFile::isGlobalInReadOnlySmallSection(
+    const GlobalValue *GV, const TargetMachine &TM) const {
+  const auto *GVar = dyn_cast<GlobalVariable>(GV);
+  if (!GVar || !isGlobalInSmallSection(GV, TM))
+    return false;
+  return GVar->hasSection() ? GVar->getSection() == ".sdata2" ||
+                                  GVar->getSection() == ".sbss2"
+                            : GVar->isConstant();
 }
 
 MCSection *PPC64LinuxTargetObjectFile::SelectSectionForGlobal(
     const GlobalObject *GO, SectionKind Kind, const TargetMachine &TM) const {
   const auto *GVar = dyn_cast<GlobalVariable>(GO);
-  if (TM.getTargetTriple().isPPC32() && GVar && !GVar->hasSection() &&
-      !GVar->isDeclaration() && !GVar->hasCommonLinkage() &&
-      GVar->getValueType()->isSized()) {
-    uint64_t Size = GVar->getDataLayout().getTypeAllocSize(GVar->getValueType());
-    if (Size > 0 && Size <= SSThreshold) {
-      bool EmitUniquedSection = TM.getDataSections();
-      if (Kind.isBSS()) {
-        if (EmitUniquedSection)
-          return getContext().getELFSection(
-              (Twine(".sbss.") + GO->getName()).str(), ELF::SHT_NOBITS,
-              ELF::SHF_WRITE | ELF::SHF_ALLOC);
-        return SmallBSSSection;
-      }
-      if (Kind.isData()) {
-        if (EmitUniquedSection)
-          return getContext().getELFSection(
-              (Twine(".sdata.") + GO->getName()).str(), ELF::SHT_PROGBITS,
-              ELF::SHF_WRITE | ELF::SHF_ALLOC);
-        return SmallDataSection;
-      }
+  if (GVar && isGlobalInSmallSection(GVar, TM)) {
+    if (isGlobalInReadOnlySmallSection(GVar, TM))
+      return SmallData2Section;
+    bool EmitUniquedSection = TM.getDataSections();
+    if (Kind.isBSS()) {
+      if (EmitUniquedSection)
+        return getContext().getELFSection(
+            (Twine(".sbss.") + GO->getName()).str(), ELF::SHT_NOBITS,
+            ELF::SHF_WRITE | ELF::SHF_ALLOC);
+      return SmallBSSSection;
+    }
+    if (Kind.isData()) {
+      if (EmitUniquedSection)
+        return getContext().getELFSection(
+            (Twine(".sdata.") + GO->getName()).str(), ELF::SHT_PROGBITS,
+            ELF::SHF_WRITE | ELF::SHF_ALLOC);
+      return SmallDataSection;
     }
   }
 

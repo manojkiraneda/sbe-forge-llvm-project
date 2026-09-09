@@ -1937,10 +1937,25 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
                              ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
   const llvm::Triple &T = getToolChain().getTriple();
-  if (T.isOSBinFormatELF() && T.isArch32Bit()) {
-    if (Arg *A = Args.getLastArg(options::OPT_G)) {
+  if (T.isOSBinFormatELF() && T.isArch32Bit() &&
+      T.getOS() == llvm::Triple::UnknownOS) {
+    StringRef SmallDataLimit;
+    bool DisableSmallData = false;
+    if (Arg *A = Args.getLastArg(options::OPT_msdata_EQ,
+                                 options::OPT_mno_sdata)) {
+      if (A->getOption().matches(options::OPT_mno_sdata) ||
+          A->getValue() == StringRef("none")) {
+        DisableSmallData = true;
+      } else if (A->getValue() == StringRef("eabi"))
+        SmallDataLimit = "8";
+    }
+    if (Arg *A = Args.getLastArg(options::OPT_G))
+      SmallDataLimit = A->getValue();
+    if (DisableSmallData)
+      SmallDataLimit = "0";
+    if (!SmallDataLimit.empty()) {
       CmdArgs.push_back("-msmall-data-limit");
-      CmdArgs.push_back(A->getValue());
+      CmdArgs.push_back(Args.MakeArgString(SmallDataLimit));
     }
   }
   if (Arg *A = Args.getLastArg(options::OPT_mtune_EQ)) {
