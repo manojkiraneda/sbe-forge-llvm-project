@@ -76,7 +76,7 @@ jobs:
       - name: Incrementally build required tools
         run: |
           cmake --build "$BUILD_DIR" --target \
-            clang lld llvm-ar llvm-objcopy llvm-objdump llvm-nm \
+            clang lld llc llvm-ar llvm-objcopy llvm-objdump llvm-nm \
             llvm-mc llvm-readobj llvm-config FileCheck split-file not count
 
       - name: Test PowerPC small-data relocations
