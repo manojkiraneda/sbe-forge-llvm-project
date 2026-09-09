@@ -12,6 +12,8 @@
         lvd 1, 0x2040(4)
         lvdu 5, 8(10)
         stvdu 6, 8(9)
+        slvd 9, 7, 4
+        srvd 5, 7, 0
 
 # CHECK: cmpwblt 3, 4, {{.*}}encoding: [0x04,0x83,0x20,0x06]
 # CHECK: cmpwbge 4, 3, {{.*}}encoding: [0x04,0x04,0x18,0x08]
@@ -25,3 +27,5 @@
 # CHECK: lvd 1, 8256(4){{.*}}encoding: [0x14,0x24,0x20,0x40]
 # CHECK: lvdu 5, 8(10){{.*}}encoding: [0x24,0xaa,0x00,0x08]
 # CHECK: stvdu 6, 8(9){{.*}}encoding: [0x58,0xc9,0x00,0x08]
+# CHECK: slvd 9, 7, 4{{.*}}encoding: [0x7c,0xe9,0x20,0x76]
+# CHECK: srvd 5, 7, 0{{.*}}encoding: [0x7c,0xe5,0x04,0x76]
