@@ -2849,13 +2849,6 @@ bool PPCTargetLowering::SelectAddressRegImm(
     return false;
 
   if (N.getOpcode() == ISD::ADD) {
-    if (N.getOperand(1).getOpcode() == ISD::TargetGlobalAddress &&
-        cast<GlobalAddressSDNode>(N.getOperand(1))->getTargetFlags() ==
-            PPCII::MO_SDA21) {
-      Disp = N.getOperand(1);
-      Base = N.getOperand(0);
-      return true;
-    }
     int16_t imm = 0;
     if (isIntS16Immediate(N.getOperand(1), imm) &&
         (!EncodingAlignment || isAligned(*EncodingAlignment, imm))) {
@@ -3746,7 +3739,9 @@ SDValue PPCTargetLowering::LowerGlobalAddress(SDValue Op,
       SDValue Base = DAG.getRegister(BaseReg, PtrVT);
       SDValue GA = DAG.getTargetGlobalAddress(
           GV, DL, PtrVT, GSDN->getOffset(), PPCII::MO_SDA21);
-      return DAG.getNode(ISD::ADD, DL, PtrVT, Base, GA);
+      SDValue Zero = DAG.getConstant(0, DL, PtrVT);
+      SDValue Lo = DAG.getNode(PPCISD::Lo, DL, PtrVT, GA, Zero);
+      return DAG.getNode(ISD::ADD, DL, PtrVT, Base, Lo);
     }
   }
 

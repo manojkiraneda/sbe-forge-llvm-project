@@ -5390,12 +5390,13 @@ def mno_prefixed: Flag<["-"], "mno-prefixed">, Group<m_ppc_Features_Group>;
 def mspe : Flag<["-"], "mspe">, Group<m_ppc_Features_Group>;
 def mno_spe : Flag<["-"], "mno-spe">, Group<m_ppc_Features_Group>;
 def mefpu2 : Flag<["-"], "mefpu2">, Group<m_ppc_Features_Group>;
-def msdata_EQ : Joined<["-"], "msdata=">, Group<m_ppc_Features_Group>,
-  Values<"eabi,none">,
-  HelpText<"Select PowerPC EABI small-data addressing">;
-def mno_sdata : Flag<["-"], "mno-sdata">, Group<m_ppc_Features_Group>,
-  HelpText<"Disable PowerPC small-data placement and addressing">;
 } // let Flags = [TargetSpecific]
+def msdata_EQ : Joined<["-"], "msdata=">, Group<m_Group>,
+  Flags<[TargetSpecific]>, Values<"eabi,none">,
+  HelpText<"Select PowerPC EABI small-data addressing">;
+def mno_sdata : Flag<["-"], "mno-sdata">, Group<m_Group>,
+  Flags<[TargetSpecific]>,
+  HelpText<"Disable PowerPC small-data placement and addressing">;
 def msave_reg_params : Flag<["-"], "msave-reg-params">, Group<m_Group>,
   Flags<[TargetSpecific]>,
   Visibility<[ClangOption, CC1Option]>,
