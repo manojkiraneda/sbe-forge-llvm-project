@@ -1937,6 +1937,12 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
                              ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
   const llvm::Triple &T = getToolChain().getTriple();
+  if (T.isOSBinFormatELF() && T.isArch32Bit()) {
+    if (Arg *A = Args.getLastArg(options::OPT_G)) {
+      CmdArgs.push_back("-msmall-data-limit");
+      CmdArgs.push_back(A->getValue());
+    }
+  }
   if (Arg *A = Args.getLastArg(options::OPT_mtune_EQ)) {
     CmdArgs.push_back("-tune-cpu");
     StringRef CPU = llvm::PPC::getNormalizedPPCTuneCPU(T, A->getValue());
