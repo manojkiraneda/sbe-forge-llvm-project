@@ -84,6 +84,8 @@ jobs:
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/MC/PowerPC/ppc32-sda21.s \
             llvm/test/MC/PowerPC/ppc32-sda21-invalid.s \
+            llvm/test/CodeGen/PowerPC/sdata-limit.ll \
+            clang/test/Driver/ppc-sdata.c \
             lld/test/ELF/ppc32-sda21.s \
             lld/test/ELF/ppc32-sda21-invalid.s
 
