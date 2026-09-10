@@ -17966,6 +17966,14 @@ PPCTargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
     case 'r':   // R0-R31
       if (VT == MVT::i64 && Subtarget.isPPC64())
         return std::make_pair(0U, &PPC::G8RCRegClass);
+      // PPE42 keeps i64 illegal and represents it as two i32 values.  Pin an
+      // i64 inline-assembly operand to r8:r9, the d8 VDR pair used by the GCC
+      // PPE ABI.  Returning VDRC here would create an illegal i64 CopyFromReg
+      // during SelectionDAG legalization.  Returning the first GPR instead
+      // lets generic inline-assembly lowering allocate the two consecutive
+      // legal i32 registers and, importantly, model both clobbers.
+      if (VT == MVT::i64 && Subtarget.isPPE42())
+        return std::make_pair(PPC::R8, &PPC::GPRCRegClass);
       return std::make_pair(0U, &PPC::GPRCRegClass);
     // 'd' and 'f' constraints are both defined to be "the floating point
     // registers", where one is for 32-bit and the other for 64-bit. We don't
