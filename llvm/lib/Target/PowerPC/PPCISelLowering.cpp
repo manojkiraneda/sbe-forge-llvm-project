@@ -18583,6 +18583,13 @@ bool PPCTargetLowering::allowsMisalignedMemoryAccesses(EVT VT, unsigned, Align,
   if (DisablePPCUnaligned)
     return false;
 
+  // PPE42 follows the EABI natural-alignment requirements and does not
+  // support scalar accesses whose alignment is smaller than their size.
+  // Reporting these accesses as legal lets DAG combines, for example, merge
+  // two halfword stores into an unaligned word store.
+  if (Subtarget.isPPE42())
+    return false;
+
   // PowerPC supports unaligned memory access for simple non-vector types.
   // Although accessing unaligned addresses is not as efficient as accessing
   // aligned addresses, it is generally more efficient than manual expansion,
