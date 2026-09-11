@@ -108,10 +108,19 @@ defm : PPE42FCBZeroAlias<"bwnz", 0, 2>;
 // PPE42X context save/restore instructions.  The hardware uses the DS-form
 // encoding with XO=3; the low DS bit is the context-save/restore selector.
 let Predicates = [IsPPE42] in {
-def STCXU : DSForm_1<62, 3, (outs),
+// PPE42 uses the low DS bit as a context-operation selector.  It is not
+// part of the byte displacement: both context instructions require it to
+// be set, while the architectural displacement remains DS-scaled.
+class PPE42DSForm_1<bits<6> opcode, dag OOL, dag IOL, string asmstr,
+                    InstrItinClass itin, list<dag> pattern>
+    : DSForm_1<opcode, 3, OOL, IOL, asmstr, itin, pattern> {
+  let Inst{29} = 1;
+}
+
+def STCXU : PPE42DSForm_1<62, (outs),
                      (ins gprc:$RST, (memrix $D, $RA):$addr),
                      "stcxu $RST, $addr", IIC_LdStStore, []>;
-def LCXU : DSForm_1<58, 3, (outs gprc:$RST),
+def LCXU : PPE42DSForm_1<58, (outs gprc:$RST),
                     (ins (memrix $D, $RA):$addr),
                     "lcxu $RST, $addr", IIC_LdStLoad, []>;
 
