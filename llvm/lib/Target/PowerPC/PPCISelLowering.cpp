@@ -259,7 +259,10 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setIndexedLoadAction(ISD::PRE_INC, MVT::i1, Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i8, Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i16, Legal);
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i32, Legal);
+  // PPE42 does not implement the indexed word-load-with-update instruction
+  // (lwzux).  Expand it into address formation followed by lwzx.
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i32,
+                       Subtarget.isPPE42() ? Expand : Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i64, Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i1, Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i8, Legal);
