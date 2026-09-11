@@ -18609,7 +18609,7 @@ bool PPCTargetLowering::allowsMisalignedMemoryAccesses(EVT VT, unsigned, Align,
   if (DisablePPCUnaligned)
     return false;
 
-  // PPE42 follows the EABI natural-alignment requirements and does not
+  // PPE42 follows the EABI natural alignment requirements and does not
   // support scalar accesses whose alignment is smaller than their size.
   // Reporting these accesses as legal lets DAG combines, for example, merge
   // two halfword stores into an unaligned word store.
