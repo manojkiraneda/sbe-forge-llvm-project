@@ -17,4 +17,3 @@
 // HELP-DAG: -fno-inline-functions-called-once
 
 int x;
-
