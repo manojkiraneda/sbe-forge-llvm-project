@@ -1,0 +1,30 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=peephole-opt -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=PPE42
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=440 -run-pass=peephole-opt -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=PPC
+# A record-form fold pins the condition to CR0 until its COPY. Scheduling
+# another virtual CR definition in that interval is unallocatable on PPE42.
+# Keep explicit compares on PPE42; retain folding on ordinary PowerPC.
+---
+name: compare
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; PPE42-LABEL: name: compare
+    ; PPE42: %2:gprc = AND
+    ; PPE42-NEXT: %3:crrc = CMPLWI
+    ; PPC-LABEL: name: compare
+    ; PPC: %2:gprc = AND_rec
+    ; PPC-NEXT: %3:crrc = COPY killed $cr0
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:gprc = AND %0, %1
+    %3:crrc = CMPLWI %2, 0
+    BCC 76, %3, %bb.1
+    B %bb.2
+  bb.1:
+    $r3 = LI 1
+    BLR implicit $lr, implicit $rm, implicit $r3
+  bb.2:
+    $r3 = LI 0
+    BLR implicit $lr, implicit $rm, implicit $r3
+...
