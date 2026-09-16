@@ -2406,7 +2406,12 @@ bool PPCInstrInfo::optimizeCompareInstr(MachineInstr &CmpInstr, Register SrcReg,
                                         Register SrcReg2, int64_t Mask,
                                         int64_t Value,
                                         const MachineRegisterInfo *MRI) const {
-  if (DisableCmpOpt)
+  // Record-form folding introduces a physical CR0 live range between the
+  // producer and a COPY to a virtual CR register. The pre-RA scheduler can
+  // place another virtual CR definition inside that range. PPE42 implements
+  // only CR0, so even spilling the virtual definition cannot make it
+  // allocatable. Keep explicit compares on this subtarget.
+  if (DisableCmpOpt || Subtarget.isPPE42())
     return false;
 
   int OpC = CmpInstr.getOpcode();
