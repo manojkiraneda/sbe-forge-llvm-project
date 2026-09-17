@@ -4634,7 +4634,7 @@ def : InstAlias<"mtdsisr $Rx", (MTSPR 18, gprc:$Rx)>;
 def : InstAlias<"mfdsisr $Rx", (MFSPR gprc:$Rx, 18)>;
 
 // PPE42 exception registers are exposed as extended mfspr mnemonics.
-def : InstAlias<"mfisr $Rx", (MFSPR gprc:$Rx, 60)>, Requires<[IsPPE42]>;
+def : InstAlias<"mfisr $Rx", (MFSPR gprc:$Rx, 62)>, Requires<[IsPPE42]>;
 def : InstAlias<"mfedr $Rx", (MFSPR gprc:$Rx, 61)>, Requires<[IsPPE42]>;
 
 def : InstAlias<"mtdar $Rx", (MTSPR 19, gprc:$Rx)>;
