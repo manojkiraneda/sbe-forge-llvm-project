@@ -51,6 +51,7 @@ add_llvm_target(PowerPCCodeGen
   PPCTargetTransformInfo.cpp
   PPCTOCRegDeps.cpp
   PPCTLSDynamicCall.cpp
+  PPCPPE42InlineAsm.cpp
   PPCVSXWACCCopy.cpp
   PPCReduceCRLogicals.cpp
   PPCVSXFMAMutate.cpp
