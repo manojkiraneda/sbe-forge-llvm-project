@@ -1,0 +1,40 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=postrapseudos -verify-machineinstrs %s -o - | FileCheck %s
+
+---
+name: copy_disjoint
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5_r6
+    ; CHECK-LABEL: name: copy_disjoint
+    ; CHECK: $r8 = OR $r5, $r5
+    ; CHECK-NEXT: $r9 = OR $r6, $r6{{.*}}implicit-def $r8_r9
+    $r8_r9 = COPY killed $r5_r6
+    BLR implicit $lr, implicit $rm, implicit $r8_r9
+...
+---
+name: copy_overlap_up
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5_r6
+    ; r6 must be read before it is overwritten with r5.
+    ; CHECK-LABEL: name: copy_overlap_up
+    ; CHECK: $r7 = OR $r6, $r6
+    ; CHECK-NEXT: $r6 = OR $r5, $r5{{.*}}implicit-def $r6_r7
+    $r6_r7 = COPY killed $r5_r6
+    BLR implicit $lr, implicit $rm, implicit $r6_r7
+...
+---
+name: copy_overlap_down
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6_r7
+    ; r6 must be read before it is overwritten with r7.
+    ; CHECK-LABEL: name: copy_overlap_down
+    ; CHECK: $r5 = OR $r6, $r6
+    ; CHECK-NEXT: $r6 = OR $r7, $r7{{.*}}implicit-def $r5_r6
+    $r5_r6 = COPY killed $r6_r7
+    BLR implicit $lr, implicit $rm, implicit $r5_r6
+...
