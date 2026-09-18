@@ -367,7 +367,8 @@ def FeatureFastMFLR : SubtargetFeature<"fast-MFLR", "HasFastMFLR", "true",
 def IsLittleEndian : Predicate<"Subtarget->isLittleEndian()">;
 def IsBigEndian : Predicate<"!Subtarget->isLittleEndian()">;
 def IsPPC32 : Predicate<"!Subtarget->isPPC64()">;
-def IsPPC64 : Predicate<"Subtarget->isPPC64()">;
+def IsPPC64 : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
+def NotPPE42 : Predicate<"!Subtarget->isPPE42()">;
 def IsBookE  : Predicate<"Subtarget->isBookE()">;
 def IsNotBookE  : Predicate<"!Subtarget->isBookE()">;
 def HasOnlyMSYNC : Predicate<"Subtarget->hasOnlyMSYNC()">;

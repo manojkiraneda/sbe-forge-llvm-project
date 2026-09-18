@@ -2256,7 +2256,8 @@ def LHAUX : XForm_1_memOp<31, 375, (outs gprc:$RST, ptr_rc_nor0:$ea_result),
 def LHZUX : XForm_1_memOp<31, 311, (outs gprc:$RST, ptr_rc_nor0:$ea_result),
                    (ins (memrr $RA, $RB):$addr),
                    "lhzux $RST, $addr", IIC_LdStLoadUpdX,
-                   []>, RegConstraint<"$addr.ptrreg = $ea_result">;
+                   []>, RegConstraint<"$addr.ptrreg = $ea_result">,
+                   Requires<[NotPPE42]>;
 
 def LWZUX : XForm_1_memOp<31, 55, (outs gprc:$RST, ptr_rc_nor0:$ea_result),
                    (ins (memrr $RA, $RB):$addr),
