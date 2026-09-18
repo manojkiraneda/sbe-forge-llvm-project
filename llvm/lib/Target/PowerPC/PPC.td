@@ -394,7 +394,7 @@ def HasDirectMove : Predicate<"Subtarget->hasDirectMove()">;
 def HasP8Crypto : Predicate<"Subtarget->hasP8Crypto()">;
 def PCRelativeMemops : Predicate<"Subtarget->hasPCRelativeMemops()">;
 def PrefixInstrs : Predicate<"Subtarget->hasPrefixInstrs()">;
-def PairedVectorMemops : Predicate<"Subtarget->pairedVectorMemops()">;
+def PairedVectorMemops : Predicate<"Subtarget->pairedVectorMemops() && !Subtarget->isPPE42()">;
 def MMA : Predicate<"Subtarget->hasMMA()">;
 
 // Vector support predicates
