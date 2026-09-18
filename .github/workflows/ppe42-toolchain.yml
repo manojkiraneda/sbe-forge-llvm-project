@@ -95,6 +95,13 @@ jobs:
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
 
+      - name: Test PPE42 inline assembly register pairs
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/CodeGen/PowerPC/ppe42-inline-asm-vdr.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-inline-asm-pairs.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-vdr-copy.mir
+
       - name: Build PPE42 compiler runtime
         run: |
           mkdir -p "$BUILD_DIR/ppe42-runtime"
