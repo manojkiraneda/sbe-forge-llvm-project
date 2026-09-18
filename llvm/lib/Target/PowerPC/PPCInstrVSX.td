@@ -120,7 +120,7 @@ def PPCxxperm : SDNode<"PPCISD::XXPERM", SDT_PPCxxperm, []>;
 def HasVSX : Predicate<"Subtarget->hasVSX()">;
 def IsLittleEndian : Predicate<"Subtarget->isLittleEndian()">;
 def IsBigEndian : Predicate<"!Subtarget->isLittleEndian()">;
-def IsPPC64 : Predicate<"Subtarget->isPPC64()">;
+def IsPPC64 : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
 def HasOnlySwappingMemOps : Predicate<"!Subtarget->hasP9Vector()">;
 def NoP8Vector : Predicate<"!Subtarget->hasP8Vector()">;
 def HasP8Vector : Predicate<"Subtarget->hasP8Vector()">;

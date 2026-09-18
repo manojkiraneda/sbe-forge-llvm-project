@@ -3091,7 +3091,10 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
                                                   SDValue &Offset,
                                                   ISD::MemIndexedMode &AM,
                                                   SelectionDAG &DAG) const {
-  if (DisablePPCPreinc) return false;
+  // PPE42 does not implement the indexed update load/store instructions.
+  // Keep the address update separate so instruction selection cannot form
+  // lhzux/lwzux/etc. for this target.
+  if (DisablePPCPreinc || Subtarget.isPPE42()) return false;
 
   bool isLoad = true;
   SDValue Ptr;
