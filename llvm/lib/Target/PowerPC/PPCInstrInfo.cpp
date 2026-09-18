@@ -1681,6 +1681,25 @@ void PPCInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   // We can end up with self copies and similar things as a result of VSX copy
   // legalization. Promote them here.
   const TargetRegisterInfo *TRI = &getRegisterInfo();
+  if (Subtarget.isPPE42() && PPC::VDRCRegClass.contains(DestReg, SrcReg)) {
+    Register DstHi = TRI->getSubReg(DestReg, PPC::sub_gpr_hi);
+    Register DstLo = TRI->getSubReg(DestReg, PPC::sub_gpr_lo);
+    Register SrcHi = TRI->getSubReg(SrcReg, PPC::sub_gpr_hi);
+    Register SrcLo = TRI->getSubReg(SrcReg, PPC::sub_gpr_lo);
+    // Adjacent tuples can overlap. Read the overlapping source before its
+    // destination is overwritten.
+    if (DstHi == SrcLo) {
+      std::swap(DstHi, DstLo);
+      std::swap(SrcHi, SrcLo);
+    }
+    BuildMI(MBB, I, DL, get(PPC::OR), DstHi).addReg(SrcHi).addReg(SrcHi);
+    auto Mov =
+        BuildMI(MBB, I, DL, get(PPC::OR), DstLo).addReg(SrcLo).addReg(SrcLo);
+    Mov->addRegisterDefined(DestReg, TRI);
+    if (KillSrc)
+      Mov->addRegisterKilled(SrcReg, TRI);
+    return;
+  }
   if (PPC::F8RCRegClass.contains(DestReg) &&
       PPC::VSRCRegClass.contains(SrcReg)) {
     MCRegister SuperReg =

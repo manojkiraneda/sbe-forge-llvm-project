@@ -324,6 +324,14 @@ void PPCAsmPrinter::printOperand(const MachineInstr *MI, unsigned OpNo,
 
   switch (MO.getType()) {
   case MachineOperand::MO_Register: {
+    // PPE42 inline asm i64 operands are allocated as a single VDR tuple.
+    // The assembler syntax names the first GPR of the pair.
+    if (Subtarget->isPPE42() && PPC::VDRCRegClass.contains(MO.getReg())) {
+      MCRegister Base =
+          Subtarget->getRegisterInfo()->getSubReg(MO.getReg(), PPC::sub_gpr_hi);
+      O << PPC::stripRegisterPrefix(PPCInstPrinter::getRegisterName(Base));
+      return;
+    }
     // The MI is INLINEASM ONLY and UseVSXReg is always false.
     const char *RegName = PPCInstPrinter::getRegisterName(MO.getReg());
 
@@ -370,6 +378,13 @@ bool PPCAsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
       // See if this is a generic print operand
       return AsmPrinter::PrintAsmOperand(MI, OpNo, ExtraCode, O);
     case 'L': // Write second word of DImode reference.
+      if (MI->getOperand(OpNo).isReg() && Subtarget->isPPE42() &&
+          PPC::VDRCRegClass.contains(MI->getOperand(OpNo).getReg())) {
+        MCRegister Low = Subtarget->getRegisterInfo()->getSubReg(
+            MI->getOperand(OpNo).getReg(), PPC::sub_gpr_lo);
+        O << PPC::stripRegisterPrefix(PPCInstPrinter::getRegisterName(Low));
+        return false;
+      }
       // Verify that this operand has two consecutive registers.
       if (!MI->getOperand(OpNo).isReg() ||
           OpNo+1 == MI->getNumOperands() ||
