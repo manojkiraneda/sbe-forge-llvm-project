@@ -129,6 +129,7 @@ LLVMInitializePowerPCTarget() {
   initializePPCLoopInstrFormPrepPass(PR);
   initializePPCTOCRegDepsPass(PR);
   initializePPCEarlyReturnPass(PR);
+  initializePPCPPE42InlineAsmPass(PR);
   initializePPCVSXCopyPass(PR);
   initializePPCVSXFMAMutatePass(PR);
   initializePPCVSXSwapRemovalPass(PR);
@@ -535,6 +536,7 @@ bool PPCPassConfig::addInstSelector() {
     addPass(createPPCCTRLoopsVerify());
 #endif
 
+  addPass(createPPCPPE42InlineAsmPass());
   addPass(createPPCVSXCopyPass());
   return false;
 }
