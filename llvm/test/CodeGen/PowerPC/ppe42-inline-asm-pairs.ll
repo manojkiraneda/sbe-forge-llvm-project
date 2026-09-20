@@ -128,9 +128,7 @@ entry:
 fallthrough:
   ret i64 %v
 taken:
-  %w = call i64 @llvm.callbr.landingpad.i64(i64 %v)
-  ret i64 %w
+  ret i64 %v
 }
 
-declare i64 @llvm.callbr.landingpad.i64(i64)
 declare void @callee()
