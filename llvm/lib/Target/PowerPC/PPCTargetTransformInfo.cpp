@@ -403,16 +403,6 @@ bool PPCTTIImpl::isHardwareLoopProfitable(Loop *L, ScalarEvolution &SE,
 void PPCTTIImpl::getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
                                          TTI::UnrollingPreferences &UP,
                                          OptimizationRemarkEmitter *ORE) const {
-  // PPE42 is a size-constrained microcontroller with a small register file.
-  // In particular, it should not inherit unrolling decisions tuned for the
-  // much larger PowerPC processors when optimizing for size.
-  if (ST->isPPE42()) {
-    UP.OptSizeThreshold = 0;
-    UP.PartialOptSizeThreshold = 0;
-    if (L->getHeader()->getParent()->hasOptSize())
-      return;
-  }
-
   if (ST->getCPUDirective() == PPC::DIR_A2) {
     // The A2 is in-order with a deep pipeline, and concatenation unrolling
     // helps expose latency-hiding opportunities to the instruction scheduler.
