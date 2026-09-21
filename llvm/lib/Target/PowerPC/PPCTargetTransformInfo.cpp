@@ -449,6 +449,12 @@ bool PPCTTIImpl::enableInterleavedAccessVectorization() const { return true; }
 unsigned PPCTTIImpl::getNumberOfRegisters(unsigned ClassID) const {
   assert(ClassID == GPRRC || ClassID == FPRRC ||
          ClassID == VRRC || ClassID == VSXRC);
+  // PPE42 implements 16 GPRs. R1 is the stack pointer, R2 and R13 are the
+  // small-data area pointers, leaving 13 registers available to generated
+  // code. It has no floating-point or vector register file.
+  if (ST->isPPE42())
+    return ClassID == GPRRC ? 13 : 0;
+
   if (ST->hasVSX()) {
     assert(ClassID == GPRRC || ClassID == VSXRC || ClassID == VRRC);
     return ClassID == VSXRC ? 64 : 32;
@@ -499,6 +505,11 @@ PPCTTIImpl::getRegisterBitWidth(TargetTransformInfo::RegisterKind K) const {
 }
 
 unsigned PPCTTIImpl::getCacheLineSize() const {
+  // PPE42 executes from tightly constrained local storage rather than a
+  // conventional cache hierarchy.
+  if (ST->isPPE42())
+    return 0;
+
   // Starting with P7 we have a cache line size of 128.
   unsigned Directive = ST->getCPUDirective();
   // Assume that Future CPU has the same cache line size as the others.
@@ -512,10 +523,19 @@ unsigned PPCTTIImpl::getCacheLineSize() const {
 }
 
 unsigned PPCTTIImpl::getPrefetchDistance() const {
+  if (ST->isPPE42())
+    return 0;
+
   return 300;
 }
 
 unsigned PPCTTIImpl::getMaxInterleaveFactor(ElementCount VF) const {
+  // PPE42 currently shares the 440 CPU directive, but the 440's factor of
+  // five is intended to hide floating-point latency. PPE42 is a small,
+  // in-order, soft-float core with a much smaller allocatable register set.
+  if (ST->isPPE42())
+    return 1;
+
   unsigned Directive = ST->getCPUDirective();
   // The 440 has no SIMD support, but floating-point instructions
   // have a 5-cycle latency, so unroll by 5x for latency hiding.
