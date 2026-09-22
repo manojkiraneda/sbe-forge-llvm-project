@@ -40,7 +40,10 @@ jobs:
       - name: Install build and integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ccache cmake ninja-build meson zstd
+          sudo apt-get install -y ccache cmake ninja-build meson rustup zstd
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add powerpc-unknown-linux-gnu
 
       - name: Restore compiler object cache
         id: ccache
