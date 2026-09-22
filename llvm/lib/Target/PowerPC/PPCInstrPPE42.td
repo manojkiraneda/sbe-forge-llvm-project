@@ -40,6 +40,27 @@ let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
   }
 }
 
+// PPE42 implements the legacy low-halfword multiply instructions in place of
+// the full-word multiply instructions used by later PPE variants.  The
+// operands are the low 16 bits of RA and RB and the 32-bit product is written
+// to RT.  XO=392 is the encoding documented in the PPE42 User's Manual.
+let Predicates = [IsPPE42] in {
+  let isCommutable = 1 in {
+    defm MULLHW : XOForm_1r<4, 392, 0, (outs gprc:$RT),
+                            (ins gprc:$RA, gprc:$RB),
+                            "mullhw", "$RT, $RA, $RB", IIC_IntMulHW,
+                            [(set i32:$RT,
+                              (mul (sext_inreg i32:$RA, i16),
+                                   (sext_inreg i32:$RB, i16)))]>;
+    defm MULLHWU : XOForm_1r<4, 392, 0, (outs gprc:$RT),
+                             (ins gprc:$RA, gprc:$RB),
+                             "mullhwu", "$RT, $RA, $RB", IIC_IntMulHWU,
+                             [(set i32:$RT,
+                               (mul (and i32:$RA, 65535),
+                                    (and i32:$RB, 65535)))]>;
+  }
+}
+
 multiclass PPE42FCBRegAlias<string name, bits<1> px, bits<2> bix> {
   def : InstAlias<name#" $RA, $RB, $BDX",
                   (CMPLWBC px, bix, gprc:$RA, gprc:$RB,
