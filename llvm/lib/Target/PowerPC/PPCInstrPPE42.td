@@ -43,10 +43,11 @@ let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
 // PPE42 implements the legacy low-halfword multiply instructions in place of
 // the full-word multiply instructions used by later PPE variants.  The
 // operands are the low 16 bits of RA and RB and the 32-bit product is written
-// to RT.  XO=392 is the encoding documented in the PPE42 User's Manual.
+// to RT.  XO=424/392 are the signed/unsigned encodings documented in the
+// PPE42 User's Manual.
 let Predicates = [IsPPE42] in {
   let isCommutable = 1 in {
-    defm MULLHW : XOForm_1r<4, 392, 0, (outs gprc:$RT),
+    defm MULLHW : XOForm_1r<4, 424, 0, (outs gprc:$RT),
                             (ins gprc:$RA, gprc:$RB),
                             "mullhw", "$RT, $RA, $RB", IIC_IntMulHW,
                             [(set i32:$RT,
