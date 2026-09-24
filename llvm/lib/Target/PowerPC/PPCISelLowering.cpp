@@ -257,8 +257,12 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
   // PowerPC has pre-inc load and store's.
   setIndexedLoadAction(ISD::PRE_INC, MVT::i1, Legal);
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i8, Legal);
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i16, Legal);
+  // PPE42 omits all update-indexed load forms. Expand byte and halfword
+  // loads into an address update followed by the non-update indexed load.
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i8,
+                       Subtarget.isPPE42() ? Expand : Legal);
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i16,
+                       Subtarget.isPPE42() ? Expand : Legal);
   // PPE42 does not implement the indexed word-load-with-update instruction
   // (lwzux).  Expand it into address formation followed by lwzx.
   setIndexedLoadAction(ISD::PRE_INC, MVT::i32,
