@@ -43,6 +43,18 @@
 // RUN: not %clang --target=powerpc-unknown-linux-gnu %s -mfloat-abi=x -### -o %t.o 2>&1 | FileCheck --check-prefix=CHECK-ERRMSG %s
 // CHECK-ERRMSG: error: invalid float ABI '-mfloat-abi=x'
 
+// Check strict alignment options.
+// RUN: %clang -target powerpc-unknown-linux-gnu %s -mstrict-align -### -o %t.o 2>&1 | FileCheck --check-prefix=CHECK-STRICT-ALIGN %s
+// CHECK-STRICT-ALIGN: "-target-feature" "+strict-align"
+// RUN: %clang -target powerpc-unknown-linux-gnu %s -mno-strict-align -### -o %t.o 2>&1 | FileCheck --check-prefix=CHECK-NO-STRICT-ALIGN %s
+// CHECK-NO-STRICT-ALIGN: "-target-feature" "-strict-align"
+
+// PPE42 must remain strict-align in the backend even when explicitly given
+// -mno-strict-align, because its hardware follows natural-alignment rules.
+// RUN: %clang -target powerpc-unknown-linux-gnu -mcpu=ppe42 %s -mno-strict-align -### -o %t.o 2>&1 | FileCheck --check-prefix=CHECK-PPE42-NO-STRICT-ALIGN %s
+// CHECK-PPE42-NO-STRICT-ALIGN: "-target-cpu" "ppe42"
+// CHECK-PPE42-NO-STRICT-ALIGN: "-target-feature" "-strict-align"
+
 
 /// Check default CC1 and linker options for ppc64.
 // RUN: %clang -### -target powerpc64le-unknown-linux-gnu %s 2>&1 | FileCheck --check-prefixes=PPC64,PPC64LE %s
