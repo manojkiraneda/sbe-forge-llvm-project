@@ -238,6 +238,9 @@ def FeatureBack2BackFusion:
 def FeatureUnalignedFloats :
   SubtargetFeature<"allow-unaligned-fp-access", "AllowsUnalignedFPAccess",
                    "true", "CPU does not trap on unaligned FP access">;
+def FeatureStrictAlign :
+  SubtargetFeature<"strict-align", "StrictAlign", "true",
+                   "Force all memory accesses to be aligned">;
 def FeaturePPCPreRASched:
   SubtargetFeature<"ppc-prera-sched", "UsePPCPreRASchedStrategy", "true",
                    "Use PowerPC pre-RA scheduling strategy">;

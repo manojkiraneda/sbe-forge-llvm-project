@@ -44,6 +44,15 @@ void ppc::getPPCTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   handleTargetFeaturesGroup(D, Triple, Args, Features,
                             options::OPT_m_ppc_Features_Group);
 
+  if (Arg *A = Args.getLastArg(options::OPT_mstrict_align,
+                               options::OPT_mno_strict_align)) {
+    Features.push_back(Args.hasFlag(options::OPT_mstrict_align,
+                                    options::OPT_mno_strict_align, false)
+                           ? "+strict-align"
+                           : "-strict-align");
+    A->claim();
+  }
+
   ppc::FloatABI FloatABI = ppc::getPPCFloatABI(D, Args);
   if (FloatABI == ppc::FloatABI::Soft)
     Features.push_back("-hard-float");
