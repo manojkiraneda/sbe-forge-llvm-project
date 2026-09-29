@@ -18617,7 +18617,7 @@ bool PPCTargetLowering::isLegalAddImmediate(int64_t Imm) const {
 bool PPCTargetLowering::allowsMisalignedMemoryAccesses(EVT VT, unsigned, Align,
                                                        MachineMemOperand::Flags,
                                                        unsigned *Fast) const {
-  if (DisablePPCUnaligned || Subtarget.hasStrictAlign())
+  if (DisablePPCUnaligned || Subtarget.strictAlign())
     return false;
 
   // PPE42 follows the EABI natural alignment requirements and does not
