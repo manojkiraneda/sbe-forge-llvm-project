@@ -295,7 +295,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   // If the entire function is smaller than the displacement of a branch field,
   // we know we don't need to shrink any branches in this function.  This is a
   // common case.
-  if (FuncSize < (1 << 15)) {
+  if (FuncSize < (1 << 15) && !Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
     BlockSizes.clear();
     return false;
   }
@@ -402,6 +402,66 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
     }
 
     EverMadeChange |= MadeChange;
+  }
+
+  // The PPE42 immediate bit branch has a signed 12-bit byte displacement.
+  // Do this after long-branch expansion, when block positions are final. Only
+  // fold a single-bit mask whose result and comparison are killed by the
+  // branch. A small margin covers the change in branch position and padding.
+  bool HasWideAlignment =
+      std::any_of(Fn.begin(), Fn.end(), [](const MachineBasicBlock &MBB) {
+        return MBB.getAlignment() > Align(4);
+      });
+  if (Fn.getSubtarget<PPCSubtarget>().isPPE42() &&
+      FirstImpreciseBlock < 0 && !HasWideAlignment) {
+    for (MachineBasicBlock &MBB : Fn) {
+      unsigned Offset = 0;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Br = *I++;
+        unsigned BrOffset = Offset;
+        Offset += TII->getInstSizeInBytes(Br);
+        if (Br.getOpcode() != PPC::BCC || !Br.getOperand(2).isMBB() ||
+            (Br.getOperand(0).getImm() != PPC::PRED_EQ &&
+             Br.getOperand(0).getImm() != PPC::PRED_NE) ||
+            !Br.getOperand(1).isKill() || Br.getIterator() == MBB.begin())
+          continue;
+
+        auto CmpIt = std::prev(Br.getIterator());
+        MachineInstr &Cmp = *CmpIt;
+        if (Cmp.getOpcode() != PPC::CMPLWI ||
+            Cmp.getOperand(0).getReg() != Br.getOperand(1).getReg() ||
+            Cmp.getOperand(2).getImm() != 0 ||
+            !Cmp.getOperand(1).isKill() || CmpIt == MBB.begin())
+          continue;
+
+        MachineInstr &Mask = *std::prev(CmpIt);
+        if (Mask.getOpcode() != PPC::RLWINM ||
+            Mask.getOperand(0).getReg() != Cmp.getOperand(1).getReg() ||
+            Mask.getOperand(2).getImm() != 0 ||
+            Mask.getOperand(3).getImm() != Mask.getOperand(4).getImm())
+          continue;
+
+        int Distance = computeBranchSize(Fn, &MBB,
+                                         Br.getOperand(2).getMBB(), BrOffset);
+        if (Distance > 2036)
+          continue;
+
+        unsigned Bit = Mask.getOperand(3).getImm();
+        unsigned PX = Br.getOperand(0).getImm() == PPC::PRED_EQ ? 1 : 0;
+        BuildMI(MBB, Mask.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
+            .addImm(PX)
+            .addReg(Mask.getOperand(1).getReg(),
+                    Mask.getOperand(1).isKill() ? RegState::Kill : 0)
+            .addImm(Bit)
+            .addMBB(Br.getOperand(2).getMBB());
+        Mask.eraseFromParent();
+        Cmp.eraseFromParent();
+        Br.eraseFromParent();
+        BlockSizes[MBB.getNumber()].first -= 8;
+        Offset -= 8;
+        EverMadeChange = true;
+      }
+    }
   }
 
   BlockSizes.clear();
