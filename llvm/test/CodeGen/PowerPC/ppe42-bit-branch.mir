@@ -1,0 +1,58 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o - | FileCheck %s
+# PPE42 can replace a single-bit mask, zero comparison, and branch with one
+# fused instruction. Keep the ordinary sequence when the mask result is live.
+--- |
+  define void @bit_clear() { ret void }
+  define void @bit_set() { ret void }
+  define void @result_live() { ret void }
+...
+---
+name: bit_clear
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_clear
+    ; CHECK: BNBWI 1, killed $r3, 4, %bb.1
+    ; CHECK-NOT: RLWINM
+    ; CHECK-NOT: CMPLWI
+    $r4 = RLWINM killed $r3, 0, 4, 4
+    $cr0 = CMPLWI killed $r4, 0
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_set
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_set
+    ; CHECK: BNBWI 0, killed $r3, 4, %bb.1
+    $r4 = RLWINM killed $r3, 0, 4, 4
+    $cr0 = CMPLWI killed $r4, 0
+    BCC 68, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: result_live
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: result_live
+    ; CHECK: RLWINM
+    ; CHECK: CMPLWI
+    ; CHECK: BCC
+    $r4 = RLWINM killed $r3, 0, 4, 4
+    $cr0 = CMPLWI $r4, 0
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm, implicit killed $r4
+  bb.1:
+    liveins: $r4
+    BLR implicit $lr, implicit $rm, implicit killed $r4
+...
