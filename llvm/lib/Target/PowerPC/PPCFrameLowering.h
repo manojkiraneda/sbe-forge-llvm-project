@@ -82,6 +82,9 @@ class PPCFrameLowering: public TargetFrameLowering {
     */
   bool stackUpdateCanBeMoved(MachineFunction &MF) const;
 
+  bool canUsePPE42StackOps(const MachineFunction &MF,
+                           uint64_t FrameSize) const;
+
 public:
   PPCFrameLowering(const PPCSubtarget &STI);
 
