@@ -1306,6 +1306,16 @@ bool PPCAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
           (Offset.getImm() & 7) != 0)
         return Error(IDLoc, "stsku requires matching nonzero registers and a negative 8-byte aligned offset");
     }
+    if (Inst.getOpcode() == PPC::LSKU) {
+      const auto &RT = static_cast<const PPCOperand &>(*Operands[1]);
+      const auto &Offset = static_cast<const PPCOperand &>(*Operands[2]);
+      const auto &RA = static_cast<const PPCOperand &>(*Operands[3]);
+      if (!RT.isLiteralImm() || !RA.isLiteralImm() || RT.getImm() == 0 ||
+          RT.getImm() != RA.getImm() || !Offset.isLiteralImm() ||
+          Offset.getImm() < 8 || Offset.getImm() > 32760 ||
+          (Offset.getImm() & 7) != 0)
+        return Error(IDLoc, "lsku requires matching nonzero registers and a positive 8-byte aligned offset");
+    }
     // Post-process instructions (typically extended mnemonics)
     processInstruction(Inst, Operands);
     Inst.setLoc(IDLoc);
