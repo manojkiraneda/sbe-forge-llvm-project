@@ -122,7 +122,8 @@ bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
     if (MFI.isDeadObjectIndex(I))
       continue;
     int64_t Offset = MFI.getObjectOffset(I);
-    if (Offset < 0 && Offset + MFI.getObjectSize(I) > -int64_t(SaveBytes))
+    if (Offset < 0 &&
+        Offset + int64_t(MFI.getObjectSize(I)) > -int64_t(SaveBytes))
       return false;
   }
 
