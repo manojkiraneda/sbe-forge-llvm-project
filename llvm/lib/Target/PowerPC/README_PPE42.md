@@ -452,7 +452,7 @@ With only 16 GPRs available, register allocation is more constrained than standa
 
 ### Potential Additions
 - [ ] Fused compare-branch instruction support
-- [ ] Stack frame instructions (lsku/stsku)
+- [ ] Stack frame instructions (lsku; stsku has assembler/disassembler support)
 - [ ] PPE42X 64-bit rotate/shift instructions
 - [ ] PPE42XM multiply high word support
 - [ ] Instruction scheduling model
