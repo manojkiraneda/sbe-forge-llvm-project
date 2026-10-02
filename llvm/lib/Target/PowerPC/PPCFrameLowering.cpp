@@ -107,19 +107,55 @@ bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
        FrameSize > TLI.getStackProbeSize(MF)))
     return false;
 
-  for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
-    if (CSI.getReg() != PPC::LR)
-      return false;
-
   // STSKU writes VDR30 below the incoming SP and, for frames of at least
   // three doublewords, VDR28 as well. Those bytes must be reserved through
   // the entire function, including its outgoing argument area.
   uint64_t SaveBytes = FrameSize == 16 ? 8 : 16;
   if (MFI.getMaxCallFrameSize() > FrameSize - SaveBytes)
     return false;
+
+  // Use the stack instructions only when at least one of their implicit GPR
+  // saves is needed. The ABI assigns these registers slots in the exact VDR
+  // save area used by STSKU/LSKU.
+  bool SavesStackOpGPR = false;
+  for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
+    int64_t ExpectedOffset;
+    switch (CSI.getReg()) {
+    case PPC::LR:
+      continue;
+    case PPC::R31:
+      ExpectedOffset = -4;
+      break;
+    case PPC::R30:
+      ExpectedOffset = -8;
+      break;
+    case PPC::R29:
+      ExpectedOffset = -12;
+      break;
+    case PPC::R28:
+      ExpectedOffset = -16;
+      break;
+    default:
+      return false;
+    }
+    if (CSI.isSpilledToReg() || -ExpectedOffset > int64_t(SaveBytes) ||
+        MFI.getObjectOffset(CSI.getFrameIdx()) != ExpectedOffset ||
+        MFI.getObjectSize(CSI.getFrameIdx()) != 4)
+      return false;
+    SavesStackOpGPR = true;
+  }
+  if (!SavesStackOpGPR)
+    return false;
+
   for (int I = MFI.getObjectIndexBegin(), E = MFI.getObjectIndexEnd(); I < E;
        ++I) {
     if (MFI.isDeadObjectIndex(I))
+      continue;
+    bool IsStackOpSaveSlot = false;
+    for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
+      if (CSI.getReg() != PPC::LR && CSI.getFrameIdx() == I)
+        IsStackOpSaveSlot = true;
+    if (IsStackOpSaveSlot)
       continue;
     int64_t Offset = MFI.getObjectOffset(I);
     if (Offset < 0 &&
@@ -748,6 +784,15 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
       if (MustSaveLR) {
         CFIIndex = MF.addFrameInst(MCCFIInstruction::createOffset(
             nullptr, MRI->getDwarfRegNum(LRReg, true), getReturnSaveOffset()));
+        BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
+            .addCFIIndex(CFIIndex);
+      }
+      for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
+        if (CSI.getReg() == PPC::LR)
+          continue;
+        CFIIndex = MF.addFrameInst(MCCFIInstruction::createOffset(
+            nullptr, MRI->getDwarfRegNum(CSI.getReg(), true),
+            MFI.getObjectOffset(CSI.getFrameIdx())));
         BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
             .addCFIIndex(CFIIndex);
       }
