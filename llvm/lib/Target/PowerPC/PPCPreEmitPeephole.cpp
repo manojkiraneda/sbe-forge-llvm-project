@@ -139,13 +139,13 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
 
         MachineMemOperand *FirstMem = *First.memoperands_begin();
         MachineMemOperand *SecondMem = *Second.memoperands_begin();
-        // PPE42's virtual doubleword instructions accept unaligned effective
-        // addresses. Keep the source word accesses at least word-aligned and
-        // avoid widening volatile or atomic accesses.
+        // The core accepts unaligned virtual doubleword addresses, but the
+        // memory interface may reject them. Only combine stores when the
+        // effective address is known to be doubleword-aligned.
         if (!FirstMem->isStore() || !SecondMem->isStore() ||
             FirstMem->isVolatile() || SecondMem->isVolatile() ||
             FirstMem->isAtomic() || SecondMem->isAtomic() ||
-            FirstMem->getAlign() < Align(4) ||
+            FirstMem->getAlign() < Align(8) ||
             SecondMem->getAlign() < Align(4))
           continue;
 
