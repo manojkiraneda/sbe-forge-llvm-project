@@ -89,6 +89,126 @@ PPCFrameLowering::PPCFrameLowering(const PPCSubtarget &STI)
       BasePointerSaveOffset(computeBasePointerSaveOffset(Subtarget)),
       CRSaveOffset(computeCRSaveOffset(Subtarget)) {}
 
+bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
+                                           uint64_t FrameSize) const {
+  if (!Subtarget.isPPE42() || FrameSize < 8 || FrameSize > 32760 ||
+      FrameSize % 8 != 0)
+    return false;
+
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  const PPCFunctionInfo *FI = MF.getInfo<PPCFunctionInfo>();
+  const PPCRegisterInfo *RegInfo = Subtarget.getRegisterInfo();
+  const PPCTargetLowering &TLI = *Subtarget.getTargetLowering();
+  if (hasFP(MF) || RegInfo->hasBasePointer(MF) || MFI.hasVarSizedObjects() ||
+      MFI.isFrameAddressTaken() || FI->mustSaveTOC() ||
+      !FI->getMustSaveCRs().empty() || FI->usesPICBase() || FI->hasFastCall() ||
+      MF.exposesReturnsTwice() || Subtarget.hasROPProtect() ||
+      (TLI.hasInlineStackProbe(MF) &&
+       FrameSize > TLI.getStackProbeSize(MF)))
+    return false;
+
+  // STSKU writes VDR30 below the incoming SP and, for frames of at least
+  // three doublewords, VDR28 as well. Those bytes must be reserved through
+  // the entire function, including its outgoing argument area.
+  uint64_t SaveBytes = FrameSize == 8 ? 0 : FrameSize == 16 ? 8 : 16;
+  if (MFI.getMaxCallFrameSize() > FrameSize - SaveBytes)
+    return false;
+
+  // Callee saves covered by the instruction must occupy its fixed VDR slots.
+  // An eight-byte frame saves only LR; larger frames can save VDR30/VDR28.
+  for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
+    int64_t ExpectedOffset;
+    switch (CSI.getReg()) {
+    case PPC::LR:
+      continue;
+    case PPC::R31:
+      ExpectedOffset = -4;
+      break;
+    case PPC::R30:
+      ExpectedOffset = -8;
+      break;
+    case PPC::R29:
+      ExpectedOffset = -12;
+      break;
+    case PPC::R28:
+      ExpectedOffset = -16;
+      break;
+    default:
+      return false;
+    }
+    if (CSI.isSpilledToReg() || -ExpectedOffset > int64_t(SaveBytes) ||
+        MFI.getObjectOffset(CSI.getFrameIdx()) != ExpectedOffset ||
+        MFI.getObjectSize(CSI.getFrameIdx()) != 4)
+      return false;
+  }
+
+  for (int I = MFI.getObjectIndexBegin(), E = MFI.getObjectIndexEnd(); I < E;
+       ++I) {
+    if (MFI.isDeadObjectIndex(I))
+      continue;
+    bool IsStackOpSaveSlot = false;
+    for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
+      if (CSI.getReg() != PPC::LR && CSI.getFrameIdx() == I)
+        IsStackOpSaveSlot = true;
+    if (IsStackOpSaveSlot)
+      continue;
+    int64_t Offset = MFI.getObjectOffset(I);
+    if (Offset < 0 &&
+        Offset + int64_t(MFI.getObjectSize(I)) > -int64_t(SaveBytes))
+      return false;
+  }
+
+  // Tail returns can change the stack adjustment independently of FrameSize.
+  for (const MachineBasicBlock &MBB : MF)
+    for (const MachineInstr &MI : MBB) {
+      switch (MI.getOpcode()) {
+      case PPC::TCRETURNri:
+      case PPC::TCRETURNdi:
+      case PPC::TCRETURNai:
+      case PPC::TCRETURNri8:
+      case PPC::TCRETURNdi8:
+      case PPC::TCRETURNai8:
+        return false;
+      default:
+        if (MI.isReturn() && MI.getOpcode() != PPC::BLR)
+          return false;
+      }
+    }
+  return true;
+}
+
+// STSKU/LSKU already save and restore the callee-saved GPRs in their VDR
+// slots. The generic PEI spill pass inserts individual STW/LWZ operations
+// before frame lowering decides to use the stack instructions; remove only
+// those operations that refer to the matching callee-save frame indices.
+static void removePPE42StackOpGPRSpills(MachineFunction &MF) {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  for (MachineBasicBlock &MBB : MF) {
+    for (auto I = MBB.begin(); I != MBB.end();) {
+      MachineInstr &MI = *I++;
+      if (MI.getOpcode() != PPC::STW && MI.getOpcode() != PPC::LWZ)
+        continue;
+      if (!MI.getOperand(0).isReg())
+        continue;
+      MCRegister Reg = MI.getOperand(0).getReg();
+      if (Reg != PPC::R28 && Reg != PPC::R29 && Reg != PPC::R30 &&
+          Reg != PPC::R31)
+        continue;
+      for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
+        if (CSI.getReg() != Reg)
+          continue;
+        bool UsesSaveSlot = false;
+        for (const MachineOperand &MO : MI.operands())
+          UsesSaveSlot |= MO.isFI() && MO.getIndex() == CSI.getFrameIdx();
+        if (UsesSaveSlot) {
+          MI.eraseFromParent();
+          break;
+        }
+      }
+    }
+  }
+}
+
 // With the SVR4 ABI, callee-saved registers have fixed offsets on the stack.
 const PPCFrameLowering::SpillSlot *PPCFrameLowering::getCalleeSavedSpillSlots(
     unsigned &NumEntries) const {
@@ -677,6 +797,41 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
   const MCInstrDesc &HashST =
       TII.get(isPPC64 ? (HasPrivileged ? PPC::HASHSTP8 : PPC::HASHST8)
                       : (HasPrivileged ? PPC::HASHSTP : PPC::HASHST));
+
+  if (canUsePPE42StackOps(MF, FrameSize)) {
+    removePPE42StackOpGPRSpills(MF);
+    MBBI = MBB.begin();
+    MachineInstrBuilder StackSave =
+        BuildMI(MBB, MBBI, dl, TII.get(PPC::STSKU), PPC::R1)
+        .addReg(PPC::R1)
+        .addImm(NegFrameSize)
+        .addReg(PPC::R1);
+    for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
+      if (CSI.getReg() != PPC::LR)
+        StackSave.addReg(CSI.getReg(), RegState::Implicit);
+    if (needsCFI) {
+      unsigned CFIIndex = MF.addFrameInst(
+          MCCFIInstruction::cfiDefCfaOffset(nullptr, FrameSize));
+      BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
+          .addCFIIndex(CFIIndex);
+      if (MustSaveLR) {
+        CFIIndex = MF.addFrameInst(MCCFIInstruction::createOffset(
+            nullptr, MRI->getDwarfRegNum(LRReg, true), getReturnSaveOffset()));
+        BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
+            .addCFIIndex(CFIIndex);
+      }
+      for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
+        if (CSI.getReg() == PPC::LR)
+          continue;
+        CFIIndex = MF.addFrameInst(MCCFIInstruction::createOffset(
+            nullptr, MRI->getDwarfRegNum(CSI.getReg(), true),
+            MFI.getObjectOffset(CSI.getFrameIdx())));
+        BuildMI(MBB, MBBI, dl, TII.get(TargetOpcode::CFI_INSTRUCTION))
+            .addCFIIndex(CFIIndex);
+      }
+    }
+    return;
+  }
 
   // Regarding this assert: Even though LR is saved in the caller's frame (i.e.,
   // LROffset is positive), that slot is callee-owned. Because PPC32 SVR4 has no
@@ -1598,6 +1753,17 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
       TII.get(isPPC64 ? (HasPrivileged ? PPC::HASHCHKP8 : PPC::HASHCHK8)
                       : (HasPrivileged ? PPC::HASHCHKP : PPC::HASHCHK));
   int64_t LROffset = getReturnSaveOffset();
+
+  if (canUsePPE42StackOps(MF, FrameSize)) {
+    MachineInstrBuilder StackRestore =
+        BuildMI(MBB, MBBI, dl, TII.get(PPC::LSKU), PPC::R1)
+        .addImm(FrameSize)
+        .addReg(PPC::R1);
+    for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
+      if (CSI.getReg() != PPC::LR)
+        StackRestore.addReg(CSI.getReg(), RegState::Define | RegState::Implicit);
+    return;
+  }
 
   int64_t FPOffset = 0;
 

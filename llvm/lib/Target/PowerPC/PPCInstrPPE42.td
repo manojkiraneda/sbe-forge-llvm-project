@@ -142,9 +142,30 @@ class PPE42DSForm_1<bits<6> opcode, dag OOL, dag IOL, string asmstr,
 def STCXU : PPE42DSForm_1<62, (outs),
                      (ins gprc:$RST, (memrix $D, $RA):$addr),
                      "stcxu $RST, $addr", IIC_LdStStore, []>;
+// Stack save uses the same XO as STCXU, but clears the context selector bit.
+// The displacement is a signed byte offset scaled by eight in the encoding.
+def STSKU : DSForm_1<62, 3, (outs ptr_rc_nor0:$ea_res),
+                     (ins gprc:$RST, (memrix $D, $RA):$addr),
+                     "stsku $RST, $addr", IIC_LdStSTU, []>,
+             RegConstraint<"$addr.reg = $ea_res">, NoEncode<"$ea_res"> {
+  let Inst{29} = 0;
+  let mayStore = 1;
+  let hasSideEffects = 1;
+  let Uses = [LR];
+}
 def LCXU : PPE42DSForm_1<58, (outs gprc:$RST),
                     (ins (memrix $D, $RA):$addr),
                     "lcxu $RST, $addr", IIC_LdStLoad, []>;
+// Stack restore has the same XO as LCXU, with the selector bit clear.
+def LSKU : DSForm_1<58, 3, (outs ptr_rc_nor0:$RST),
+                    (ins (memrix $D, $RA):$addr),
+                    "lsku $RST, $addr", IIC_LdStLoad, []>,
+           RegConstraint<"$addr.reg = $RST"> {
+  let Inst{29} = 0;
+  let mayLoad = 1;
+  let hasSideEffects = 1;
+  let Defs = [LR];
+}
 
 // Bit-test fused branches use FCBXO=3 and BBXOA=0.  The public spellings
 // below are the PPE42 extended mnemonics for the immediate-bit form.
