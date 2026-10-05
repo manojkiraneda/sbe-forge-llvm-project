@@ -149,7 +149,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             First.getOperand(0).getReg(), PPC::sub_gpr_hi,
             &PPC::VDRCRegClass);
         if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
-                         Second.getOperand(0).getReg())
+                         Second.getOperand(0).getReg().asMCReg())
           continue;
 
         BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
