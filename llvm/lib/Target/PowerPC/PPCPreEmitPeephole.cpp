@@ -38,6 +38,8 @@ STATISTIC(NumFrameOffFoldInPreEmit,
           "Number of folding frame offset by using r+r in pre-emit peephole");
 STATISTIC(NumCmpsInPreEmit,
           "Number of compares eliminated in pre-emit peephole");
+STATISTIC(NumPPE42VDStores,
+          "Number of PPE42 word-store pairs combined into stvd");
 
 static cl::opt<bool>
 EnablePCRelLinkerOpt("ppc-pcrel-linker-opt", cl::Hidden, cl::init(true),
@@ -103,6 +105,71 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
 
     MachineFunctionProperties getRequiredProperties() const override {
       return MachineFunctionProperties().setNoVRegs();
+    }
+
+    // STVD stores the two GPRs of a VDR tuple in one doubleword. Match only
+    // consecutive word stores whose physical registers form such a tuple.
+    bool combinePPE42WordStores(MachineBasicBlock &MBB,
+                                const PPCInstrInfo &TII,
+                                const TargetRegisterInfo &TRI) {
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &First = *I++;
+        if (First.getOpcode() != PPC::STW || First.getNumOperands() != 3 ||
+            !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
+            !First.getOperand(1).isImm() || !First.getOperand(2).isReg())
+          continue;
+
+        auto Next = I;
+        while (Next != MBB.end() && Next->isDebugInstr())
+          ++Next;
+        if (Next == MBB.end())
+          continue;
+        MachineInstr &Second = *Next;
+        if (Second.getOpcode() != PPC::STW || Second.getNumOperands() != 3 ||
+            !Second.hasOneMemOperand() || !Second.getOperand(0).isReg() ||
+            !Second.getOperand(1).isImm() || !Second.getOperand(2).isReg())
+          continue;
+
+        int64_t Offset = First.getOperand(1).getImm();
+        if (!isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
+            Second.getOperand(1).getImm() != Offset + 4 ||
+            First.getOperand(2).getReg() != Second.getOperand(2).getReg())
+          continue;
+
+        MachineMemOperand *FirstMem = *First.memoperands_begin();
+        MachineMemOperand *SecondMem = *Second.memoperands_begin();
+        // The core accepts unaligned virtual doubleword addresses, but the
+        // memory interface may reject them. Only combine stores when the
+        // effective address is known to be doubleword-aligned.
+        if (!FirstMem->isStore() || !SecondMem->isStore() ||
+            FirstMem->isVolatile() || SecondMem->isVolatile() ||
+            FirstMem->isAtomic() || SecondMem->isAtomic() ||
+            FirstMem->getAlign() < Align(8) ||
+            SecondMem->getAlign() < Align(4))
+          continue;
+
+        Register Pair = TRI.getMatchingSuperReg(
+            First.getOperand(0).getReg(), PPC::sub_gpr_hi,
+            &PPC::VDRCRegClass);
+        if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
+                         Second.getOperand(0).getReg().asMCReg())
+          continue;
+
+        BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
+                TII.get(PPC::STVD))
+            .addReg(Pair)
+            .addImm(Offset)
+            .addReg(First.getOperand(2).getReg())
+            .addMemOperand(FirstMem)
+            .addMemOperand(SecondMem);
+        I = std::next(Next);
+        First.eraseFromParent();
+        Second.eraseFromParent();
+        Changed = true;
+        ++NumPPE42VDStores;
+      }
+      return Changed;
     }
 
     // This function removes any redundant load immediates. It has two level
@@ -590,6 +657,11 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         MI->eraseFromParent();
         NumRemovedInPreEmit++;
       }
+      // Run after the other late folds, which can expose adjacent STW forms.
+      if (MF.getSubtarget<PPCSubtarget>().isPPE42() &&
+          !MF.getSubtarget<PPCSubtarget>().isLittleEndian())
+        for (MachineBasicBlock &MBB : MF)
+          Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
       return Changed;
     }
   };

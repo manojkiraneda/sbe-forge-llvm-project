@@ -349,6 +349,7 @@ public:
   bool isImm() const override {
     return Kind == Immediate || Kind == Expression;
   }
+  bool isLiteralImm() const { return Kind == Immediate; }
   bool isU1Imm() const { return Kind == Immediate && isUInt<1>(getImm()); }
   bool isU2Imm() const { return Kind == Immediate && isUInt<2>(getImm()); }
   bool isU3Imm() const { return Kind == Immediate && isUInt<3>(getImm()); }
@@ -1293,6 +1294,28 @@ bool PPCAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   case Match_Success:
     if (!validateMemOp(Operands, TII->isMemriOp(Inst.getOpcode())))
       return Error(IDLoc, "invalid operand for instruction");
+    if (Inst.getOpcode() == PPC::STSKU) {
+      // The stack pointer is both the stored register and the updated base.
+      // DD is a negative 13-bit displacement measured in doublewords.
+      const auto &RS = static_cast<const PPCOperand &>(*Operands[1]);
+      const auto &Offset = static_cast<const PPCOperand &>(*Operands[2]);
+      const auto &RA = static_cast<const PPCOperand &>(*Operands[3]);
+      if (!RS.isLiteralImm() || !RA.isLiteralImm() || RS.getImm() == 0 ||
+          RS.getImm() != RA.getImm() || !Offset.isLiteralImm() ||
+          Offset.getImm() < -32768 || Offset.getImm() > -8 ||
+          (Offset.getImm() & 7) != 0)
+        return Error(IDLoc, "stsku requires matching nonzero registers and a negative 8-byte aligned offset");
+    }
+    if (Inst.getOpcode() == PPC::LSKU) {
+      const auto &RT = static_cast<const PPCOperand &>(*Operands[1]);
+      const auto &Offset = static_cast<const PPCOperand &>(*Operands[2]);
+      const auto &RA = static_cast<const PPCOperand &>(*Operands[3]);
+      if (!RT.isLiteralImm() || !RA.isLiteralImm() || RT.getImm() == 0 ||
+          RT.getImm() != RA.getImm() || !Offset.isLiteralImm() ||
+          Offset.getImm() < 8 || Offset.getImm() > 32760 ||
+          (Offset.getImm() & 7) != 0)
+        return Error(IDLoc, "lsku requires matching nonzero registers and a positive 8-byte aligned offset");
+    }
     // Post-process instructions (typically extended mnemonics)
     processInstruction(Inst, Operands);
     Inst.setLoc(IDLoc);
