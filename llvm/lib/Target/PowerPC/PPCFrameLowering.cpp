@@ -91,7 +91,7 @@ PPCFrameLowering::PPCFrameLowering(const PPCSubtarget &STI)
 
 bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
                                            uint64_t FrameSize) const {
-  if (!Subtarget.isPPE42() || FrameSize < 16 || FrameSize > 32760 ||
+  if (!Subtarget.isPPE42() || FrameSize < 8 || FrameSize > 32760 ||
       FrameSize % 8 != 0)
     return false;
 
@@ -110,14 +110,12 @@ bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
   // STSKU writes VDR30 below the incoming SP and, for frames of at least
   // three doublewords, VDR28 as well. Those bytes must be reserved through
   // the entire function, including its outgoing argument area.
-  uint64_t SaveBytes = FrameSize == 16 ? 8 : 16;
+  uint64_t SaveBytes = FrameSize == 8 ? 0 : FrameSize == 16 ? 8 : 16;
   if (MFI.getMaxCallFrameSize() > FrameSize - SaveBytes)
     return false;
 
-  // Use the stack instructions only when at least one of their implicit GPR
-  // saves is needed. The ABI assigns these registers slots in the exact VDR
-  // save area used by STSKU/LSKU.
-  bool SavesStackOpGPR = false;
+  // Callee saves covered by the instruction must occupy its fixed VDR slots.
+  // An eight-byte frame saves only LR; larger frames can save VDR30/VDR28.
   for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
     int64_t ExpectedOffset;
     switch (CSI.getReg()) {
@@ -142,10 +140,7 @@ bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
         MFI.getObjectOffset(CSI.getFrameIdx()) != ExpectedOffset ||
         MFI.getObjectSize(CSI.getFrameIdx()) != 4)
       return false;
-    SavesStackOpGPR = true;
   }
-  if (!SavesStackOpGPR)
-    return false;
 
   for (int I = MFI.getObjectIndexBegin(), E = MFI.getObjectIndexEnd(); I < E;
        ++I) {
@@ -180,6 +175,38 @@ bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
       }
     }
   return true;
+}
+
+// STSKU/LSKU already save and restore the callee-saved GPRs in their VDR
+// slots. The generic PEI spill pass inserts individual STW/LWZ operations
+// before frame lowering decides to use the stack instructions; remove only
+// those operations that refer to the matching callee-save frame indices.
+static void removePPE42StackOpGPRSpills(MachineFunction &MF) {
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  for (MachineBasicBlock &MBB : MF) {
+    for (auto I = MBB.begin(); I != MBB.end();) {
+      MachineInstr &MI = *I++;
+      if (MI.getOpcode() != PPC::STW && MI.getOpcode() != PPC::LWZ)
+        continue;
+      if (!MI.getOperand(0).isReg())
+        continue;
+      MCRegister Reg = MI.getOperand(0).getReg();
+      if (Reg != PPC::R28 && Reg != PPC::R29 && Reg != PPC::R30 &&
+          Reg != PPC::R31)
+        continue;
+      for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo()) {
+        if (CSI.getReg() != Reg)
+          continue;
+        bool UsesSaveSlot = false;
+        for (const MachineOperand &MO : MI.operands())
+          UsesSaveSlot |= MO.isFI() && MO.getIndex() == CSI.getFrameIdx();
+        if (UsesSaveSlot) {
+          MI.eraseFromParent();
+          break;
+        }
+      }
+    }
+  }
 }
 
 // With the SVR4 ABI, callee-saved registers have fixed offsets on the stack.
@@ -772,10 +799,16 @@ void PPCFrameLowering::emitPrologue(MachineFunction &MF,
                       : (HasPrivileged ? PPC::HASHSTP : PPC::HASHST));
 
   if (canUsePPE42StackOps(MF, FrameSize)) {
-    BuildMI(MBB, MBBI, dl, TII.get(PPC::STSKU), PPC::R1)
+    removePPE42StackOpGPRSpills(MF);
+    MBBI = MBB.begin();
+    MachineInstrBuilder StackSave =
+        BuildMI(MBB, MBBI, dl, TII.get(PPC::STSKU), PPC::R1)
         .addReg(PPC::R1)
         .addImm(NegFrameSize)
         .addReg(PPC::R1);
+    for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
+      if (CSI.getReg() != PPC::LR)
+        StackSave.addReg(CSI.getReg(), RegState::Implicit);
     if (needsCFI) {
       unsigned CFIIndex = MF.addFrameInst(
           MCCFIInstruction::cfiDefCfaOffset(nullptr, FrameSize));
@@ -1722,9 +1755,13 @@ void PPCFrameLowering::emitEpilogue(MachineFunction &MF,
   int64_t LROffset = getReturnSaveOffset();
 
   if (canUsePPE42StackOps(MF, FrameSize)) {
-    BuildMI(MBB, MBBI, dl, TII.get(PPC::LSKU), PPC::R1)
+    MachineInstrBuilder StackRestore =
+        BuildMI(MBB, MBBI, dl, TII.get(PPC::LSKU), PPC::R1)
         .addImm(FrameSize)
         .addReg(PPC::R1);
+    for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
+      if (CSI.getReg() != PPC::LR)
+        StackRestore.addReg(CSI.getReg(), RegState::Define | RegState::Implicit);
     return;
   }
 
