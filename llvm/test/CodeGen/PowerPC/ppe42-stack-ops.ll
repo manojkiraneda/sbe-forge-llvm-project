@@ -2,27 +2,27 @@
 
 declare void @sink(ptr)
 
-; A call frame that does not save R28-R31 keeps the ordinary sequence.
+; A call frame can use the stack pair to save LR alone.
 define void @caller(ptr %p) {
 ; CHECK-LABEL: caller:
-; CHECK: mflr
-; CHECK: stwu 1, -16(1)
+; CHECK: stsku 1, -16(1)
 ; CHECK: .cfi_def_cfa_offset 16
 ; CHECK: .cfi_offset lr, 4
 ; CHECK: bl sink
-; CHECK: mtlr
+; CHECK: lsku 1, 16(1)
 ; CHECK: blr
 entry:
   call void @sink(ptr %p)
   ret void
 }
 
-; The R30 spill occupies part of the VDR30 save area, so the stack pair is
-; useful for this frame.
+; The R30 spill occupies the VDR30 save area. STSKU/LSKU handle it directly.
 define void @saved_r30(ptr %p) {
 ; CHECK-LABEL: saved_r30:
 ; CHECK: stsku 1, -16(1)
+; CHECK-NOT: stw 30,
 ; CHECK: bl sink
+; CHECK-NOT: lwz 30,
 ; CHECK: lsku 1, 16(1)
 ; CHECK-NEXT: blr
 entry:
