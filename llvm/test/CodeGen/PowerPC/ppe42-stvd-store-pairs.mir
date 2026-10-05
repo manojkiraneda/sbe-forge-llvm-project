@@ -5,6 +5,7 @@
   define void @adjacent(ptr %p) { ret void }
   define void @aligned_global(ptr %p) { ret void }
   define void @offset_global(ptr %p) { ret void }
+  define void @unaligned_stack_pair(ptr %p) { ret void }
   define void @same_reg(ptr %p) { ret void }
   define void @misaligned(ptr %p) { ret void }
   define void @volatile_store(ptr %p) { ret void }
@@ -28,10 +29,10 @@ tracksRegLiveness: true
 body: |
   bb.0:
     liveins: $r6, $r9, $r10
-    ; The source fields are word-aligned. STVD does not require an
-    ; eight-byte-aligned effective address on PPE42.
+    ; The global is only word-aligned, so the memory interface may reject STVD.
     ; CHECK-LABEL: name: aligned_global
-    ; CHECK: STVD ${{[^,]+}}, 0, $r6
+    ; CHECK: STW $r9, 0, $r6
+    ; CHECK: STW $r10, 4, $r6
     STW $r9, 0, $r6 :: (store (s32) into @record, align 4)
     STW $r10, 4, $r6 :: (store (s32) into @record + 4, align 4)
     BLR implicit $lr, implicit undef $rm
@@ -42,11 +43,12 @@ tracksRegLiveness: true
 body: |
   bb.0:
     liveins: $r6, $r9, $r10
-    ; A four-byte offset into the same global is also legal for STVD.
+    ; A four-byte offset into an eight-byte-aligned global is not safe either.
     ; CHECK-LABEL: name: offset_global
-    ; CHECK: STVD ${{[^,]+}}, 0, $r6
+    ; CHECK: STW $r9, 0, $r6
+    ; CHECK: STW $r10, 4, $r6
     STW $r9, 0, $r6 :: (store (s32) into @record + 4, align 4)
-    STW $r10, 4, $r6 :: (store (s32) into @record + 8, align 4)
+    STW $r10, 4, $r6 :: (store (s32) into @record + 8, align 8)
     BLR implicit $lr, implicit undef $rm
 ...
 ---
@@ -60,6 +62,20 @@ body: |
     ; CHECK: STW $r9, 12, $r6
     STW $r9, 8, $r6 :: (store (s32) into %ir.p + 8, align 8)
     STW $r9, 12, $r6 :: (store (s32) into %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: unaligned_stack_pair
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4
+    ; The QME fault was STVD d3, 36(r1): this address is only word-aligned.
+    ; CHECK-LABEL: name: unaligned_stack_pair
+    ; CHECK: STW $r3, 36, $r1
+    ; CHECK: STW $r4, 40, $r1
+    STW $r3, 36, $r1 :: (store (s32) into %ir.p + 36, align 4)
+    STW $r4, 40, $r1 :: (store (s32) into %ir.p + 40, align 8)
     BLR implicit $lr, implicit undef $rm
 ...
 ---
