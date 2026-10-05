@@ -1,0 +1,60 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs -o - %s | FileCheck %s
+
+--- |
+  define void @adjacent(ptr %p) { ret void }
+  define void @same_reg(ptr %p) { ret void }
+  define void @misaligned(ptr %p) { ret void }
+  define void @volatile_store(ptr %p) { ret void }
+...
+---
+name: adjacent
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r9, $r10
+    ; CHECK-LABEL: name: adjacent
+    ; CHECK: STVD ${{[^,]+}}, 8, $r6
+    ; CHECK-NOT: STW
+    STW $r9, 8, $r6 :: (store (s32) into %ir.p + 8, align 8)
+    STW $r10, 12, $r6 :: (store (s32) into %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: same_reg
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r9
+    ; CHECK-LABEL: name: same_reg
+    ; CHECK: STW $r9, 8, $r6
+    ; CHECK: STW $r9, 12, $r6
+    STW $r9, 8, $r6 :: (store (s32) into %ir.p + 8, align 8)
+    STW $r9, 12, $r6 :: (store (s32) into %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: misaligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r9, $r10
+    ; CHECK-LABEL: name: misaligned
+    ; CHECK: STW $r9, 4, $r6
+    ; CHECK: STW $r10, 8, $r6
+    STW $r9, 4, $r6 :: (store (s32) into %ir.p + 4, align 4)
+    STW $r10, 8, $r6 :: (store (s32) into %ir.p + 8, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: volatile_store
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r9, $r10
+    ; CHECK-LABEL: name: volatile_store
+    ; CHECK: STW $r9, 8, $r6
+    ; CHECK: STW $r10, 12, $r6
+    STW $r9, 8, $r6 :: (volatile store (s32) into %ir.p + 8, align 8)
+    STW $r10, 12, $r6 :: (store (s32) into %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
