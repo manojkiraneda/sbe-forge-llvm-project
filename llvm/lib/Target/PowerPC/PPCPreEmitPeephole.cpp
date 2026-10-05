@@ -15,11 +15,13 @@
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -94,6 +96,29 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
   }
 }
 
+// A word store may carry only four-byte alignment even when its pointer is a
+// field of an eight-byte-aligned global. Recover the stronger guarantee only
+// when the pointer has a constant offset from that global.
+static bool hasPPE42VDStoreAlignment(const MachineMemOperand &MMO,
+                                     const MachineFunction &MF) {
+  if (MMO.getAlign() >= Align(8))
+    return true;
+  const Value *Ptr = MMO.getValue();
+  if (!Ptr || !Ptr->getType()->isPointerTy())
+    return false;
+
+  int64_t PtrOffset = 0;
+  const Value *Base = GetPointerBaseWithConstantOffset(
+      Ptr, PtrOffset, MF.getDataLayout(), /*AllowNonInbounds=*/false);
+  const auto *GV = dyn_cast<GlobalVariable>(Base);
+  if (!GV)
+    return false;
+  Align GlobalAlign = MF.getDataLayout().getValueOrABITypeAlignment(
+      GV->getAlign(), GV->getValueType());
+  return GlobalAlign >= Align(8) &&
+         ((uint64_t(PtrOffset) + uint64_t(MMO.getOffset())) & 7) == 0;
+}
+
   class PPCPreEmitPeephole : public MachineFunctionPass {
   public:
     static char ID;
@@ -142,7 +167,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         if (!FirstMem->isStore() || !SecondMem->isStore() ||
             FirstMem->isVolatile() || SecondMem->isVolatile() ||
             FirstMem->isAtomic() || SecondMem->isAtomic() ||
-            FirstMem->getAlign() < Align(8))
+            !hasPPE42VDStoreAlignment(*FirstMem, *MBB.getParent()))
           continue;
 
         Register Pair = TRI.getMatchingSuperReg(
