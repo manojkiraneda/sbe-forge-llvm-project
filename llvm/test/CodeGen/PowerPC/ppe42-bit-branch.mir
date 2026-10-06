@@ -6,6 +6,7 @@
   define void @bit_clear() { ret void }
   define void @bit_set() { ret void }
   define void @result_live() { ret void }
+  define void @bit_clear_across_trap() { ret void }
 ...
 ---
 name: bit_clear
@@ -56,4 +57,21 @@ body: |
   bb.1:
     liveins: $r4
     BLR implicit $lr, implicit $rm, implicit killed $r4
+...
+---
+name: bit_clear_across_trap
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_clear_across_trap
+    ; CHECK: BNBWI 1, killed $r3, 4, %bb.2
+    $r4 = RLWINM killed $r3, 0, 4, 4
+    $cr0 = CMPLWI killed $r4, 0
+    BCC 76, killed $cr0, %bb.2
+  bb.1:
+    INLINEASM &"trap", 1
+    BLR implicit $lr, implicit $rm
+  bb.2:
+    BLR implicit $lr, implicit $rm
 ...
