@@ -1,0 +1,115 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @signed_eq() { ret void }
+  define void @signed_ne() { ret void }
+  define void @signed_gt() { ret void }
+  define void @unsigned_eq() { ret void }
+  define void @unsigned_gt() { ret void }
+  define void @negative_immediate() { ret void }
+  define void @live_condition() { ret void }
+...
+---
+name: signed_eq
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: signed_eq
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 7, %bb.1
+    ; CHECK-NOT: CMPWI
+    ; CHECK-NOT: BCC
+    $cr0 = CMPWI killed $r3, 7
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: signed_ne
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: signed_ne
+    ; CHECK: CMPWIBC 0, 2, killed $r3, 3, %bb.1
+    $cr0 = CMPWI killed $r3, 3
+    BCC 68, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: signed_gt
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: signed_gt
+    ; CHECK: CMPWIBC 1, 1, killed $r3, 9, %bb.1
+    $cr0 = CMPWI killed $r3, 9
+    BCC 44, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: unsigned_eq
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_eq
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 31, %bb.1
+    $cr0 = CMPLWI killed $r3, 31
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: unsigned_gt
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_gt
+    ; CHECK: CMPLWI
+    ; CHECK: BCC
+    $cr0 = CMPLWI killed $r3, 9
+    BCC 44, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: negative_immediate
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: negative_immediate
+    ; CHECK: CMPWI
+    ; CHECK: BCC
+    $cr0 = CMPWI killed $r3, -1
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: live_condition
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: live_condition
+    ; CHECK: CMPWI
+    ; CHECK: BCC
+    $cr0 = CMPWI killed $r3, 4
+    BCC 76, $cr0, %bb.1
+    BLR implicit $lr, implicit $rm, implicit killed $cr0
+  bb.1:
+    liveins: $cr0
+    BLR implicit $lr, implicit $rm, implicit killed $cr0
+...
