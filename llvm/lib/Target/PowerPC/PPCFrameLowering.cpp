@@ -91,8 +91,8 @@ PPCFrameLowering::PPCFrameLowering(const PPCSubtarget &STI)
 
 bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
                                            uint64_t FrameSize) const {
-  if (!Subtarget.isPPE42() || FrameSize < 8 || FrameSize > 32760 ||
-      FrameSize % 8 != 0)
+  if (!Subtarget.isPPE42() || !Subtarget.hasPPE42XStack() || FrameSize < 8 ||
+      FrameSize > 32760 || FrameSize % 8 != 0)
     return false;
 
   const MachineFrameInfo &MFI = MF.getFrameInfo();
