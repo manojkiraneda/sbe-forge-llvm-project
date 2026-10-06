@@ -1,4 +1,5 @@
 ; RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -disable-tail-calls -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -mattr=-ppe42x-stack -disable-tail-calls -verify-machineinstrs < %s | FileCheck %s --check-prefix=NO-STACK
 
 declare void @sink(ptr)
 
@@ -11,6 +12,12 @@ define void @caller(ptr %p) {
 ; CHECK: bl sink
 ; CHECK: lsku 1, 16(1)
 ; CHECK: blr
+; NO-STACK-LABEL: caller:
+; NO-STACK-NOT: stsku
+; NO-STACK: stwu 1,
+; NO-STACK: bl sink
+; NO-STACK-NOT: lsku
+; NO-STACK: blr
 entry:
   call void @sink(ptr %p)
   ret void
@@ -25,6 +32,14 @@ define void @saved_r30(ptr %p) {
 ; CHECK-NOT: lwz 30,
 ; CHECK: lsku 1, 16(1)
 ; CHECK-NEXT: blr
+; NO-STACK-LABEL: saved_r30:
+; NO-STACK-NOT: stsku
+; NO-STACK: stwu 1,
+; NO-STACK: stw 30,
+; NO-STACK: bl sink
+; NO-STACK: lwz 30,
+; NO-STACK-NOT: lsku
+; NO-STACK: blr
 entry:
   call void asm sideeffect "", "~{r30}"()
   call void @sink(ptr %p)
