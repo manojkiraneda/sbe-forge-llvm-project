@@ -14,12 +14,12 @@ declare void @sink()
 
 define void @repeated() #0 {
 ; SIZE-LABEL: define void @repeated(
-; SIZE: call void @helper(i32 1)
-; SIZE: call void @helper(i32 2)
-; SIZE: call void @helper(i32 3)
-; SIZE: call void @helper(i32 4)
+; SIZE: call{{.*}}@helper(i32 1)
+; SIZE: call{{.*}}@helper(i32 2)
+; SIZE: call{{.*}}@helper(i32 3)
+; SIZE: call{{.*}}@helper(i32 4)
 ; SPEED-LABEL: define void @repeated(
-; SPEED-NOT: call void @helper
+; SPEED-NOT: call{{.*}}@helper
 ; SPEED: call void asm sideeffect
   call void @helper(i32 1)
   call void @helper(i32 2)
@@ -33,7 +33,7 @@ define void @repeated() #0 {
 ; ordinary inliner even when the helper is called repeatedly.
 define void @leaf_repeated() #0 {
 ; SIZE-LABEL: define void @leaf_repeated(
-; SIZE-NOT: call void @helper
+; SIZE-NOT: call{{.*}}@helper
 ; SIZE: call void asm sideeffect
   call void @helper(i32 5)
   call void @helper(i32 6)
@@ -53,7 +53,7 @@ define internal void @single_helper() #0 {
 
 define void @single_use() #0 {
 ; SIZE-LABEL: define void @single_use(
-; SIZE-NOT: call void @single_helper
+; SIZE-NOT: call{{.*}}@single_helper
 ; SIZE: call void asm sideeffect
   call void @single_helper()
   call void @sink()
