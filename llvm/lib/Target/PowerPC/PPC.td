@@ -19,6 +19,8 @@ include "PPCFeatures.td"
 def DirectivePPE42 : Directive<"PPC::DIR_440">;
 def FeaturePPE42 : SubtargetFeature<"ppe42", "IsPPE42", "true",
                                         "Enable PPE42 instructions">;
+def FeaturePPE42XStack : SubtargetFeature<"ppe42x-stack", "HasPPE42XStack",
+                                            "true", "Enable PPE42 stack pair instructions">;
 def NotPPE42 : Predicate<"!Subtarget->isPPE42()">;
 def In64BitMode : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
 def IsPPE42 : Predicate<"Subtarget->isPPE42()">,
@@ -102,7 +104,7 @@ include "GISel/PPCRegisterBanks.td"
 include "PPCProcessors.td"
 
 def : Processor<"ppe42", NoItineraries, [DirectivePPE42, FeatureMFTB,
-                                         FeaturePPE42]>;
+                                         FeaturePPE42, FeaturePPE42XStack]>;
 
 //===----------------------------------------------------------------------===//
 // Calling Conventions
