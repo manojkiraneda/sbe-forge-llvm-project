@@ -25,6 +25,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetMachine.h"
 #include <algorithm>
+#include <iterator>
 using namespace llvm;
 
 #define DEBUG_TYPE "ppc-branch-select"
@@ -408,21 +409,48 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   // Do this after long-branch expansion, when block positions are final. Only
   // fold a single-bit mask whose result and comparison are killed by the
   // branch. A small margin covers the change in branch position and padding.
-  // Inline assembly and wide block alignment make branch offsets imprecise,
-  // but only when they occur between this branch and its destination.  Do
-  // not disable folding throughout a function for an unrelated block.
-  auto HasImpreciseBranchSpan = [&](const MachineBasicBlock &Src,
+  // An inline asm can expand to an unknown number of bytes. The PPE42 nop
+  // and trap spellings are single fixed-width instructions, so they do not
+  // make a displacement imprecise. Check only the instructions between the
+  // branch and its target: asm before a forward branch or after its target
+  // cannot affect the displacement.
+  auto HasImpreciseAsm = [](MachineBasicBlock::const_iterator Begin,
+                            MachineBasicBlock::const_iterator End) {
+    return std::any_of(Begin, End, [](const MachineInstr &MI) {
+      if (!MI.isInlineAsm())
+        return false;
+      StringRef Asm = MI.getOperand(0).getSymbolName();
+      return Asm.trim() != "nop" && Asm.trim() != "trap";
+    });
+  };
+  auto HasImpreciseBranchSpan = [&](const MachineInstr &Br,
                                     const MachineBasicBlock &Dest) {
-    unsigned First = std::min(Src.getNumber(), Dest.getNumber());
-    unsigned Last = std::max(Src.getNumber(), Dest.getNumber());
-    for (unsigned N = First; N <= Last; ++N) {
+    const MachineBasicBlock &Src = *Br.getParent();
+    unsigned SrcNum = Src.getNumber();
+    unsigned DestNum = Dest.getNumber();
+    if (DestNum <= SrcNum) {
+      if (HasImpreciseAsm(Dest.begin(),
+                          DestNum == SrcNum ? Br.getIterator() : Dest.end()))
+        return true;
+      for (unsigned N = DestNum + 1; N < SrcNum; ++N) {
+        const MachineBasicBlock *MBB = Fn.getBlockNumbered(N);
+        if (MBB->getAlignment() > Align(4) ||
+            HasImpreciseAsm(MBB->begin(), MBB->end()))
+          return true;
+      }
+      return DestNum != SrcNum &&
+             (Src.getAlignment() > Align(4) ||
+              HasImpreciseAsm(Src.begin(), Br.getIterator()));
+    }
+    if (HasImpreciseAsm(std::next(Br.getIterator()), Src.end()))
+      return true;
+    for (unsigned N = SrcNum + 1; N < DestNum; ++N) {
       const MachineBasicBlock *MBB = Fn.getBlockNumbered(N);
       if (MBB->getAlignment() > Align(4) ||
-          std::any_of(MBB->begin(), MBB->end(),
-                      [](const MachineInstr &MI) { return MI.isInlineAsm(); }))
+          HasImpreciseAsm(MBB->begin(), MBB->end()))
         return true;
     }
-    return false;
+    return Dest.getAlignment() > Align(4);
   };
   if (Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
     for (MachineBasicBlock &MBB : Fn) {
@@ -454,7 +482,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
         int Distance = computeBranchSize(Fn, &MBB,
                                          Br.getOperand(2).getMBB(), BrOffset);
-        if (HasImpreciseBranchSpan(MBB, *Br.getOperand(2).getMBB()) ||
+        if (HasImpreciseBranchSpan(Br, *Br.getOperand(2).getMBB()) ||
             Distance < -2036 || Distance > 2036)
           continue;
 
@@ -530,7 +558,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
         int Distance = computeBranchSize(
             Fn, &MBB, Br.getOperand(2).getMBB(), BrOffset);
-        if (HasImpreciseBranchSpan(MBB, *Br.getOperand(2).getMBB()) ||
+        if (HasImpreciseBranchSpan(Br, *Br.getOperand(2).getMBB()) ||
             Distance < -2036 || Distance > 2036)
           continue;
 
