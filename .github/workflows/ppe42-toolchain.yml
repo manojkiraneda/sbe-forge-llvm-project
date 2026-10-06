@@ -96,7 +96,9 @@ jobs:
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
-            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
+            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s \
+            llvm/test/CodeGen/PowerPC/ppe42-bit-branch.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir
 
       - name: Test PPE42 inline assembly register pairs
         run: |
