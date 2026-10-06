@@ -31,7 +31,11 @@ let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
   def CMPWIBC : FCBForm<2, 0, (outs),
                         (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, u5imm:$RB,
                              ppe42brtarget:$BDX),
-                        "cmpwibc $PX, $BIX, $RA, $RB, $BDX">;
+                        "cmpwibc $PX, $BIX, $RA, $RB, $BDX"> {
+    // Match CMPWI's existing register model. The SO copy from XER is not
+    // consumed by the branch predicates selected by the compiler.
+    let Uses = [];
+  }
   def CMPWIBCL : FCBForm<2, 1, (outs),
                          (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, u5imm:$RB,
                               ppe42brtarget:$BDX),
