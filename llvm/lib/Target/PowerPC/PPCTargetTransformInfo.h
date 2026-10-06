@@ -40,6 +40,9 @@ public:
       : BaseT(TM, F.getDataLayout()), ST(TM->getSubtargetImpl(F)),
         TLI(ST->getTargetLowering()) {}
 
+  bool preferCallForCodeSize(const CallBase &Call,
+                             const Function &Callee) const override;
+
   std::optional<Instruction *>
   instCombineIntrinsic(InstCombiner &IC, IntrinsicInst &II) const override;
 
