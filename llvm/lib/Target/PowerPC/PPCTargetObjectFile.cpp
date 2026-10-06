@@ -38,8 +38,9 @@ bool PPC64LinuxTargetObjectFile::isGlobalInSmallSection(
   if (GVar->hasSection())
     return GVar->getSection() == ".sdata" || GVar->getSection() == ".sbss" ||
            GVar->getSection() == ".sdata2" || GVar->getSection() == ".sbss2";
-  if (GVar->isDeclaration() || GVar->hasCommonLinkage() ||
-      !GVar->getValueType()->isSized())
+  // EABI small-data references may cross translation units.  A declaration
+  // has a known size even though its definition and section are elsewhere.
+  if (GVar->hasCommonLinkage() || !GVar->getValueType()->isSized())
     return false;
   uint64_t Size = GVar->getDataLayout().getTypeAllocSize(GVar->getValueType());
   return Size > 0 && Size <= SSThreshold;
