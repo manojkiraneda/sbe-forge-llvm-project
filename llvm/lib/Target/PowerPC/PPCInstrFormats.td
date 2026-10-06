@@ -226,6 +226,8 @@ BForm_4<bits<6> opcode, bits<5> bo, bit aa, bit lk,
 // 12-bit displacement in 10 bits.
 class FCBForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
   : I<1, OOL, IOL, asmstr, IIC_BrB> {
+  let isBranch = 1;
+  let isTerminator = 1;
   bits<1> PX;
   bits<2> BIX;
   bits<5> RA;
@@ -244,6 +246,8 @@ class FCBForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
 // PPE42 fused compare-and-branch immediate-bit form.
 class FCBImmForm<bits<2> fcxo, bit lk, dag OOL, dag IOL, string asmstr>
   : I<1, OOL, IOL, asmstr, IIC_BrB> {
+  let isBranch = 1;
+  let isTerminator = 1;
   bits<1> PX;
   bits<5> RA;
   bits<5> BNX;
