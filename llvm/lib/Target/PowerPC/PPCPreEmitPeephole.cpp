@@ -40,6 +40,8 @@ STATISTIC(NumCmpsInPreEmit,
           "Number of compares eliminated in pre-emit peephole");
 STATISTIC(NumPPE42VDStores,
           "Number of PPE42 word-store pairs combined into stvd");
+STATISTIC(NumPPE42VDLoads,
+          "Number of PPE42 word-load pairs combined into lvd");
 
 static cl::opt<bool>
 EnablePCRelLinkerOpt("ppc-pcrel-linker-opt", cl::Hidden, cl::init(true),
@@ -168,6 +170,72 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         Second.eraseFromParent();
         Changed = true;
         ++NumPPE42VDStores;
+      }
+      return Changed;
+    }
+
+    // LVD loads both halves of a VDR tuple from one doubleword. Do not fold
+    // when either destination is the address register: the first LWZ could
+    // otherwise change the address used by the second LWZ.
+    bool combinePPE42WordLoads(MachineBasicBlock &MBB,
+                               const PPCInstrInfo &TII,
+                               const TargetRegisterInfo &TRI) {
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &First = *I++;
+        if (First.getOpcode() != PPC::LWZ || First.getNumOperands() != 3 ||
+            !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
+            !First.getOperand(1).isImm() || !First.getOperand(2).isReg())
+          continue;
+
+        auto Next = I;
+        while (Next != MBB.end() && Next->isDebugInstr())
+          ++Next;
+        if (Next == MBB.end())
+          continue;
+        MachineInstr &Second = *Next;
+        if (Second.getOpcode() != PPC::LWZ || Second.getNumOperands() != 3 ||
+            !Second.hasOneMemOperand() || !Second.getOperand(0).isReg() ||
+            !Second.getOperand(1).isImm() || !Second.getOperand(2).isReg())
+          continue;
+
+        int64_t Offset = First.getOperand(1).getImm();
+        Register Base = First.getOperand(2).getReg();
+        if (!isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
+            Second.getOperand(1).getImm() != Offset + 4 ||
+            Base != Second.getOperand(2).getReg() ||
+            Base == First.getOperand(0).getReg() ||
+            Base == Second.getOperand(0).getReg())
+          continue;
+
+        MachineMemOperand *FirstMem = *First.memoperands_begin();
+        MachineMemOperand *SecondMem = *Second.memoperands_begin();
+        // The PPE42 memory interface requires doubleword alignment for LVD.
+        if (!FirstMem->isLoad() || !SecondMem->isLoad() ||
+            FirstMem->isVolatile() || SecondMem->isVolatile() ||
+            FirstMem->isAtomic() || SecondMem->isAtomic() ||
+            FirstMem->getAlign() < Align(8) ||
+            SecondMem->getAlign() < Align(4))
+          continue;
+
+        Register Pair = TRI.getMatchingSuperReg(
+            First.getOperand(0).getReg(), PPC::sub_gpr_hi,
+            &PPC::VDRCRegClass);
+        if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
+                         Second.getOperand(0).getReg().asMCReg())
+          continue;
+
+        BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
+                TII.get(PPC::LVD), Pair)
+            .addImm(Offset)
+            .addReg(Base, Second.getOperand(2).isKill() ? RegState::Kill : 0)
+            .addMemOperand(FirstMem)
+            .addMemOperand(SecondMem);
+        I = std::next(Next);
+        First.eraseFromParent();
+        Second.eraseFromParent();
+        Changed = true;
+        ++NumPPE42VDLoads;
       }
       return Changed;
     }
@@ -657,11 +725,13 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         MI->eraseFromParent();
         NumRemovedInPreEmit++;
       }
-      // Run after the other late folds, which can expose adjacent STW forms.
+      // Run after the other late folds, which can expose adjacent word ops.
       if (MF.getSubtarget<PPCSubtarget>().isPPE42() &&
           !MF.getSubtarget<PPCSubtarget>().isLittleEndian())
-        for (MachineBasicBlock &MBB : MF)
+        for (MachineBasicBlock &MBB : MF) {
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
+          Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
+        }
       return Changed;
     }
   };
