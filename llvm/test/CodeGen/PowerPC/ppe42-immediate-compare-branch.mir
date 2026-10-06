@@ -10,6 +10,9 @@
   define void @live_condition() { ret void }
   define void @inline_asm_elsewhere() { ret void }
   define void @inline_asm_in_range() { ret void }
+  define void @fixed_asm_in_range() { ret void }
+  define void @asm_before_branch() { ret void }
+  define void @asm_after_target() { ret void }
 ...
 ---
 name: signed_eq
@@ -143,8 +146,52 @@ body: |
     $cr0 = CMPWI killed $r3, 7
     BCC 76, killed $cr0, %bb.2
   bb.1:
-    INLINEASM &"nop", 1
+    INLINEASM &".space 16", 1
     BLR implicit $lr, implicit $rm
   bb.2:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: fixed_asm_in_range
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: fixed_asm_in_range
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.2
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.2
+  bb.1:
+    INLINEASM &"trap", 1
+    BLR implicit $lr, implicit $rm
+  bb.2:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: asm_before_branch
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: asm_before_branch
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    INLINEASM &".space 16", 1
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.1
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: asm_after_target
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: asm_after_target
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.1
+  bb.1:
+    INLINEASM &".space 16", 1
     BLR implicit $lr, implicit $rm
 ...
