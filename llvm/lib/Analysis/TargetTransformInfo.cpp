@@ -1330,6 +1330,11 @@ TargetTransformInfo::getInlineCallPenalty(const Function *F,
   return TTIImpl->getInlineCallPenalty(F, Call, DefaultCallPenalty);
 }
 
+bool TargetTransformInfo::preferCallForCodeSize(
+    const CallBase &Call, const Function &Callee) const {
+  return TTIImpl->preferCallForCodeSize(Call, Callee);
+}
+
 bool TargetTransformInfo::areTypesABICompatible(
     const Function *Caller, const Function *Callee,
     const ArrayRef<Type *> &Types) const {
