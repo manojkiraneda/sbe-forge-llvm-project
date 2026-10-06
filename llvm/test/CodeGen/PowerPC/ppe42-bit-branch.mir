@@ -1,6 +1,7 @@
 # RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o - | FileCheck %s
 # PPE42 can replace a single-bit mask, zero comparison, and branch with one
-# fused instruction. Keep the ordinary sequence when the mask result is live.
+# fused instruction. Keep the mask when its result is live; the remaining
+# zero comparison and branch can still use CMPWIBC.
 --- |
   define void @bit_clear() { ret void }
   define void @bit_set() { ret void }
@@ -46,8 +47,8 @@ body: |
     liveins: $r3
     ; CHECK-LABEL: name: result_live
     ; CHECK: RLWINM
-    ; CHECK: CMPLWI
-    ; CHECK: BCC
+    ; CHECK: CMPWIBC 1, 2, $r4, 0, %bb.1
+    ; CHECK-NOT: BNBWI
     $r4 = RLWINM killed $r3, 0, 4, 4
     $cr0 = CMPLWI $r4, 0
     BCC 76, killed $cr0, %bb.1
