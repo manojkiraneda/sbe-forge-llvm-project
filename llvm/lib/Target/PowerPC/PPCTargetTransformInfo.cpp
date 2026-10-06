@@ -13,6 +13,8 @@
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetSchedule.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/ProfDataUtils.h"
 #include "llvm/Support/CommandLine.h"
@@ -51,6 +53,46 @@ SmallCTRLoopThreshold("min-ctr-loop-threshold", cl::init(4), cl::Hidden,
 // PPC cost model.
 //
 //===----------------------------------------------------------------------===//
+
+bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
+                                       const Function &Callee) const {
+  const Function *Caller = Call.getCaller();
+  if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.hasLocalLinkage() ||
+      Callee.arg_size() > 1 || Call.getCalledFunction() != &Callee)
+    return false;
+
+  // An already non-leaf caller pays no additional LR-save cost for a call.
+  bool HasOtherCall = false;
+  for (const BasicBlock &BB : *Caller)
+    for (const Instruction &I : BB)
+      if (const auto *Other = dyn_cast<CallBase>(&I))
+        if (const Function *Target = Other->getCalledFunction())
+          HasOtherCall |= Target != &Callee && !Target->isIntrinsic();
+  if (!HasOtherCall)
+    return false;
+
+  // Four calls in this caller amortize the shared helper's return and its
+  // call instructions.  With at most one argument, the four side-effecting
+  // assembly instructions alone cost more when duplicated at every site.
+  unsigned CallSites = 0;
+  for (const User *U : Callee.users())
+    if (const auto *Use = dyn_cast<CallBase>(U))
+      if (Use->getCalledFunction() == &Callee && Use->getCaller() == Caller &&
+          ++CallSites == 4)
+        break;
+  if (CallSites < 4)
+    return false;
+
+  unsigned AsmInstructions = 0;
+  for (const BasicBlock &BB : Callee)
+    for (const Instruction &I : BB)
+      if (const auto *AsmCall = dyn_cast<CallBase>(&I))
+        if (const auto *Asm = dyn_cast<InlineAsm>(AsmCall->getCalledOperand()))
+          if (Asm->hasSideEffects() && !Asm->getAsmString().empty() &&
+              ++AsmInstructions == 4)
+            return true;
+  return false;
+}
 
 TargetTransformInfo::PopcntSupportKind
 PPCTTIImpl::getPopcntSupport(unsigned TyWidth) const {

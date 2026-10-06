@@ -3272,6 +3272,9 @@ InlineCost llvm::getInlineCost(
     return llvm::InlineCost::getNever(UserDecision->getFailureReason());
   }
 
+  if (CalleeTTI.preferCallForCodeSize(Call, *Callee))
+    return InlineCost::getNever("shared call is smaller on this target");
+
   LLVM_DEBUG(llvm::dbgs() << "      Analyzing call of " << Callee->getName()
                           << "... (caller:" << Call.getCaller()->getName()
                           << ")\n");
