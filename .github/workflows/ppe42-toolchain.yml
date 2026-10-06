@@ -108,6 +108,12 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-vdr-copy.mir \
             llvm/test/CodeGen/PowerPC/ppe42-lvd-load-pairs.mir
 
+      - name: Test PPE42 stack option
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/CodeGen/PowerPC/ppe42-stack-ops.ll \
+            clang/test/Driver/ppc-ppe42x-stack.c
+
       - name: Build PPE42 compiler runtime
         run: |
           mkdir -p "$BUILD_DIR/ppe42-runtime"
