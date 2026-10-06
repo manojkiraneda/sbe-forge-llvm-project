@@ -3182,6 +3182,9 @@ InlineCost llvm::getInlineCost(
     return llvm::InlineCost::getAlways(
         "Inlining forced by -inline-all-viable-calls");
 
+  if (CalleeTTI.preferCallForCodeSize(Call, *Callee))
+    return InlineCost::getNever("shared call is smaller on this target");
+
   LLVM_DEBUG(llvm::dbgs() << "      Analyzing call of " << Callee->getName()
                           << "... (caller:" << Call.getCaller()->getName()
                           << ")\n");
