@@ -1118,6 +1118,11 @@ public:
     return true;
   }
 
+  virtual bool preferCallForCodeSize(const CallBase &Call,
+                                     const Function &Callee) const {
+    return false;
+  }
+
   virtual bool areTypesABICompatible(const Function *Caller,
                                      const Function *Callee,
                                      ArrayRef<Type *> Types) const {
