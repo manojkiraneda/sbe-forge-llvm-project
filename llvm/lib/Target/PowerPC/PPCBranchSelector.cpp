@@ -462,6 +462,79 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         EverMadeChange = true;
       }
     }
+
+    // CMPWIBC compares a GPR with a zero-extended five-bit immediate using
+    // signed semantics. An unsigned comparison is equivalent only for EQ/NE.
+    for (MachineBasicBlock &MBB : Fn) {
+      unsigned Offset = 0;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Br = *I++;
+        unsigned BrOffset = Offset;
+        Offset += TII->getInstSizeInBytes(Br);
+        if (Br.getOpcode() != PPC::BCC || !Br.getOperand(2).isMBB() ||
+            Br.getOperand(1).getReg() != PPC::CR0 ||
+            !Br.getOperand(1).isKill() || Br.getIterator() == MBB.begin())
+          continue;
+
+        MachineInstr &Cmp = *std::prev(Br.getIterator());
+        if ((Cmp.getOpcode() != PPC::CMPWI &&
+             Cmp.getOpcode() != PPC::CMPLWI) ||
+            Cmp.getOperand(0).getReg() != PPC::CR0 ||
+            !Cmp.getOperand(2).isImm() ||
+            !isUInt<5>(Cmp.getOperand(2).getImm()))
+          continue;
+
+        unsigned PX, BIX;
+        switch (Br.getOperand(0).getImm()) {
+        case PPC::PRED_LT:
+          PX = 1;
+          BIX = 0;
+          break;
+        case PPC::PRED_GE:
+          PX = 0;
+          BIX = 0;
+          break;
+        case PPC::PRED_GT:
+          PX = 1;
+          BIX = 1;
+          break;
+        case PPC::PRED_LE:
+          PX = 0;
+          BIX = 1;
+          break;
+        case PPC::PRED_EQ:
+          PX = 1;
+          BIX = 2;
+          break;
+        case PPC::PRED_NE:
+          PX = 0;
+          BIX = 2;
+          break;
+        default:
+          continue;
+        }
+        if (Cmp.getOpcode() == PPC::CMPLWI && BIX != 2)
+          continue;
+
+        int Distance = computeBranchSize(
+            Fn, &MBB, Br.getOperand(2).getMBB(), BrOffset);
+        if (Distance < -2036 || Distance > 2036)
+          continue;
+
+        BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(), TII->get(PPC::CMPWIBC))
+            .addImm(PX)
+            .addImm(BIX)
+            .addReg(Cmp.getOperand(1).getReg(),
+                    Cmp.getOperand(1).isKill() ? RegState::Kill : 0)
+            .addImm(Cmp.getOperand(2).getImm())
+            .addMBB(Br.getOperand(2).getMBB());
+        Cmp.eraseFromParent();
+        Br.eraseFromParent();
+        BlockSizes[MBB.getNumber()].first -= 4;
+        Offset -= 4;
+        EverMadeChange = true;
+      }
+    }
   }
 
   BlockSizes.clear();
