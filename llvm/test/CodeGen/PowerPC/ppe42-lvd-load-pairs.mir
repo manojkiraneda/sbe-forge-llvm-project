@@ -14,7 +14,7 @@ body: |
   bb.0:
     liveins: $r6
     ; CHECK-LABEL: name: aligned
-    ; CHECK: LVD ${{[^,]+}}, 8, $r6
+    ; CHECK: $r9_r10 = LVD 8, $r6
     ; CHECK-NOT: LWZ
     $r9 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
     $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
@@ -41,7 +41,7 @@ body: |
     liveins: $r9
     ; CHECK-LABEL: name: base_overlap
     ; CHECK: $r9 = LWZ 8, $r9
-    ; CHECK: $r10 = LWZ 12, $r9
+    ; CHECK: $r10 = LWZ 12, killed $r9
     $r9 = LWZ 8, $r9 :: (load (s32) from %ir.p + 8, align 8)
     $r10 = LWZ 12, killed $r9 :: (load (s32) from %ir.p + 12, align 4)
     BLR implicit $lr, implicit undef $rm, implicit killed $r10
