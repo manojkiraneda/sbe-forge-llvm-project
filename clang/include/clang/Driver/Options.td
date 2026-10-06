@@ -5389,6 +5389,11 @@ def mprefixed: Flag<["-"], "mprefixed">, Group<m_ppc_Features_Group>;
 def mno_prefixed: Flag<["-"], "mno-prefixed">, Group<m_ppc_Features_Group>;
 def mspe : Flag<["-"], "mspe">, Group<m_ppc_Features_Group>;
 def mno_spe : Flag<["-"], "mno-spe">, Group<m_ppc_Features_Group>;
+def mppe42x_stack : Flag<["-"], "mppe42x-stack">,
+  Group<m_ppc_Features_Group>;
+def mno_ppe42x_stack : Flag<["-"], "mno-ppe42x-stack">,
+  Group<m_ppc_Features_Group>,
+  HelpText<"Use ordinary PPE42 prologues and epilogues instead of stsku/lsku">;
 def mefpu2 : Flag<["-"], "mefpu2">, Group<m_ppc_Features_Group>;
 } // let Flags = [TargetSpecific]
 def msdata_EQ : Joined<["-"], "msdata=">, Group<m_Group>,
