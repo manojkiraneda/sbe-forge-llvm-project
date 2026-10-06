@@ -408,12 +408,23 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   // Do this after long-branch expansion, when block positions are final. Only
   // fold a single-bit mask whose result and comparison are killed by the
   // branch. A small margin covers the change in branch position and padding.
-  bool HasWideAlignment =
-      std::any_of(Fn.begin(), Fn.end(), [](const MachineBasicBlock &MBB) {
-        return MBB.getAlignment() > Align(4);
-      });
-  if (Fn.getSubtarget<PPCSubtarget>().isPPE42() &&
-      FirstImpreciseBlock < 0 && !HasWideAlignment) {
+  // Inline assembly and wide block alignment make branch offsets imprecise,
+  // but only when they occur between this branch and its destination.  Do
+  // not disable folding throughout a function for an unrelated block.
+  auto HasImpreciseBranchSpan = [&](const MachineBasicBlock &Src,
+                                    const MachineBasicBlock &Dest) {
+    unsigned First = std::min(Src.getNumber(), Dest.getNumber());
+    unsigned Last = std::max(Src.getNumber(), Dest.getNumber());
+    for (unsigned N = First; N <= Last; ++N) {
+      const MachineBasicBlock *MBB = Fn.getBlockNumbered(N);
+      if (MBB->getAlignment() > Align(4) ||
+          std::any_of(MBB->begin(), MBB->end(),
+                      [](const MachineInstr &MI) { return MI.isInlineAsm(); }))
+        return true;
+    }
+    return false;
+  };
+  if (Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
       for (auto I = MBB.begin(); I != MBB.end();) {
@@ -443,7 +454,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
         int Distance = computeBranchSize(Fn, &MBB,
                                          Br.getOperand(2).getMBB(), BrOffset);
-        if (Distance > 2036)
+        if (HasImpreciseBranchSpan(MBB, *Br.getOperand(2).getMBB()) ||
+            Distance < -2036 || Distance > 2036)
           continue;
 
         unsigned Bit = Mask.getOperand(3).getImm();
@@ -518,7 +530,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
         int Distance = computeBranchSize(
             Fn, &MBB, Br.getOperand(2).getMBB(), BrOffset);
-        if (Distance < -2036 || Distance > 2036)
+        if (HasImpreciseBranchSpan(MBB, *Br.getOperand(2).getMBB()) ||
+            Distance < -2036 || Distance > 2036)
           continue;
 
         BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(), TII->get(PPC::CMPWIBC))
