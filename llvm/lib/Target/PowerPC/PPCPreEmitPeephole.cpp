@@ -14,6 +14,7 @@
 #include "PPC.h"
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -174,9 +175,10 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       return Changed;
     }
 
-    // LVD loads both halves of a VDR tuple from one doubleword. Do not fold
-    // when either destination is the address register: the first LWZ could
-    // otherwise change the address used by the second LWZ.
+    // LVD loads both halves of a VDR tuple from one doubleword. A later word
+    // load may be separated by register-only instructions after scheduling.
+    // Moving it to the first load must not cross memory or alter any register
+    // value observed between the two loads.
     bool combinePPE42WordLoads(MachineBasicBlock &MBB,
                                const PPCInstrInfo &TII,
                                const TargetRegisterInfo &TRI) {
@@ -189,8 +191,20 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           continue;
 
         auto Next = I;
-        while (Next != MBB.end() && Next->isDebugInstr())
-          ++Next;
+        SmallVector<MachineInstr *, 4> Between;
+        while (Next != MBB.end()) {
+          if (Next->isDebugInstr()) {
+            ++Next;
+            continue;
+          }
+          if (Next->getOpcode() == PPC::LWZ || Between.size() == 4 ||
+              Next->mayLoad() || Next->mayStore() || Next->isCall() ||
+              Next->isTerminator() || Next->isInlineAsm() ||
+              Next->hasUnmodeledSideEffects() ||
+              Next->modifiesRegister(First.getOperand(2).getReg(), &TRI))
+            break;
+          Between.push_back(&*Next++);
+        }
         if (Next == MBB.end())
           continue;
         MachineInstr &Second = *Next;
@@ -223,6 +237,15 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             &PPC::VDRCRegClass);
         if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
                          Second.getOperand(0).getReg().asMCReg())
+          continue;
+
+        Register Hi = First.getOperand(0).getReg();
+        Register Lo = Second.getOperand(0).getReg();
+        if (llvm::any_of(Between, [&](const MachineInstr *MI) {
+              return MI->modifiesRegister(Hi, &TRI) ||
+                     MI->readsRegister(Lo, &TRI) ||
+                     MI->modifiesRegister(Lo, &TRI);
+            }))
           continue;
 
         BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
