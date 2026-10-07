@@ -20,6 +20,7 @@
 #include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/ProfDataUtils.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Transforms/InstCombine/InstCombiner.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <optional>
@@ -179,6 +180,16 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   // pays for saving LR.
   if (HasRetainedUse && DuplicatedInstructions > 10)
     return true;
+
+  LLVM_DEBUG(dbgs() << "PPE42 size candidate " << Callee.getName()
+                    << ": shared=" << SharedCallSites
+                    << " caller-blocks=" << Caller->size()
+                    << " callee-blocks=" << Callee.size()
+                    << " body=" << BodyInstructions
+                    << " nested-calls=" << NestedCalls
+                    << " local=" << Callee.hasLocalLinkage()
+                    << " inlinehint="
+                    << Callee.hasFnAttribute(Attribute::InlineHint) << '\n');
 
   // Header-defined static helpers can have one visible use in each module.
   // A large helper with several branches and nested calls often expands the
