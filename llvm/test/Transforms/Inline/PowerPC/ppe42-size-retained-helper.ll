@@ -1,4 +1,4 @@
-; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -inlinehint-threshold=1000 -debug-only=ppctti -pass-remarks=inline -pass-remarks-missed=inline -pass-remarks-analysis=inline -passes='default<Os>' %s | FileCheck %s --check-prefix=SIZE
+; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -inlinehint-threshold=1000 -passes='default<Os>' %s | FileCheck %s --check-prefix=SIZE
 
 declare void @sink(i64)
 declare void @sink_right(i64)

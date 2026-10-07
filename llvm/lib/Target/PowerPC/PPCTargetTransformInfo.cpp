@@ -199,7 +199,7 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   if (SharedCallSites == 1 && Callee.hasLocalLinkage() &&
       Callee.hasFnAttribute(Attribute::InlineHint) &&
       Caller->size() >= 3 && Callee.size() >= 4 &&
-      BodyInstructions >= 40 && NestedCalls >= 4)
+      BodyInstructions >= 32 && NestedCalls >= 4)
     return true;
 
   if (SharedCallSites < 2)
