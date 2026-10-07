@@ -68,7 +68,8 @@ static cl::opt<unsigned> SmallCTRLoopThreshold(
 bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
                                        const Function &Callee) const {
   const Function *Caller = Call.getCaller();
-  if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.hasLocalLinkage() ||
+  if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.isDSOLocal() ||
+      Callee.isDeclaration() ||
       Callee.arg_size() > 3 || Caller == &Callee ||
       Call.getCalledFunction() != &Callee)
     return false;
