@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPCTargetTransformInfo.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -59,34 +60,51 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
                                        const Function &Callee) const {
   const Function *Caller = Call.getCaller();
   if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.isDSOLocal() ||
-      Callee.isDeclaration() ||
-      Callee.arg_size() > 3 || Caller == &Callee ||
+      Callee.isDeclaration() || Callee.arg_size() > 3 || Caller == &Callee ||
       Call.getCalledFunction() != &Callee)
     return false;
 
   // An already non-leaf caller pays no additional LR-save cost for a call.
-  bool HasOtherCall = false;
-  for (const BasicBlock &BB : *Caller)
-    for (const Instruction &I : BB)
-      if (const auto *Other = dyn_cast<CallBase>(&I))
-        if (const Function *Target = Other->getCalledFunction())
-          HasOtherCall |= Target != &Callee && !Target->isIntrinsic();
-  if (!HasOtherCall)
+  auto IsNonLeaf = [&](const Function *F) {
+    for (const BasicBlock &BB : *F)
+      for (const Instruction &I : BB)
+        if (const auto *Other = dyn_cast<CallBase>(&I))
+          if (const Function *Target = Other->getCalledFunction())
+            if (Target != &Callee && !Target->isIntrinsic())
+              return true;
+    return false;
+  };
+  if (!IsNonLeaf(Caller))
     return false;
 
-  // Repeated calls in a non-leaf caller can amortize one shared body. Limit
-  // this to a single caller so unrelated uses cannot force outlining here.
-  unsigned CallSites = 0;
+  // Keep the existing same-caller decision for four or more uses. Also count
+  // calls from other size-optimized non-leaf callers: they can share the same
+  // out-of-line body without introducing a new LR save in those callers.
+  DenseMap<const Function *, bool> NonLeafCallers;
+  NonLeafCallers[Caller] = true;
+  unsigned LocalCallSites = 0;
+  unsigned SharedCallSites = 0;
   for (const User *U : Callee.users())
     if (const auto *Use = dyn_cast<CallBase>(U))
-      if (Use->getCalledFunction() == &Callee && Use->getCaller() == Caller &&
-          ++CallSites == 4)
-        break;
-  if (CallSites < 4)
+      if (Use->getCalledFunction() == &Callee &&
+          !Use->hasFnAttr(Attribute::AlwaysInline)) {
+        const Function *UseCaller = Use->getCaller();
+        if (UseCaller == Caller)
+          ++LocalCallSites;
+        if (UseCaller->hasOptSize()) {
+          auto [It, Inserted] = NonLeafCallers.try_emplace(UseCaller, false);
+          if (Inserted)
+            It->second = IsNonLeaf(UseCaller);
+          if (It->second)
+            ++SharedCallSites;
+        }
+      }
+  if (SharedCallSites < 2)
     return false;
 
   unsigned AsmInstructions = 0;
   unsigned BodyInstructions = 0;
+  unsigned DuplicatedInstructions = 0;
   for (const BasicBlock &BB : Callee)
     for (const Instruction &I : BB) {
       if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I) &&
@@ -96,14 +114,70 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
         if (const auto *Asm = dyn_cast<InlineAsm>(AsmCall->getCalledOperand()))
           if (Asm->hasSideEffects() && !Asm->getAsmString().empty() &&
               ++AsmInstructions == 4)
-            return true;
+            if (LocalCallSites >= 4)
+              return true;
+
+      // An ordinary nested call occurs at each site whether or not this
+      // helper is inlined. PHIs, allocas, and returns do not duplicate machine
+      // instructions when the helper is inlined either.
+      if (isa<PHINode, DbgInfoIntrinsic, AllocaInst, ReturnInst>(I) ||
+          I.isLifetimeStartOrEnd())
+        continue;
+      if (const auto *NestedCall = dyn_cast<CallBase>(&I))
+        if (!isa<InlineAsm>(NestedCall->getCalledOperand()) &&
+            !isa<IntrinsicInst>(NestedCall))
+          continue;
+
+      unsigned Cost = 1;
+      // PPE42 has 32-bit GPRs. Wide scalar arithmetic and compares can
+      // expand into multiple instructions even if they are one IR operation.
+      Type *Ty = I.getType();
+      if (const auto *Cmp = dyn_cast<ICmpInst>(&I))
+        Ty = Cmp->getOperand(0)->getType();
+      if (Ty->isIntegerTy(64)) {
+        switch (I.getOpcode()) {
+        case Instruction::Add:
+        case Instruction::Sub:
+        case Instruction::And:
+        case Instruction::Or:
+        case Instruction::Xor:
+        case Instruction::ICmp:
+          Cost = 2;
+          break;
+        case Instruction::Shl:
+        case Instruction::LShr:
+        case Instruction::AShr:
+          Cost = 3;
+          break;
+        case Instruction::Mul:
+        case Instruction::UDiv:
+        case Instruction::SDiv:
+        case Instruction::URem:
+        case Instruction::SRem:
+          Cost = 4;
+          break;
+        default:
+          break;
+        }
+      }
+      DuplicatedInstructions += Cost;
     }
 
-  // IR instructions are only a proxy for final PPE42 instructions. Require
-  // substantial repeated work beyond the calls and shared return before
-  // overriding the ordinary inliner for non-assembly helpers.
-  return BodyInstructions >= 5 &&
-         (CallSites - 1) * BodyInstructions > 4 * CallSites + 2;
+  // Preserve the original decision for repeated calls in one caller. This
+  // keeps the existing QME policy while the refined estimate admits other
+  // demonstrably profitable sharing patterns.
+  if (LocalCallSites >= 4 && BodyInstructions >= 5 &&
+      uint64_t(LocalCallSites - 1) * BodyInstructions >
+          4 * uint64_t(LocalCallSites) + 2)
+    return true;
+
+  // Calls cost more than just the branch because arguments and an out-of-line
+  // return must be handled. Require a margin for constant folding and other
+  // simplifications that inlining can expose. This is particularly important
+  // for helpers called only twice.
+  return DuplicatedInstructions >= 6 &&
+         uint64_t(SharedCallSites - 1) * DuplicatedInstructions >
+             4 * uint64_t(SharedCallSites) + 6;
 }
 
 TargetTransformInfo::PopcntSupportKind
