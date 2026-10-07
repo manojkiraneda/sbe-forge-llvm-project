@@ -18,7 +18,7 @@ body: |
     ; CHECK-NOT: STW
     %0:gprc = COPY $r3
     %1:gprc = COPY $r4
-    %2:gprc = COPY $r6
+    %2:gprc_nor0 = COPY $r6
     STW %0, 8, %2 :: (store (s32) into %ir.p + 8, align 8)
     STW %1, 12, %2 :: (store (s32) into %ir.p + 12, align 4)
     BLR implicit $lr, implicit undef $rm
@@ -34,7 +34,7 @@ body: |
     ; CHECK: STW {{.*}}, 12, {{.*}}
     %0:gprc = COPY $r3
     %1:gprc = COPY $r4
-    %2:gprc = COPY $r6
+    %2:gprc_nor0 = COPY $r6
     STW %0, 8, %2 :: (store (s32) into %ir.p + 8, align 8)
     STW %1, 12, %2 :: (store (s32) into %ir.p + 12, align 4)
     STW %0, 20, %2 :: (store (s32) into %ir.p + 20, align 4)
@@ -51,7 +51,7 @@ body: |
     ; CHECK: STW {{.*}}, 8, {{.*}}
     %0:gprc = COPY $r3
     %1:gprc = COPY $r4
-    %2:gprc = COPY $r6
+    %2:gprc_nor0 = COPY $r6
     STW %0, 4, %2 :: (store (s32) into %ir.p + 4, align 4)
     STW %1, 8, %2 :: (store (s32) into %ir.p + 8, align 8)
     BLR implicit $lr, implicit undef $rm
