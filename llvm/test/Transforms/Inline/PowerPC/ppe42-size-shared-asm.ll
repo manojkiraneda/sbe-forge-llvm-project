@@ -1,5 +1,4 @@
 ; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -passes='default<Os>' %s | FileCheck %s --check-prefix=SIZE
-; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -ppe42-size-shared-dso-local -passes='default<Os>' %s | FileCheck %s --check-prefix=EXTERNAL
 ; RUN: sed 's/optsize //' %s | opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -passes='default<O2>' | FileCheck %s --check-prefix=SPEED
 
 ; A frequently used assembly-heavy helper is smaller as one copy plus calls.
@@ -105,11 +104,11 @@ define dso_local void @shared_external(ptr %p, i32 %x, i32 %y) #0 {
 }
 
 define void @external_repeated(ptr %p, i32 %x, i32 %y) #0 {
-; EXTERNAL-LABEL: define void @external_repeated(
-; EXTERNAL: call{{.*}}@shared_external
-; EXTERNAL: call{{.*}}@shared_external
-; EXTERNAL: call{{.*}}@shared_external
-; EXTERNAL: call{{.*}}@shared_external
+; SIZE-LABEL: define void @external_repeated(
+; SIZE: call{{.*}}@shared_external
+; SIZE: call{{.*}}@shared_external
+; SIZE: call{{.*}}@shared_external
+; SIZE: call{{.*}}@shared_external
 ; SPEED-LABEL: define void @external_repeated(
 ; SPEED-NOT: call{{.*}}@shared_external
 ; SPEED: store volatile i32
