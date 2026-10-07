@@ -1,6 +1,7 @@
 ; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -inlinehint-threshold=1000 -passes='default<Os>' %s | FileCheck %s --check-prefix=SIZE
 
 declare void @sink(i64)
+declare void @sink_right(i64)
 
 ; A noinline use keeps this body in the module even though only one eligible
 ; non-leaf caller uses it. Do not duplicate the body into that caller.
@@ -68,7 +69,7 @@ right:
   %r5 = load volatile i32, ptr %p
   %r6 = load volatile i32, ptr %p
   %r7 = load volatile i32, ptr %p
-  call void @sink(i64 2)
+  call void @sink_right(i64 2)
   br label %done
 
 done:
