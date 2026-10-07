@@ -1,0 +1,58 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs -o - %s | FileCheck %s
+
+--- |
+  define void @pair(ptr %p) #0 { ret void }
+  define void @shared_word(ptr %p) #0 { ret void }
+  define void @unaligned(ptr %p) #0 { ret void }
+  attributes #0 = { optsize }
+...
+---
+name: pair
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r6
+    ; CHECK-LABEL: name: pair
+    ; CHECK: REG_SEQUENCE {{.*}}, %subreg.sub_gpr_hi, {{.*}}, %subreg.sub_gpr_lo
+    ; CHECK: STVD
+    ; CHECK-NOT: STW
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:gprc = COPY $r6
+    STW %0, 8, %2 :: (store (s32) into %ir.p + 8, align 8)
+    STW %1, 12, %2 :: (store (s32) into %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shared_word
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r6
+    ; CHECK-LABEL: name: shared_word
+    ; CHECK: STW {{.*}}, 8, {{.*}}
+    ; CHECK: STW {{.*}}, 12, {{.*}}
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:gprc = COPY $r6
+    STW %0, 8, %2 :: (store (s32) into %ir.p + 8, align 8)
+    STW %1, 12, %2 :: (store (s32) into %ir.p + 12, align 4)
+    STW %0, 20, %2 :: (store (s32) into %ir.p + 20, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: unaligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r6
+    ; CHECK-LABEL: name: unaligned
+    ; CHECK: STW {{.*}}, 4, {{.*}}
+    ; CHECK: STW {{.*}}, 8, {{.*}}
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:gprc = COPY $r6
+    STW %0, 4, %2 :: (store (s32) into %ir.p + 4, align 4)
+    STW %1, 8, %2 :: (store (s32) into %ir.p + 8, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
