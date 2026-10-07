@@ -187,7 +187,7 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   // rule so that small one-use helpers continue to inline in QME.
   if (SharedCallSites == 1 && Callee.hasLocalLinkage() &&
       Callee.hasFnAttribute(Attribute::InlineHint) &&
-      Caller->size() >= 4 && Callee.size() >= 4 &&
+      Caller->size() >= 3 && Callee.size() >= 4 &&
       BodyInstructions >= 40 && NestedCalls >= 4)
     return true;
 
