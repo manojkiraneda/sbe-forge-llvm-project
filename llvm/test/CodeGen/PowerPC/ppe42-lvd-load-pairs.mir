@@ -6,6 +6,8 @@
   define void @base_overlap(ptr %p) { ret void }
   define void @volatile_load(ptr %p) { ret void }
   define void @reversed_registers(ptr %p) { ret void }
+  define void @separated(ptr %p) { ret void }
+  define void @intervening_use(ptr %p) { ret void }
 ...
 ---
 name: aligned
@@ -71,4 +73,34 @@ body: |
     $r10 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
     $r9 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
     BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
+...
+---
+name: separated
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r3
+    ; CHECK-LABEL: name: separated
+    ; CHECK: $r9_r10 = LVD 8, $r6
+    ; CHECK: $r3 = ADDI $r3, 1
+    ; CHECK-NOT: LWZ
+    $r9 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
+    $r3 = ADDI $r3, 1
+    $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10, implicit killed $r3
+...
+---
+name: intervening_use
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r10
+    ; CHECK-LABEL: name: intervening_use
+    ; CHECK: $r9 = LWZ 8, $r6
+    ; CHECK: $r3 = ADDI $r10, 1
+    ; CHECK: $r10 = LWZ 12, $r6
+    $r9 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
+    $r3 = ADDI $r10, 1
+    $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10, implicit killed $r3
 ...
