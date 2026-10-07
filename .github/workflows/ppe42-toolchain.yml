@@ -104,7 +104,8 @@ jobs:
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll \
-            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-wide.ll
+            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-wide.ll \
+            llvm/test/Transforms/Inline/PowerPC/ppe42-size-retained-helper.ll
 
       - name: Test PPE42 inline assembly register pairs
         run: |
