@@ -55,11 +55,16 @@ SmallCTRLoopThreshold("min-ctr-loop-threshold", cl::init(4), cl::Hidden,
 //
 //===----------------------------------------------------------------------===//
 
+static cl::opt<bool> PPE42SizeSharedDSOLocal(
+    "ppe42-size-shared-dso-local", cl::init(false), cl::Hidden,
+    cl::desc("Keep repeated calls to defined dso-local PPE42 helpers in size builds"));
+
 bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
                                        const Function &Callee) const {
   const Function *Caller = Call.getCaller();
   if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.isDSOLocal() ||
       Callee.isDeclaration() ||
+      (!Callee.hasLocalLinkage() && !PPE42SizeSharedDSOLocal) ||
       Callee.arg_size() > 3 || Caller == &Callee ||
       Call.getCalledFunction() != &Callee)
     return false;
