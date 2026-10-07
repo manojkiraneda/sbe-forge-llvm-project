@@ -84,11 +84,14 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   NonLeafCallers[Caller] = true;
   unsigned LocalCallSites = 0;
   unsigned SharedCallSites = 0;
+  bool HasRetainedUse = false;
   for (const User *U : Callee.users())
     if (const auto *Use = dyn_cast<CallBase>(U))
       if (Use->getCalledFunction() == &Callee &&
           !Use->hasFnAttr(Attribute::AlwaysInline)) {
         const Function *UseCaller = Use->getCaller();
+        if (Use != &Call && (Use->isNoInline() || UseCaller->hasOptNone()))
+          HasRetainedUse = true;
         if (UseCaller == Caller)
           ++LocalCallSites;
         if (UseCaller->hasOptSize()) {
@@ -99,12 +102,10 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
             ++SharedCallSites;
         }
       }
-  if (SharedCallSites < 2)
-    return false;
-
   unsigned AsmInstructions = 0;
   unsigned BodyInstructions = 0;
   unsigned DuplicatedInstructions = 0;
+  unsigned NestedCalls = 0;
   for (const BasicBlock &BB : Callee)
     for (const Instruction &I : BB) {
       if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I) &&
@@ -125,8 +126,10 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
         continue;
       if (const auto *NestedCall = dyn_cast<CallBase>(&I))
         if (!isa<InlineAsm>(NestedCall->getCalledOperand()) &&
-            !isa<IntrinsicInst>(NestedCall))
+            !isa<IntrinsicInst>(NestedCall)) {
+          ++NestedCalls;
           continue;
+        }
 
       unsigned Cost = 1;
       // PPE42 has 32-bit GPRs. Wide scalar arithmetic and compares can
@@ -170,6 +173,26 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
       uint64_t(LocalCallSites - 1) * BodyInstructions >
           4 * uint64_t(LocalCallSites) + 2)
     return true;
+
+  // A call in an optnone/noinline caller keeps the out-of-line body alive.
+  // Inlining one more use would duplicate it even though this caller already
+  // pays for saving LR.
+  if (HasRetainedUse && DuplicatedInstructions > 10)
+    return true;
+
+  // Header-defined static helpers can have one visible use in each module.
+  // A large helper with several branches and nested calls often expands the
+  // caller substantially when inlined, while another module may still emit
+  // its own copy. Keep this deliberately narrower than the repeated-call
+  // rule so that small one-use helpers continue to inline in QME.
+  if (SharedCallSites == 1 && Callee.hasLocalLinkage() &&
+      Callee.hasFnAttribute(Attribute::InlineHint) &&
+      Caller->size() >= 4 && Callee.size() >= 4 &&
+      BodyInstructions >= 40 && NestedCalls >= 4)
+    return true;
+
+  if (SharedCallSites < 2)
+    return false;
 
   // Calls cost more than just the branch because arguments and an out-of-line
   // return must be handled. Require a margin for constant folding and other
