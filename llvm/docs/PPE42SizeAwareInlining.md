@@ -15,7 +15,7 @@ The PowerPC hook keeps a call only when **all** of these conditions hold:
 | Condition | Reason |
 | --- | --- |
 | Target subtarget is PPE42 and the caller has `optsize` | Limit the rule to PPE42 size builds (`-Os`/`-Oz` when they set this attribute). |
-| The call directly names the callee, and the callee has local linkage | Keep the analysis within a known, shareable function. |
+| The call directly names a defined, `dso_local` callee | Keep the analysis within a known, non-preemptible function. This includes externally visible firmware helpers. |
 | The callee has at most three arguments and is not the caller | Limit argument setup costs and avoid blocking recursive-call handling. |
 | The caller contains another direct, non-intrinsic function call | The caller is already non-leaf, so retaining this helper call is less likely to add a new link-register save. |
 | The same caller contains at least four direct call sites to this callee | Amortize one shared helper body across repeated uses. |
