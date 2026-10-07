@@ -60,4 +60,52 @@ define void @single_use() #0 {
   ret void
 }
 
+; A repeated ordinary helper can also cost more when copied into a non-leaf
+; caller. Keep its shared body even though it contains no inline assembly.
+define internal void @ordinary_helper(ptr %p, i32 %x) #0 {
+  %a = add i32 %x, 3
+  %b = shl i32 %a, 2
+  %c = xor i32 %b, %x
+  %d = mul i32 %c, 7
+  %e = and i32 %d, 255
+  %f = or i32 %e, %a
+  store volatile i32 %f, ptr %p, align 4
+  ret void
+}
+
+define void @ordinary_repeated(ptr %p, i32 %x) #0 {
+; SIZE-LABEL: define void @ordinary_repeated(
+; SIZE: call{{.*}}@ordinary_helper
+; SIZE: call{{.*}}@ordinary_helper
+; SIZE: call{{.*}}@ordinary_helper
+; SIZE: call{{.*}}@ordinary_helper
+  %a = add i32 %x, 1
+  %b = add i32 %x, 2
+  %c = add i32 %x, 3
+  call void @ordinary_helper(ptr %p, i32 %x)
+  call void @ordinary_helper(ptr %p, i32 %a)
+  call void @ordinary_helper(ptr %p, i32 %b)
+  call void @ordinary_helper(ptr %p, i32 %c)
+  call void @sink()
+  ret void
+}
+
+; Small functions still use LLVM's regular inlining decision.
+define internal void @tiny_helper(ptr %p, i32 %x) #0 {
+  store volatile i32 %x, ptr %p, align 4
+  ret void
+}
+
+define void @tiny_repeated(ptr %p, i32 %x) #0 {
+; SIZE-LABEL: define void @tiny_repeated(
+; SIZE-NOT: call{{.*}}@tiny_helper
+; SIZE: store volatile i32
+  call void @tiny_helper(ptr %p, i32 %x)
+  call void @tiny_helper(ptr %p, i32 %x)
+  call void @tiny_helper(ptr %p, i32 %x)
+  call void @tiny_helper(ptr %p, i32 %x)
+  call void @sink()
+  ret void
+}
+
 attributes #0 = { optsize "target-cpu"="ppe42" }
