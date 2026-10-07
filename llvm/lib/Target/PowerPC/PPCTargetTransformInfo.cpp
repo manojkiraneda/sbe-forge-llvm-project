@@ -15,6 +15,7 @@
 #include "llvm/CodeGen/TargetSchedule.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/ProfDataUtils.h"
 #include "llvm/Support/CommandLine.h"
@@ -58,7 +59,8 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
                                        const Function &Callee) const {
   const Function *Caller = Call.getCaller();
   if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.hasLocalLinkage() ||
-      Callee.arg_size() > 1 || Call.getCalledFunction() != &Callee)
+      Callee.arg_size() > 3 || Caller == &Callee ||
+      Call.getCalledFunction() != &Callee)
     return false;
 
   // An already non-leaf caller pays no additional LR-save cost for a call.
@@ -71,9 +73,8 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   if (!HasOtherCall)
     return false;
 
-  // Four calls in this caller amortize the shared helper's return and its
-  // call instructions.  With at most one argument, the four side-effecting
-  // assembly instructions alone cost more when duplicated at every site.
+  // Repeated calls in a non-leaf caller can amortize one shared body. Limit
+  // this to a single caller so unrelated uses cannot force outlining here.
   unsigned CallSites = 0;
   for (const User *U : Callee.users())
     if (const auto *Use = dyn_cast<CallBase>(U))
@@ -84,14 +85,24 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
     return false;
 
   unsigned AsmInstructions = 0;
+  unsigned BodyInstructions = 0;
   for (const BasicBlock &BB : Callee)
-    for (const Instruction &I : BB)
+    for (const Instruction &I : BB) {
+      if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I) &&
+          !I.isLifetimeStartOrEnd())
+        ++BodyInstructions;
       if (const auto *AsmCall = dyn_cast<CallBase>(&I))
         if (const auto *Asm = dyn_cast<InlineAsm>(AsmCall->getCalledOperand()))
           if (Asm->hasSideEffects() && !Asm->getAsmString().empty() &&
               ++AsmInstructions == 4)
             return true;
-  return false;
+    }
+
+  // IR instructions are only a proxy for final PPE42 instructions. Require
+  // substantial repeated work beyond the calls and shared return before
+  // overriding the ordinary inliner for non-assembly helpers.
+  return BodyInstructions >= 5 &&
+         (CallSites - 1) * BodyInstructions > 4 * CallSites + 2;
 }
 
 TargetTransformInfo::PopcntSupportKind
