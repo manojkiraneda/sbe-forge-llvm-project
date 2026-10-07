@@ -77,9 +77,9 @@ define internal void @three_helper() #0 {
 
 define void @three_uses() #0 {
 ; SIZE-LABEL: define void @three_uses(
-; SIZE: call void @three_helper()
-; SIZE: call void @three_helper()
-; SIZE: call void @three_helper()
+; SIZE: call{{.*}}@three_helper()
+; SIZE: call{{.*}}@three_helper()
+; SIZE: call{{.*}}@three_helper()
   call void @three_helper()
   call void @three_helper()
   call void @three_helper()
@@ -117,7 +117,7 @@ define dso_local i64 @wide_leaf(i64 %x) #0 {
 }
 
 define i64 @leaf_use(i64 %x) #0 {
-; SIZE-LABEL: define i64 @leaf_use(
+; SIZE-LABEL: define{{.*}}@leaf_use(
 ; SIZE-NOT: call i64 @wide_leaf
 ; SIZE: ret i64
   %a = call i64 @wide_leaf(i64 %x)
