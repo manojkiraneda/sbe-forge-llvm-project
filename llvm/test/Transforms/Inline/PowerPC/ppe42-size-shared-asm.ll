@@ -90,6 +90,39 @@ define void @ordinary_repeated(ptr %p, i32 %x) #0 {
   ret void
 }
 
+; Externally visible firmware helpers can still be non-preemptible. Repeated
+; calls to one such helper should retain its shared body in a size build.
+define dso_local void @shared_external(ptr %p, i32 %x, i32 %y) #0 {
+  %a = add i32 %x, %y
+  %b = shl i32 %a, 2
+  %c = xor i32 %b, %x
+  %d = mul i32 %c, 7
+  %e = and i32 %d, 255
+  %f = or i32 %e, %a
+  store volatile i32 %f, ptr %p, align 4
+  ret void
+}
+
+define void @external_repeated(ptr %p, i32 %x, i32 %y) #0 {
+; SIZE-LABEL: define void @external_repeated(
+; SIZE: call{{.*}}@shared_external
+; SIZE: call{{.*}}@shared_external
+; SIZE: call{{.*}}@shared_external
+; SIZE: call{{.*}}@shared_external
+; SPEED-LABEL: define void @external_repeated(
+; SPEED-NOT: call{{.*}}@shared_external
+; SPEED: store volatile i32
+  %a = add i32 %x, 1
+  %b = add i32 %x, 2
+  %c = add i32 %x, 3
+  call void @shared_external(ptr %p, i32 %x, i32 %y)
+  call void @shared_external(ptr %p, i32 %a, i32 %y)
+  call void @shared_external(ptr %p, i32 %b, i32 %y)
+  call void @shared_external(ptr %p, i32 %c, i32 %y)
+  call void @sink()
+  ret void
+}
+
 ; Small functions still use LLVM's regular inlining decision.
 define internal void @tiny_helper(ptr %p, i32 %x) #0 {
   store volatile i32 %x, ptr %p, align 4
