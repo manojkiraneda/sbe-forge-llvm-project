@@ -130,6 +130,7 @@ LLVMInitializePowerPCTarget() {
   initializePPCTOCRegDepsPass(PR);
   initializePPCEarlyReturnPass(PR);
   initializePPCPPE42InlineAsmPass(PR);
+  initializePPCPPE42StorePairsPass(PR);
   initializePPCVSXCopyPass(PR);
   initializePPCVSXFMAMutatePass(PR);
   initializePPCVSXSwapRemovalPass(PR);
@@ -569,6 +570,7 @@ void PPCPassConfig::addMachineSSAOptimization() {
 }
 
 void PPCPassConfig::addPreRegAlloc() {
+  addPass(createPPCPPE42StorePairsPass());
   if (getOptLevel() != CodeGenOptLevel::None) {
     insertPass(VSXFMAMutateEarly ? &TwoAddressInstructionPassID
                                  : &MachineSchedulerID,
