@@ -1,0 +1,74 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs -o - %s | FileCheck %s
+
+--- |
+  define void @aligned(ptr %p) { ret void }
+  define void @unaligned(ptr %p) { ret void }
+  define void @base_overlap(ptr %p) { ret void }
+  define void @volatile_load(ptr %p) { ret void }
+  define void @reversed_registers(ptr %p) { ret void }
+...
+---
+name: aligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: aligned
+    ; CHECK: $r9_r10 = LVD 8, $r6
+    ; CHECK-NOT: LWZ
+    $r9 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
+    $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
+...
+---
+name: unaligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: unaligned
+    ; CHECK: $r9 = LWZ 4, $r6
+    ; CHECK: $r10 = LWZ 8, $r6
+    $r9 = LWZ 4, $r6 :: (load (s32) from %ir.p + 4, align 4)
+    $r10 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
+...
+---
+name: base_overlap
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r9
+    ; CHECK-LABEL: name: base_overlap
+    ; CHECK: $r9 = LWZ 8, $r9
+    ; CHECK: $r10 = LWZ 12, killed $r9
+    $r9 = LWZ 8, $r9 :: (load (s32) from %ir.p + 8, align 8)
+    $r10 = LWZ 12, killed $r9 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r10
+...
+---
+name: volatile_load
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: volatile_load
+    ; CHECK: $r9 = LWZ 8, $r6
+    ; CHECK: $r10 = LWZ 12, $r6
+    $r9 = LWZ 8, $r6 :: (volatile load (s32) from %ir.p + 8, align 8)
+    $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
+...
+---
+name: reversed_registers
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: reversed_registers
+    ; CHECK: $r10 = LWZ 8, $r6
+    ; CHECK: $r9 = LWZ 12, $r6
+    $r10 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
+    $r9 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
+...

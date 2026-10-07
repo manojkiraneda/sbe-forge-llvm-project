@@ -105,7 +105,8 @@ jobs:
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/CodeGen/PowerPC/ppe42-inline-asm-vdr.ll \
             llvm/test/CodeGen/PowerPC/ppe42-inline-asm-pairs.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-vdr-copy.mir
+            llvm/test/CodeGen/PowerPC/ppe42-vdr-copy.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-lvd-load-pairs.mir
 
       - name: Build PPE42 compiler runtime
         run: |
