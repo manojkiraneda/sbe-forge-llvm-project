@@ -109,8 +109,10 @@ body: |
   bb.0:
     liveins: $r3
     ; CHECK-LABEL: name: live_condition
-    ; CHECK: CMPWI
-    ; CHECK: BCC
+    ; CMPWIBC sets CR0 just like CMPWI, so CR0 can remain live after folding.
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 4, %bb.1
+    ; CHECK-NOT: CMPWI
+    ; CHECK-NOT: BCC
     $cr0 = CMPWI killed $r3, 4
     BCC 76, $cr0, %bb.1
     BLR implicit $lr, implicit $rm, implicit killed $cr0
