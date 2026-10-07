@@ -513,7 +513,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         Offset += TII->getInstSizeInBytes(Br);
         if (Br.getOpcode() != PPC::BCC || !Br.getOperand(2).isMBB() ||
             Br.getOperand(1).getReg() != PPC::CR0 ||
-            !Br.getOperand(1).isKill() || Br.getIterator() == MBB.begin())
+            Br.getIterator() == MBB.begin())
           continue;
 
         MachineInstr &Cmp = *std::prev(Br.getIterator());
