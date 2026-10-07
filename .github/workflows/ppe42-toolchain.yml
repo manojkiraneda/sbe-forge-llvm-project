@@ -103,7 +103,8 @@ jobs:
       - name: Test PPE42 size-aware inlining
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll
+            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll \
+            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-wide.ll
 
       - name: Test PPE42 inline assembly register pairs
         run: |
