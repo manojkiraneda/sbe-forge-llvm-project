@@ -20,14 +20,11 @@
 #include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/ProfDataUtils.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
 #include "llvm/Transforms/InstCombine/InstCombiner.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <optional>
 
 using namespace llvm;
-
-#define DEBUG_TYPE "ppctti"
 
 static cl::opt<bool> VecMaskCost("ppc-vec-mask-cost",
 cl::desc("add masking cost for i1 vectors"), cl::init(true), cl::Hidden);
@@ -106,7 +103,6 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   unsigned AsmInstructions = 0;
   unsigned BodyInstructions = 0;
   unsigned DuplicatedInstructions = 0;
-  unsigned NestedCalls = 0;
   for (const BasicBlock &BB : Callee)
     for (const Instruction &I : BB) {
       if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I) &&
@@ -128,7 +124,6 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
       if (const auto *NestedCall = dyn_cast<CallBase>(&I))
         if (!isa<InlineAsm>(NestedCall->getCalledOperand()) &&
             !isa<IntrinsicInst>(NestedCall)) {
-          ++NestedCalls;
           continue;
         }
 
@@ -179,27 +174,6 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   // Inlining one more use would duplicate it even though this caller already
   // pays for saving LR.
   if (HasRetainedUse && DuplicatedInstructions > 10)
-    return true;
-
-  LLVM_DEBUG(dbgs() << "PPE42 size candidate " << Callee.getName()
-                    << ": shared=" << SharedCallSites
-                    << " caller-blocks=" << Caller->size()
-                    << " callee-blocks=" << Callee.size()
-                    << " body=" << BodyInstructions
-                    << " nested-calls=" << NestedCalls
-                    << " local=" << Callee.hasLocalLinkage()
-                    << " inlinehint="
-                    << Callee.hasFnAttribute(Attribute::InlineHint) << '\n');
-
-  // Header-defined static helpers can have one visible use in each module.
-  // A large helper with several branches and nested calls often expands the
-  // caller substantially when inlined, while another module may still emit
-  // its own copy. Keep this deliberately narrower than the repeated-call
-  // rule so that small one-use helpers continue to inline in QME.
-  if (SharedCallSites == 1 && Callee.hasLocalLinkage() &&
-      Callee.hasFnAttribute(Attribute::InlineHint) &&
-      Caller->size() >= 3 && Callee.size() >= 4 &&
-      BodyInstructions >= 32 && NestedCalls >= 4)
     return true;
 
   if (SharedCallSites < 2)
