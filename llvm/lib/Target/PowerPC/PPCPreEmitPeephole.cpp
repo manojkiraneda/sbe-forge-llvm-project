@@ -112,15 +112,14 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
 
     // STVD stores the two GPRs of a VDR tuple in one doubleword. Match only
     // consecutive word stores whose physical registers form such a tuple.
-    bool combinePPE42WordStores(MachineBasicBlock &MBB,
-                                const PPCInstrInfo &TII,
+    bool combinePPE42WordStores(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
                                 const TargetRegisterInfo &TRI) {
       bool Changed = false;
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &First = *I++;
         if (First.getOpcode() != PPC::STW || First.getNumOperands() != 3 ||
             !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
-            !First.getOperand(1).isImm() || !First.getOperand(2).isReg())
+            !First.getOperand(2).isReg())
           continue;
 
         auto Next = I;
@@ -131,41 +130,136 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         MachineInstr &Second = *Next;
         if (Second.getOpcode() != PPC::STW || Second.getNumOperands() != 3 ||
             !Second.hasOneMemOperand() || !Second.getOperand(0).isReg() ||
-            !Second.getOperand(1).isImm() || !Second.getOperand(2).isReg())
+            !Second.getOperand(2).isReg())
           continue;
 
-        int64_t Offset = First.getOperand(1).getImm();
-        if (!isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
-            Second.getOperand(1).getImm() != Offset + 4 ||
-            First.getOperand(2).getReg() != Second.getOperand(2).getReg())
+        // A store of the low word can precede the high word. Choose the
+        // actual high-word address as the STVD address in either case.
+        auto TryPair = [&](MachineInstr &Hi, MachineInstr &Lo) -> Register {
+          Register Pair = TRI.getMatchingSuperReg(
+              Hi.getOperand(0).getReg(), PPC::sub_gpr_hi, &PPC::VDRCRegClass);
+          if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
+                           Lo.getOperand(0).getReg().asMCReg())
+            return Register();
+          return Pair;
+        };
+        Register Pair = TryPair(First, Second);
+        MachineInstr *Hi = &First, *Lo = &Second;
+        if (!Pair) {
+          Pair = TryPair(Second, First);
+          Hi = &Second;
+          Lo = &First;
+        }
+        if (!Pair)
           continue;
 
-        MachineMemOperand *FirstMem = *First.memoperands_begin();
-        MachineMemOperand *SecondMem = *Second.memoperands_begin();
+        const MachineOperand &HiDisp = Hi->getOperand(1);
+        const MachineOperand &LoDisp = Lo->getOperand(1);
+        Register Base = Hi->getOperand(2).getReg();
+        if (HiDisp.isImm() && !isInt<16>(HiDisp.getImm()))
+          continue;
+
+        // The address of the other word may use a temporary base made by
+        // ADDI. For example, 4(r5) and 564(r13) are consecutive when r5 was
+        // set to r13+564. Require the reaching definition and ensure the
+        // original base has not changed since that definition.
+        auto DerivedAddressMatches = [&](Register DerivedBase,
+                                         int64_t DerivedOffset,
+                                         Register RootBase,
+                                         int64_t ExpectedOffset) {
+          if (DerivedBase == RootBase || !DerivedBase || !RootBase ||
+              DerivedBase == PPC::R0 || RootBase == PPC::R0)
+            return false;
+          auto Def = First.getIterator();
+          unsigned Seen = 0;
+          while (Def != MBB.begin() && Seen < 8) {
+            --Def;
+            if (Def->isDebugInstr())
+              continue;
+            ++Seen;
+            if (!Def->modifiesRegister(DerivedBase, &TRI))
+              continue;
+            if (Def->getOpcode() != PPC::ADDI || Def->getNumOperands() < 3 ||
+                !Def->getOperand(0).isReg() ||
+                Def->getOperand(0).getReg() != DerivedBase ||
+                !Def->getOperand(1).isReg() ||
+                Def->getOperand(1).getReg() != RootBase ||
+                !Def->getOperand(2).isImm() ||
+                Def->getOperand(2).getImm() + DerivedOffset != ExpectedOffset)
+              return false;
+            for (auto Between = std::next(Def); Between != First.getIterator();
+                 ++Between)
+              if (Between->modifiesRegister(RootBase, &TRI))
+                return false;
+            return true;
+          }
+          return false;
+        };
+        // Before final assembly, an SDA address can still be symbolic:
+        //   r6 = LA r5, @object@lo
+        //   STW low, 4(r6)
+        //   STW high, @object@lo(r5)
+        // The two relocation operands must be identical.
+        auto SymbolicAddressMatches = [&](Register DerivedBase,
+                                          Register RootBase) {
+          if (DerivedBase == RootBase || !DerivedBase || !RootBase ||
+              RootBase == PPC::R0 || !LoDisp.isImm() || LoDisp.getImm() != 4)
+            return false;
+          auto Def = First.getIterator();
+          unsigned Seen = 0;
+          while (Def != MBB.begin() && Seen < 8) {
+            --Def;
+            if (Def->isDebugInstr())
+              continue;
+            ++Seen;
+            if (!Def->modifiesRegister(DerivedBase, &TRI))
+              continue;
+            if (Def->getOpcode() != PPC::LA || Def->getNumOperands() < 3 ||
+                !Def->getOperand(0).isReg() ||
+                Def->getOperand(0).getReg() != DerivedBase ||
+                !Def->getOperand(1).isReg() ||
+                Def->getOperand(1).getReg() != RootBase ||
+                !Def->getOperand(2).isIdenticalTo(HiDisp))
+              return false;
+            for (auto Between = std::next(Def); Between != First.getIterator();
+                 ++Between)
+              if (Between->modifiesRegister(RootBase, &TRI))
+                return false;
+            return true;
+          }
+          return false;
+        };
+        Register LoBase = Lo->getOperand(2).getReg();
+        if (HiDisp.isImm() && LoDisp.isImm()) {
+          int64_t Offset = HiDisp.getImm();
+          int64_t LoOffset = LoDisp.getImm();
+          if (LoBase != Base || LoOffset != Offset + 4) {
+            if (!DerivedAddressMatches(LoBase, LoOffset, Base, Offset + 4) &&
+                !DerivedAddressMatches(Base, Offset, LoBase, LoOffset - 4))
+              continue;
+          }
+        } else if (!SymbolicAddressMatches(LoBase, Base)) {
+          continue;
+        }
+
+        MachineMemOperand *HiMem = *Hi->memoperands_begin();
+        MachineMemOperand *LoMem = *Lo->memoperands_begin();
         // The core accepts unaligned virtual doubleword addresses, but the
         // memory interface may reject them. Only combine stores when the
         // effective address is known to be doubleword-aligned.
-        if (!FirstMem->isStore() || !SecondMem->isStore() ||
-            FirstMem->isVolatile() || SecondMem->isVolatile() ||
-            FirstMem->isAtomic() || SecondMem->isAtomic() ||
-            FirstMem->getAlign() < Align(8) ||
-            SecondMem->getAlign() < Align(4))
-          continue;
-
-        Register Pair = TRI.getMatchingSuperReg(
-            First.getOperand(0).getReg(), PPC::sub_gpr_hi,
-            &PPC::VDRCRegClass);
-        if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
-                         Second.getOperand(0).getReg().asMCReg())
+        if (!HiMem->isStore() || !LoMem->isStore() ||
+            HiMem->isVolatile() || LoMem->isVolatile() ||
+            HiMem->isAtomic() || LoMem->isAtomic() ||
+            HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
           continue;
 
         BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
                 TII.get(PPC::STVD))
             .addReg(Pair)
-            .addImm(Offset)
-            .addReg(First.getOperand(2).getReg())
-            .addMemOperand(FirstMem)
-            .addMemOperand(SecondMem);
+            .add(HiDisp)
+            .addReg(Base)
+            .addMemOperand(HiMem)
+            .addMemOperand(LoMem);
         I = std::next(Next);
         First.eraseFromParent();
         Second.eraseFromParent();
