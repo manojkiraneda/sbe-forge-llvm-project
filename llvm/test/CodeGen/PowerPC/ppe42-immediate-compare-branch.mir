@@ -13,6 +13,10 @@
   define void @fixed_asm_in_range() { ret void }
   define void @asm_before_branch() { ret void }
   define void @asm_after_target() { ret void }
+  define void @bit_eq() { ret void }
+  define void @bit_ne() { ret void }
+  define void @bit_other_condition() { ret void }
+  define void @fixed_tw_asm_in_range() { ret void }
 ...
 ---
 name: signed_eq
@@ -28,6 +32,69 @@ body: |
     BCC 76, killed $cr0, %bb.1
     BLR implicit $lr, implicit $rm
   bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_eq
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_eq
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    ; CHECK-NOT: CMPLWI
+    ; CHECK-NOT: BC
+    $cr0 = CMPLWI killed $r3, 0
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_ne
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_ne
+    ; CHECK: CMPWIBC 0, 2, killed $r3, 0, %bb.1
+    ; CHECK-NOT: CMPLWI
+    ; CHECK-NOT: BCn
+    $cr0 = CMPLWI killed $r3, 0
+    BCn killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_other_condition
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_other_condition
+    ; CHECK: CMPLWI killed $r3, 0
+    ; CHECK: BC $cr0lt, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BC $cr0lt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: fixed_tw_asm_in_range
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: fixed_tw_asm_in_range
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.2
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.2
+  bb.1:
+    INLINEASM &"tw 31, $0, $1", 9, 13, 4, 13, 6
+    BLR implicit $lr, implicit $rm
+  bb.2:
     BLR implicit $lr, implicit $rm
 ...
 ---

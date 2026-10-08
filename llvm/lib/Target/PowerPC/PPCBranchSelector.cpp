@@ -409,18 +409,19 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   // Do this after long-branch expansion, when block positions are final. Only
   // fold a single-bit mask whose result and comparison are killed by the
   // branch. A small margin covers the change in branch position and padding.
-  // An inline asm can expand to an unknown number of bytes. The PPE42 nop
-  // and trap spellings are single fixed-width instructions, so they do not
-  // make a displacement imprecise. Check only the instructions between the
-  // branch and its target: asm before a forward branch or after its target
-  // cannot affect the displacement.
+  // An inline asm can expand to an unknown number of bytes. The PPE42 nop,
+  // trap, and PK_PANIC's exact "tw 31, $0, $1" spellings are single fixed-
+  // width instructions, so they do not make a displacement imprecise. Check
+  // only the instructions between the branch and its target: asm before a
+  // forward branch or after its target cannot affect the displacement.
   auto HasImpreciseAsm = [](MachineBasicBlock::const_iterator Begin,
                             MachineBasicBlock::const_iterator End) {
     return std::any_of(Begin, End, [](const MachineInstr &MI) {
       if (!MI.isInlineAsm())
         return false;
       StringRef Asm = MI.getOperand(0).getSymbolName();
-      return Asm.trim() != "nop" && Asm.trim() != "trap";
+      Asm = Asm.trim();
+      return Asm != "nop" && Asm != "trap" && Asm != "tw 31, $0, $1";
     });
   };
   auto HasImpreciseBranchSpan = [&](const MachineInstr &Br,
@@ -505,70 +506,81 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
     // CMPWIBC compares a GPR with a zero-extended five-bit immediate using
     // signed semantics. An unsigned comparison is equivalent only for EQ/NE.
+    // Accept both predicate branches and direct tests of CR0's EQ bit.
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &Br = *I++;
         unsigned BrOffset = Offset;
         Offset += TII->getInstSizeInBytes(Br);
-        if (Br.getOpcode() != PPC::BCC || !Br.getOperand(2).isMBB() ||
-            Br.getOperand(1).getReg() != PPC::CR0 ||
+        bool IsBitBranch =
+            Br.getOpcode() == PPC::BC || Br.getOpcode() == PPC::BCn;
+        if (Br.getOpcode() != PPC::BCC && !IsBitBranch)
+          continue;
+        unsigned DestOp = IsBitBranch ? 1 : 2;
+        if (!Br.getOperand(DestOp).isMBB() ||
+            (IsBitBranch ? Br.getOperand(0).getReg() != PPC::CR0EQ
+                         : Br.getOperand(1).getReg() != PPC::CR0) ||
             Br.getIterator() == MBB.begin())
           continue;
 
         MachineInstr &Cmp = *std::prev(Br.getIterator());
-        if ((Cmp.getOpcode() != PPC::CMPWI &&
-             Cmp.getOpcode() != PPC::CMPLWI) ||
+        if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
             Cmp.getOperand(0).getReg() != PPC::CR0 ||
             !Cmp.getOperand(2).isImm() ||
             !isUInt<5>(Cmp.getOperand(2).getImm()))
           continue;
 
-        unsigned PX, BIX;
-        switch (Br.getOperand(0).getImm()) {
-        case PPC::PRED_LT:
-          PX = 1;
-          BIX = 0;
-          break;
-        case PPC::PRED_GE:
-          PX = 0;
-          BIX = 0;
-          break;
-        case PPC::PRED_GT:
-          PX = 1;
-          BIX = 1;
-          break;
-        case PPC::PRED_LE:
-          PX = 0;
-          BIX = 1;
-          break;
-        case PPC::PRED_EQ:
-          PX = 1;
-          BIX = 2;
-          break;
-        case PPC::PRED_NE:
-          PX = 0;
-          BIX = 2;
-          break;
-        default:
-          continue;
+        unsigned PX = 0, BIX = 2;
+        if (IsBitBranch) {
+          PX = Br.getOpcode() == PPC::BC ? 1 : 0;
+        } else {
+          switch (Br.getOperand(0).getImm()) {
+          case PPC::PRED_LT:
+            PX = 1;
+            BIX = 0;
+            break;
+          case PPC::PRED_GE:
+            PX = 0;
+            BIX = 0;
+            break;
+          case PPC::PRED_GT:
+            PX = 1;
+            BIX = 1;
+            break;
+          case PPC::PRED_LE:
+            PX = 0;
+            BIX = 1;
+            break;
+          case PPC::PRED_EQ:
+            PX = 1;
+            BIX = 2;
+            break;
+          case PPC::PRED_NE:
+            PX = 0;
+            BIX = 2;
+            break;
+          default:
+            continue;
+          }
         }
         if (Cmp.getOpcode() == PPC::CMPLWI && BIX != 2)
           continue;
 
         int Distance = computeBranchSize(
-            Fn, &MBB, Br.getOperand(2).getMBB(), BrOffset);
-        if (HasImpreciseBranchSpan(Br, *Br.getOperand(2).getMBB()) ||
+            Fn, &MBB, Br.getOperand(DestOp).getMBB(), BrOffset);
+        if (HasImpreciseBranchSpan(Br, *Br.getOperand(DestOp).getMBB()) ||
             Distance < -2036 || Distance > 2036)
           continue;
 
-        BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(), TII->get(PPC::CMPWIBC))
+        BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(),
+                TII->get(PPC::CMPWIBC))
             .addImm(PX)
             .addImm(BIX)
             .addReg(Cmp.getOperand(1).getReg(),
                     Cmp.getOperand(1).isKill() ? RegState::Kill : 0)
             .addImm(Cmp.getOperand(2).getImm())
-            .addMBB(Br.getOperand(2).getMBB());
+            .addMBB(Br.getOperand(DestOp).getMBB());
         Cmp.eraseFromParent();
         Br.eraseFromParent();
         BlockSizes[MBB.getNumber()].first -= 4;
