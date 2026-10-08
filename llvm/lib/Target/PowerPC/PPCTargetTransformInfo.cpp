@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPCTargetTransformInfo.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -54,12 +55,110 @@ SmallCTRLoopThreshold("min-ctr-loop-threshold", cl::init(4), cl::Hidden,
 //
 //===----------------------------------------------------------------------===//
 
+// A word-sized bitfield update can become a single byte store on PPE42. The
+// IR still contains a 64-bit load, shift, masks, and a 64-bit store, so the
+// shared-helper rule below would otherwise insist on retaining a call even
+// when the generated helper is just "stb; blr". Only recognize a full-byte
+// replacement whose old bits are discarded and whose new bits stay in that
+// byte; leave partial-byte read/modify/write helpers to the usual cost model.
+static bool isPPE42ByteStoreHelper(const Function &F) {
+  if (F.size() != 1 || !isa<ReturnInst>(F.getEntryBlock().getTerminator()))
+    return false;
+
+  const LoadInst *Load = nullptr;
+  const StoreInst *Store = nullptr;
+  unsigned Count = 0;
+  for (const Instruction &I : F.getEntryBlock()) {
+    if (isa<DbgInfoIntrinsic>(I))
+      continue;
+    if (++Count > 8)
+      return false;
+    if (const auto *L = dyn_cast<LoadInst>(&I)) {
+      if (Load || !L->isSimple() || !L->getType()->isIntegerTy(64))
+        return false;
+      Load = L;
+    } else if (const auto *S = dyn_cast<StoreInst>(&I)) {
+      if (Store || !S->isSimple() ||
+          !S->getValueOperand()->getType()->isIntegerTy(64))
+        return false;
+      Store = S;
+    } else if (isa<CallBase>(I) ||
+               (I.mayHaveSideEffects() && !isa<ReturnInst>(I))) {
+      return false;
+    }
+  }
+  if (!Load || !Store ||
+      Load->getPointerOperand() != Store->getPointerOperand())
+    return false;
+  if (!isa<Argument>(Load->getPointerOperand()) || !Load->hasOneUse())
+    return false;
+
+  const auto *Or = dyn_cast<BinaryOperator>(Store->getValueOperand());
+  if (!Or || Or->getOpcode() != Instruction::Or)
+    return false;
+  for (unsigned Side = 0; Side != 2; ++Side) {
+    const auto *Old = dyn_cast<BinaryOperator>(Or->getOperand(Side));
+    if (!Old || Old->getOpcode() != Instruction::And)
+      continue;
+    const auto *Keep = dyn_cast<ConstantInt>(Old->getOperand(0));
+    const Value *OldValue = Old->getOperand(1);
+    if (!Keep) {
+      Keep = dyn_cast<ConstantInt>(Old->getOperand(1));
+      OldValue = Old->getOperand(0);
+    }
+    if (!Keep || OldValue != Load)
+      continue;
+
+    APInt ByteMask = ~Keep->getValue();
+    unsigned ByteShift = 64;
+    for (unsigned Shift = 0; Shift != 64; Shift += 8)
+      if (ByteMask == (APInt(64, 0xff) << Shift)) {
+        ByteShift = Shift;
+        break;
+      }
+    if (ByteShift == 64)
+      continue;
+
+    const Value *New = Or->getOperand(1 - Side);
+    if (const auto *And = dyn_cast<BinaryOperator>(New))
+      if (And->getOpcode() == Instruction::And)
+        for (unsigned Operand = 0; Operand != 2; ++Operand)
+          if (const auto *Mask =
+                  dyn_cast<ConstantInt>(And->getOperand(Operand)))
+            if (Mask->getValue() == ByteMask) {
+              const Value *Source = And->getOperand(1 - Operand);
+              if (ByteShift == 0 && isa<Argument>(Source))
+                return true;
+              if (const auto *Shift = dyn_cast<BinaryOperator>(Source))
+                if (Shift->getOpcode() == Instruction::Shl &&
+                    isa<Argument>(Shift->getOperand(0)))
+                  if (const auto *Amount =
+                          dyn_cast<ConstantInt>(Shift->getOperand(1)))
+                    if (Amount->equalsInt(ByteShift))
+                      return true;
+            }
+
+    // Shifting an unknown value by 56 leaves bits only in the first or last
+    // byte, so a separate mask is unnecessary in these two cases.
+    if (const auto *Shift = dyn_cast<BinaryOperator>(New))
+      if (const auto *Amount = dyn_cast<ConstantInt>(Shift->getOperand(1)))
+        if (isa<Argument>(Shift->getOperand(0)) && Amount->equalsInt(56) &&
+            ((Shift->getOpcode() == Instruction::Shl && ByteShift == 56) ||
+             (Shift->getOpcode() == Instruction::LShr && ByteShift == 0)))
+          return true;
+  }
+  return false;
+}
+
 bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
                                        const Function &Callee) const {
   const Function *Caller = Call.getCaller();
   if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.isDSOLocal() ||
       Callee.isDeclaration() || Callee.arg_size() > 3 || Caller == &Callee ||
       Call.getCalledFunction() != &Callee)
+    return false;
+
+  if (isPPE42ByteStoreHelper(Callee))
     return false;
 
   // An already non-leaf caller pays no additional LR-save cost for a call.
