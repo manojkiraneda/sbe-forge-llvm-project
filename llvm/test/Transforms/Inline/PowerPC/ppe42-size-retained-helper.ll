@@ -31,9 +31,8 @@ define i64 @forced_retainer(i64 %x) #0 {
   ret i64 %y
 }
 
-; Static inline templates can be instantiated in several object files. A
-; large, branchy, call-heavy helper should not be forced into an already
-; non-leaf caller merely because only one use is visible in this module.
+; A large local helper with only one visible use can still become smaller
+; after inlining, especially when its arguments enable constant folding.
 define internal void @complex_helper(ptr %p, i64 %x) #0 {
 entry:
   %e0 = load volatile i32, ptr %p
@@ -87,7 +86,8 @@ done:
 
 define void @complex_user(ptr %p, i64 %x, i1 %flag) #0 {
 ; SIZE-LABEL: define{{.*}}@complex_user(
-; SIZE: call{{.*}}@complex_helper(
+; SIZE-NOT: call{{.*}}@complex_helper(
+; SIZE: }
 entry:
   br i1 %flag, label %work, label %skip
 work:

@@ -25,7 +25,7 @@ The original rule still applies when one caller contains at least four calls: fo
 
 The additional rule uses `S`, the number of eligible calls across size-optimized non-leaf callers, and `D`, an estimate of machine instructions duplicated by inlining. It requires `S >= 2`, `D >= 6`, and `(S - 1) * D > 4 * S + 6`. The six-instruction margin allows for simplifications exposed by inlining. PHIs, allocas, returns, and ordinary nested calls do not contribute to `D`; their cost is not duplicated in the same way. Each 64-bit add, subtract, bitwise operation, or integer compare counts as two instructions; a 64-bit shift counts as three; and 64-bit multiply, divide, or remainder counts as four. Other instructions, including inline assembly, count as one. This is still an estimate: it does not inspect final register allocation, exact call-frame cost, branch distance, or machine instruction count.
 
-Two narrow single-call cases also retain the helper in an already non-leaf caller. First, a separate `noinline` or `optnone` use keeps the out-of-line body alive, so the helper is retained when `D > 10`. Second, a header-defined local `inlinehint` helper with at least four basic blocks, 32 body instructions, and four nested calls is retained when the caller also has at least three basic blocks. This addresses large static templates that are instantiated in separate object files, where the module inliner cannot see the other copy. It does not change the four-call rule used by QME.
+A single-call helper is retained when a separate `noinline` or `optnone` use already keeps its out-of-line body alive and `D > 10`. A local helper with only one visible use remains eligible for inlining. Outlining such helpers based on their IR size alone increased Odyssey `.text` by 2,256 bytes: the newly emitted `mss::poll` bodies outweighed the savings at their call sites. The rule preserves the existing four-call QME decision.
 
 For example, the resulting `ppe42_app_ctx_set` body in QME has six hardware or bit-manipulation instructions plus `blr`. A call site uses `bl` instead of copying the body, though surrounding register and stack code can change. Keeping the helper may therefore save bytes across repeated calls, but the exact saving depends on subsequent optimization and linking.
 
@@ -38,7 +38,7 @@ For example, the resulting `ppe42_app_ctx_set` body in QME has six hardware or b
 
 ## Evidence and validation
 
-`llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll` checks the original four-call behavior. `ppe42-size-shared-wide.ll` covers two calls, calls shared across callers, 64-bit costs, tiny helpers, and leaf callers. `ppe42-size-retained-helper.ll` covers both single-call cases. The PPE42 toolchain workflow runs these tests remotely. No local compilation was performed for this work.
+`llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll` checks the original four-call behavior. `ppe42-size-shared-wide.ll` covers two calls, calls shared across callers, 64-bit costs, tiny helpers, and leaf callers. `ppe42-size-retained-helper.ll` covers a retained body and a local single-use helper that may inline. The PPE42 toolchain workflow runs these tests remotely. No local compilation was performed for this work.
 
 In the QME samples examined on October 7, 2026, `pm/artifacts/qme.dis` contains one out-of-line `ppe42_app_ctx_set` body and 56 calls to it. The matching Downloads `qme (1).dis` contains no such calls. The artifacts disassembly has 14 fewer instructions overall, but both corresponding `qme.bin` files are 77,968 bytes. These samples demonstrate that the decision changed code generation; they do not isolate PR #47's byte contribution from other build differences.
 
@@ -49,4 +49,4 @@ In the QME samples examined on October 7, 2026, `pm/artifacts/qme.dis` contains 
 - `llvm/include/llvm/Analysis/TargetTransformInfo.h`: public hook contract.
 - `llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll`: behavior checks.
 - `llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-wide.ll`: expanded cost-rule checks.
-- `llvm/test/Transforms/Inline/PowerPC/ppe42-size-retained-helper.ll`: retained and large local helper checks.
+- `llvm/test/Transforms/Inline/PowerPC/ppe42-size-retained-helper.ll`: retained and single-use local helper checks.
