@@ -5,8 +5,8 @@
   define void @adjacent(ptr %p) { ret void }
   define void @aligned_global(ptr %p) { ret void }
   define void @offset_global(ptr %p) { ret void }
-  define void @unaligned_stack_pair(ptr %p) { ret void }
   define void @same_reg(ptr %p) { ret void }
+  define void @unaligned_stack_pair(ptr %p) { ret void }
   define void @misaligned(ptr %p) { ret void }
   define void @volatile_store(ptr %p) { ret void }
   define void @reverse_pair(ptr %p) { ret void }
