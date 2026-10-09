@@ -1455,7 +1455,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   if (Subtarget.hasFPCVT())
     setTargetDAGCombine(ISD::UINT_TO_FP);
   setTargetDAGCombine({ISD::LOAD, ISD::STORE, ISD::BR_CC});
-  if (Subtarget.useCRBits())
+  if (Subtarget.useCRBits() || Subtarget.isPPE42())
     setTargetDAGCombine(ISD::BRCOND);
   setTargetDAGCombine({ISD::BSWAP, ISD::INTRINSIC_WO_CHAIN,
                        ISD::INTRINSIC_W_CHAIN, ISD::INTRINSIC_VOID});
@@ -17598,6 +17598,34 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
         return SDValue(VCMPrecNode, 0);
     }
     break;
+  case ISD::BRCOND: {
+    if (!Subtarget.isPPE42() || !DCI.isBeforeLegalize())
+      break;
+    SDValue Cond = N->getOperand(1);
+    if (Cond.getOpcode() != ISD::SETCC)
+      break;
+    SDValue LHS = Cond.getOperand(0), RHS = Cond.getOperand(1);
+    if (LHS.getValueType() != MVT::i64 || RHS.getValueType() != MVT::i64)
+      break;
+    const auto *Limit = dyn_cast<ConstantSDNode>(RHS);
+    if (!Limit)
+      break;
+    ISD::CondCode CC = cast<CondCodeSDNode>(Cond.getOperand(2))->get();
+    uint64_t Value = Limit->getZExtValue();
+    if ((Value != (1ULL << 32) ||
+         (CC != ISD::SETULT && CC != ISD::SETUGE)) &&
+        (Value != 0xffffffffULL ||
+         (CC != ISD::SETULE && CC != ISD::SETUGT)))
+      break;
+    ISD::CondCode HighCC =
+        (CC == ISD::SETULT || CC == ISD::SETULE) ? ISD::SETEQ : ISD::SETNE;
+    SDValue High = DAG.getNode(ISD::EXTRACT_ELEMENT, dl, MVT::i32, LHS,
+                               DAG.getConstant(1, dl, MVT::i32));
+    SDValue HighIsZero = DAG.getSetCC(dl, Cond.getValueType(), High,
+                                      DAG.getConstant(0, dl, MVT::i32), HighCC);
+    return DAG.getNode(ISD::BRCOND, dl, MVT::Other, N->getOperand(0),
+                       HighIsZero, N->getOperand(2));
+  }
   case ISD::BR_CC: {
     // If this is a branch on an altivec predicate comparison, lower this so
     // that we don't have to do a MFOCRF: instead, branch directly on CR6.  This
