@@ -16822,6 +16822,23 @@ static SDValue DAGCombineAddc(SDNode *N,
 
 SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
+  // The generic combiner reduces an unsigned i64 check against the 32-bit
+  // boundary to a comparison of (Value >> 32) with zero. On PPE42, keeping
+  // that shift as i64 forces the 32-bit legalizer to build a multiword result
+  // and a Boolean. Expose the high word as the low half of the shifted value
+  // before type legalization.
+  if (Subtarget.isPPE42() && DCI.isBeforeLegalize() &&
+      N->getOpcode() == ISD::SRL && N->getValueType(0) == MVT::i64 &&
+      isa<ConstantSDNode>(N->getOperand(1)) &&
+      cast<ConstantSDNode>(N->getOperand(1))->getZExtValue() == 32) {
+    SelectionDAG &DAG = DCI.DAG;
+    SDLoc DL(N);
+    SDValue High = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32,
+                               N->getOperand(0),
+                               DAG.getConstant(1, DL, MVT::i32));
+    return DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, High,
+                       DAG.getConstant(0, DL, MVT::i32));
+  }
   // PPE42 expands i64 into i32 pairs during type legalization. Before that
   // happens, leave i64 nodes to the generic combiner/legalizer: the VDR
   // combines below create machine subregister nodes which require legal i64
