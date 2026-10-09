@@ -138,6 +138,7 @@ LLVMInitializePowerPCTarget() {
   initializePPCBSelPass(PR);
   initializePPCBranchCoalescingPass(PR);
   initializePPCBoolRetToIntPass(PR);
+  initializePPCPPE42WideComparePass(PR);
   initializePPCPreEmitPeepholePass(PR);
   initializePPCTLSDynamicCallPass(PR);
   initializePPCMIPeepholePass(PR);
@@ -502,6 +503,9 @@ void PPCPassConfig::addIRPasses() {
 }
 
 bool PPCPassConfig::addPreISel() {
+  if (getOptLevel() != CodeGenOptLevel::None)
+    addPass(createPPCPPE42WideComparePass(getPPCTargetMachine()));
+
   // The GlobalMerge pass is intended to be on by default on AIX.
   // Specifying the command line option overrides the AIX default.
   if ((EnableGlobalMerge.getNumOccurrences() > 0)

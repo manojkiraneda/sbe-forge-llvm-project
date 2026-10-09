@@ -21,6 +21,7 @@ add_public_tablegen_target(PowerPCCommonTableGen)
 add_llvm_target(PowerPCCodeGen
   GISel/PPCInstructionSelector.cpp
   PPCBoolRetToInt.cpp
+  PPCPPE42WideCompare.cpp
   PPCAsmPrinter.cpp
   PPCBranchSelector.cpp
   PPCBranchCoalescing.cpp
