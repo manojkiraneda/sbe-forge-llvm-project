@@ -1466,6 +1466,8 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
   if (Subtarget.useCRBits()) {
     setTargetDAGCombine({ISD::TRUNCATE, ISD::SETCC, ISD::SELECT_CC});
+  } else if (Subtarget.isPPE42()) {
+    setTargetDAGCombine(ISD::SETCC);
   }
 
   // With 32 condition bits, we don't need to sink (and duplicate) compares
@@ -16820,6 +16822,31 @@ static SDValue DAGCombineAddc(SDNode *N,
   return SDValue();
 }
 
+// PPE42 legalizes i64 comparisons through two i32 words. At the 32-bit
+// boundary an unsigned range check needs only the high word. Recognize it
+// before type legalization so the generic wide-compare expansion cannot
+// materialize a Boolean from both words.
+static SDValue getPPE42BoundaryCompareHighWord(SDValue LHS, SDValue RHS,
+                                                ISD::CondCode &CC,
+                                                SelectionDAG &DAG,
+                                                const SDLoc &DL) {
+  if (LHS.getValueType() != MVT::i64 || RHS.getValueType() != MVT::i64)
+    return SDValue();
+  const auto *C = dyn_cast<ConstantSDNode>(RHS);
+  if (!C)
+    return SDValue();
+  uint64_t Limit = C->getZExtValue();
+  if ((Limit != (1ULL << 32) ||
+       (CC != ISD::SETULT && CC != ISD::SETUGE)) &&
+      (Limit != 0xffffffffULL ||
+       (CC != ISD::SETULE && CC != ISD::SETUGT)))
+    return SDValue();
+
+  CC = (CC == ISD::SETULT || CC == ISD::SETULE) ? ISD::SETEQ : ISD::SETNE;
+  return DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, LHS,
+                     DAG.getConstant(1, DL, MVT::i32));
+}
+
 SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
   // PPE42 expands i64 into i32 pairs during type legalization. Before that
@@ -17086,8 +17113,16 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::TRUNCATE:
     return combineTRUNCATE(N, DCI);
   case ISD::SETCC:
-    if (SDValue CSCC = combineSetCC(N, DCI))
-      return CSCC;
+    if (Subtarget.isPPE42() && DCI.isBeforeLegalize()) {
+      ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(2))->get();
+      if (SDValue High = getPPE42BoundaryCompareHighWord(
+              N->getOperand(0), N->getOperand(1), CC, DAG, dl))
+        return DAG.getSetCC(dl, N->getValueType(0), High,
+                            DAG.getConstant(0, dl, MVT::i32), CC);
+    }
+    if (Subtarget.useCRBits())
+      if (SDValue CSCC = combineSetCC(N, DCI))
+        return CSCC;
     [[fallthrough]];
   case ISD::SELECT_CC:
     return DAGCombineTruncBoolExt(N, DCI);
@@ -17698,6 +17733,13 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     // conditional.
     ISD::CondCode CC = cast<CondCodeSDNode>(N->getOperand(1))->get();
     SDValue LHS = N->getOperand(2), RHS = N->getOperand(3);
+
+    if (Subtarget.isPPE42() && DCI.isBeforeLegalize())
+      if (SDValue High =
+              getPPE42BoundaryCompareHighWord(LHS, RHS, CC, DAG, dl))
+        return DAG.getNode(ISD::BR_CC, dl, MVT::Other, N->getOperand(0),
+                           DAG.getCondCode(CC), High,
+                           DAG.getConstant(0, dl, MVT::i32), N->getOperand(4));
 
     int CompareOpc;
     bool isDot;
