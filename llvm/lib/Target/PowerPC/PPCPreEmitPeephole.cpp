@@ -110,8 +110,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       return MachineFunctionProperties().setNoVRegs();
     }
 
-    // STVD stores the two GPRs of a VDR tuple in one doubleword. Match only
-    // consecutive word stores whose physical registers form such a tuple.
+    // STVD stores the two GPRs of a VDR tuple in one doubleword. The word
+    // stores may be separated by register-only instructions after scheduling.
     bool combinePPE42WordStores(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
                                 const TargetRegisterInfo &TRI) {
       bool Changed = false;
@@ -123,8 +123,19 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           continue;
 
         auto Next = I;
-        while (Next != MBB.end() && Next->isDebugInstr())
-          ++Next;
+        SmallVector<MachineInstr *, 6> Between;
+        while (Next != MBB.end()) {
+          if (Next->isDebugInstr()) {
+            ++Next;
+            continue;
+          }
+          if (Next->getOpcode() == PPC::STW || Between.size() == 6 ||
+              Next->mayLoad() || Next->mayStore() || Next->isCall() ||
+              Next->isTerminator() || Next->isInlineAsm() ||
+              Next->hasUnmodeledSideEffects())
+            break;
+          Between.push_back(&*Next++);
+        }
         if (Next == MBB.end())
           continue;
         MachineInstr &Second = *Next;
@@ -151,6 +162,18 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           Lo = &First;
         }
         if (!Pair)
+          continue;
+
+        // The second store is moved to the first store's position. Its value
+        // and both effective-address bases must already be available there.
+        Register LaterValue = Second.getOperand(0).getReg();
+        Register HiBase = Hi->getOperand(2).getReg();
+        Register LoBase = Lo->getOperand(2).getReg();
+        if (llvm::any_of(Between, [&](const MachineInstr *MI) {
+              return MI->modifiesRegister(LaterValue, &TRI) ||
+                     MI->modifiesRegister(HiBase, &TRI) ||
+                     MI->modifiesRegister(LoBase, &TRI);
+            }))
           continue;
 
         const MachineOperand &HiDisp = Hi->getOperand(1);
@@ -229,7 +252,6 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           }
           return false;
         };
-        Register LoBase = Lo->getOperand(2).getReg();
         if (HiDisp.isImm() && LoDisp.isImm()) {
           int64_t Offset = HiDisp.getImm();
           int64_t LoOffset = LoDisp.getImm();
