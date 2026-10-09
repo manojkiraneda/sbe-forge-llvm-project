@@ -1,4 +1,5 @@
 # RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs -o - %s | FileCheck %s
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs -o - %S/ppe42-stvd-store-pairs.mir | FileCheck %S/ppe42-stvd-store-pairs.mir
 
 --- |
   define void @aligned(ptr %p) { ret void }
