@@ -1,4 +1,5 @@
 # RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -O=2 %S/ppe42-wide-boundary-compare.ll -o - | FileCheck %S/ppe42-wide-boundary-compare.ll
 
 --- |
   define void @signed_eq() { ret void }
