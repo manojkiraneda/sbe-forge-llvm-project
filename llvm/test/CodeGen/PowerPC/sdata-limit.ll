@@ -1,5 +1,6 @@
 ; RUN: sed 's/SMALL_DATA_LIMIT/0/' %s | llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -o - | FileCheck %s --check-prefix=ZERO
 ; RUN: sed 's/SMALL_DATA_LIMIT/8/' %s | llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -o - | FileCheck %s --check-prefix=EIGHT
+; RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -o - %S/sdata-named-section.ll | FileCheck %S/sdata-named-section.ll
 
 @small_data = global i32 1
 @small_bss = global i32 0
