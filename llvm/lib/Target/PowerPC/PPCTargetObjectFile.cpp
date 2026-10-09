@@ -8,6 +8,7 @@
 
 #include "PPCTargetObjectFile.h"
 #include "MCTargetDesc/PPCMCAsmInfo.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Module.h"
@@ -35,9 +36,13 @@ bool PPC64LinuxTargetObjectFile::isGlobalInSmallSection(
   const auto *GVar = dyn_cast<GlobalVariable>(GV);
   if (!TM.getTargetTriple().isPPC32() || !GVar)
     return false;
-  if (GVar->hasSection())
-    return GVar->getSection() == ".sdata" || GVar->getSection() == ".sbss" ||
-           GVar->getSection() == ".sdata2" || GVar->getSection() == ".sbss2";
+  if (GVar->hasSection()) {
+    StringRef Section = GVar->getSection();
+    return Section == ".sdata" || Section.starts_with(".sdata.") ||
+           Section == ".sbss" || Section.starts_with(".sbss.") ||
+           Section == ".sdata2" || Section.starts_with(".sdata2.") ||
+           Section == ".sbss2" || Section.starts_with(".sbss2.");
+  }
   // EABI small-data references may cross translation units.  A declaration
   // has a known size even though its definition and section are elsewhere.
   if (GVar->hasCommonLinkage() || !GVar->getValueType()->isSized())
@@ -51,9 +56,12 @@ bool PPC64LinuxTargetObjectFile::isGlobalInReadOnlySmallSection(
   const auto *GVar = dyn_cast<GlobalVariable>(GV);
   if (!GVar || !isGlobalInSmallSection(GV, TM))
     return false;
-  return GVar->hasSection() ? GVar->getSection() == ".sdata2" ||
-                                  GVar->getSection() == ".sbss2"
-                            : GVar->isConstant();
+  if (GVar->hasSection()) {
+    StringRef Section = GVar->getSection();
+    return Section == ".sdata2" || Section.starts_with(".sdata2.") ||
+           Section == ".sbss2" || Section.starts_with(".sbss2.");
+  }
+  return GVar->isConstant();
 }
 
 MCSection *PPC64LinuxTargetObjectFile::SelectSectionForGlobal(
