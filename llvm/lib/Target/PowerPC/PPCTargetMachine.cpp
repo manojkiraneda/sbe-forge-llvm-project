@@ -467,6 +467,12 @@ TargetPassConfig *PPCTargetMachine::createPassConfig(PassManagerBase &PM) {
 }
 
 void PPCPassConfig::addIRPasses() {
+  // CodeGenPrepare may materialize the 32-bit boundary constants into IR
+  // instructions. Rewrite PPE42 comparisons while those constants are still
+  // visible to the target pass.
+  if (TM->getOptLevel() != CodeGenOptLevel::None)
+    addPass(createPPCPPE42WideComparePass(getPPCTargetMachine()));
+
   if (TM->getOptLevel() != CodeGenOptLevel::None)
     addPass(createPPCBoolRetToIntPass());
   addPass(createAtomicExpandLegacyPass());
@@ -503,9 +509,6 @@ void PPCPassConfig::addIRPasses() {
 }
 
 bool PPCPassConfig::addPreISel() {
-  if (getOptLevel() != CodeGenOptLevel::None)
-    addPass(createPPCPPE42WideComparePass(getPPCTargetMachine()));
-
   // The GlobalMerge pass is intended to be on by default on AIX.
   // Specifying the command line option overrides the AIX default.
   if ((EnableGlobalMerge.getNumOccurrences() > 0)
