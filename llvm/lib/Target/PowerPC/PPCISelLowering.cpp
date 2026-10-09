@@ -17120,9 +17120,12 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
         return DAG.getSetCC(dl, N->getValueType(0), High,
                             DAG.getConstant(0, dl, MVT::i32), CC);
     }
-    if (Subtarget.useCRBits())
-      if (SDValue CSCC = combineSetCC(N, DCI))
-        return CSCC;
+    // The remaining SETCC combines below require individual CR bits, which
+    // PPE42 does not track.
+    if (!Subtarget.useCRBits())
+      return SDValue();
+    if (SDValue CSCC = combineSetCC(N, DCI))
+      return CSCC;
     [[fallthrough]];
   case ISD::SELECT_CC:
     return DAGCombineTruncBoolExt(N, DCI);
