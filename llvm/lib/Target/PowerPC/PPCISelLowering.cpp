@@ -16835,14 +16835,25 @@ static SDValue getPPE42BoundaryCompareHighWord(SDValue LHS, SDValue RHS,
   const auto *C = dyn_cast<ConstantSDNode>(RHS);
   if (!C)
     return SDValue();
-  uint64_t Limit = C->getZExtValue();
-  if ((Limit != (1ULL << 32) ||
-       (CC != ISD::SETULT && CC != ISD::SETUGE)) &&
-      (Limit != 0xffffffffULL ||
-       (CC != ISD::SETULE && CC != ISD::SETUGT)))
-    return SDValue();
+  // The generic DAG combiner commonly rewrites an unsigned 32-bit range
+  // check to (Value >> 32) == 0 before the target combine sees it. Extract
+  // the high word directly, avoiding legalization of an i64 shift.
+  if (C->isZero() && (CC == ISD::SETEQ || CC == ISD::SETNE) &&
+      LHS.getOpcode() == ISD::SRL &&
+      LHS.getOperand(0).getValueType() == MVT::i64 &&
+      isa<ConstantSDNode>(LHS.getOperand(1)) &&
+      cast<ConstantSDNode>(LHS.getOperand(1))->getZExtValue() == 32) {
+    LHS = LHS.getOperand(0);
+  } else {
+    uint64_t Limit = C->getZExtValue();
+    if ((Limit != (1ULL << 32) ||
+         (CC != ISD::SETULT && CC != ISD::SETUGE)) &&
+        (Limit != 0xffffffffULL ||
+         (CC != ISD::SETULE && CC != ISD::SETUGT)))
+      return SDValue();
 
-  CC = (CC == ISD::SETULT || CC == ISD::SETULE) ? ISD::SETEQ : ISD::SETNE;
+    CC = (CC == ISD::SETULT || CC == ISD::SETULE) ? ISD::SETEQ : ISD::SETNE;
+  }
   return DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, LHS,
                      DAG.getConstant(1, DL, MVT::i32));
 }
