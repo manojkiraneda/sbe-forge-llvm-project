@@ -504,6 +504,88 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
       }
     }
 
+    // Fuse a register comparison with its immediately following CR0 branch.
+    // The register forms preserve all signed/unsigned compare predicates.
+    for (MachineBasicBlock &MBB : Fn) {
+      unsigned Offset = 0;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Br = *I++;
+        unsigned BrOffset = Offset;
+        Offset += TII->getInstSizeInBytes(Br);
+        bool IsBitBranch =
+            Br.getOpcode() == PPC::BC || Br.getOpcode() == PPC::BCn;
+        if (Br.getOpcode() != PPC::BCC && !IsBitBranch)
+          continue;
+        unsigned DestOp = IsBitBranch ? 1 : 2;
+        if (!Br.getOperand(DestOp).isMBB() ||
+            (IsBitBranch ? Br.getOperand(0).getReg() != PPC::CR0EQ
+                         : Br.getOperand(1).getReg() != PPC::CR0) ||
+            Br.getIterator() == MBB.begin())
+          continue;
+
+        MachineInstr &Cmp = *std::prev(Br.getIterator());
+        bool IsUnsigned = Cmp.getOpcode() == PPC::CMPLW;
+        if ((!IsUnsigned && Cmp.getOpcode() != PPC::CMPW) ||
+            Cmp.getOperand(0).getReg() != PPC::CR0)
+          continue;
+
+        unsigned PX = 0, BIX = 2;
+        if (IsBitBranch) {
+          PX = Br.getOpcode() == PPC::BC ? 1 : 0;
+        } else {
+          switch (Br.getOperand(0).getImm()) {
+          case PPC::PRED_LT:
+            PX = 1;
+            BIX = 0;
+            break;
+          case PPC::PRED_GE:
+            PX = 0;
+            BIX = 0;
+            break;
+          case PPC::PRED_GT:
+            PX = 1;
+            BIX = 1;
+            break;
+          case PPC::PRED_LE:
+            PX = 0;
+            BIX = 1;
+            break;
+          case PPC::PRED_EQ:
+            PX = 1;
+            BIX = 2;
+            break;
+          case PPC::PRED_NE:
+            PX = 0;
+            BIX = 2;
+            break;
+          default:
+            continue;
+          }
+        }
+
+        int Distance = computeBranchSize(
+            Fn, &MBB, Br.getOperand(DestOp).getMBB(), BrOffset);
+        if (HasImpreciseBranchSpan(Br, *Br.getOperand(DestOp).getMBB()) ||
+            Distance < -2036 || Distance > 2036)
+          continue;
+
+        BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(),
+                TII->get(IsUnsigned ? PPC::CMPLWBC : PPC::CMPWBC))
+            .addImm(PX)
+            .addImm(BIX)
+            .addReg(Cmp.getOperand(1).getReg(),
+                    Cmp.getOperand(1).isKill() ? RegState::Kill : 0)
+            .addReg(Cmp.getOperand(2).getReg(),
+                    Cmp.getOperand(2).isKill() ? RegState::Kill : 0)
+            .addMBB(Br.getOperand(DestOp).getMBB());
+        Cmp.eraseFromParent();
+        Br.eraseFromParent();
+        BlockSizes[MBB.getNumber()].first -= 4;
+        Offset -= 4;
+        EverMadeChange = true;
+      }
+    }
+
     // CMPWIBC compares a GPR with a zero-extended five-bit immediate using
     // signed semantics. An unsigned comparison is equivalent only for EQ/NE.
     // Accept both predicate branches and direct tests of CR0's EQ bit.
