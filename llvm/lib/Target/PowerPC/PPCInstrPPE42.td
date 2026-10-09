@@ -11,22 +11,28 @@ let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
   def CMPWBC : FCBForm<0, 0, (outs),
                        (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
                             ppe42brtarget:$BDX),
-                       "cmpwbc $PX, $BIX, $RA, $RB, $BDX">;
+                       "cmpwbc $PX, $BIX, $RA, $RB, $BDX"> {
+    let Uses = [];
+  }
   def CMPWBCL : FCBForm<0, 1, (outs),
                         (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
                              ppe42brtarget:$BDX),
                         "cmpwbcl $PX, $BIX, $RA, $RB, $BDX"> {
     let Defs = [CR0, LR];
+    let Uses = [];
   }
   def CMPLWBC : FCBForm<1, 0, (outs),
                         (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
                              ppe42brtarget:$BDX),
-                        "cmplwbc $PX, $BIX, $RA, $RB, $BDX">;
+                        "cmplwbc $PX, $BIX, $RA, $RB, $BDX"> {
+    let Uses = [];
+  }
   def CMPLWBCL : FCBForm<1, 1, (outs),
                          (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, gprc:$RB,
                               ppe42brtarget:$BDX),
                          "cmplwbcl $PX, $BIX, $RA, $RB, $BDX"> {
     let Defs = [CR0, LR];
+    let Uses = [];
   }
   def CMPWIBC : FCBForm<2, 0, (outs),
                         (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, u5imm:$RB,
