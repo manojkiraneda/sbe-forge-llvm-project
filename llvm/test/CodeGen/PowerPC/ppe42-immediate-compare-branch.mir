@@ -19,6 +19,41 @@
   define void @asm_before_branch() { ret void }
   define void @asm_after_target() { ret void }
   define void @fixed_tw_asm_in_range() { ret void }
+  define void @interleaved_store(ptr %p) { ret void }
+  define void @changed_compare_input(ptr %p) { ret void }
+...
+---
+name: interleaved_store
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r5
+    ; CHECK-LABEL: name: interleaved_store
+    ; CHECK: STW $r4, 8, $r5
+    ; CHECK-NEXT: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    STW $r4, 8, $r5 :: (store (s32) into %ir.p + 8, align 4)
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: changed_compare_input
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r5
+    ; CHECK-LABEL: name: changed_compare_input
+    ; CHECK: CMPLWI $r3, 0
+    ; CHECK: STW $r3, 8, $r5
+    ; CHECK: BC $cr0eq, %bb.1
+    $cr0 = CMPLWI $r3, 0
+    STW $r3, 8, $r5 :: (store (s32) into %ir.p + 8, align 4)
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
 ...
 ---
 name: signed_eq

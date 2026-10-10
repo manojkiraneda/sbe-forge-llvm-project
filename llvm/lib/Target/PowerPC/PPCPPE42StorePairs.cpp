@@ -39,12 +39,13 @@ public:
     bool Changed = false;
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
-        MachineInstr &HiStore = *I++;
-        if (HiStore.getOpcode() != PPC::STW ||
-            HiStore.getNumOperands() != 3 || !HiStore.hasOneMemOperand() ||
-            !HiStore.getOperand(0).isReg() ||
-            !HiStore.getOperand(1).isImm() ||
-            !HiStore.getOperand(2).isReg())
+        MachineInstr &FirstStore = *I++;
+        if (FirstStore.getOpcode() != PPC::STW ||
+            FirstStore.getNumOperands() != 3 ||
+            !FirstStore.hasOneMemOperand() ||
+            !FirstStore.getOperand(0).isReg() ||
+            !FirstStore.getOperand(1).isImm() ||
+            !FirstStore.getOperand(2).isReg())
           continue;
 
         auto Next = I;
@@ -52,14 +53,23 @@ public:
           ++Next;
         if (Next == MBB.end())
           continue;
-        MachineInstr &LoStore = *Next;
-        if (LoStore.getOpcode() != PPC::STW ||
-            LoStore.getNumOperands() != 3 || !LoStore.hasOneMemOperand() ||
-            !LoStore.getOperand(0).isReg() ||
-            !LoStore.getOperand(1).isImm() ||
-            !LoStore.getOperand(2).isReg())
+        MachineInstr &SecondStore = *Next;
+        if (SecondStore.getOpcode() != PPC::STW ||
+            SecondStore.getNumOperands() != 3 ||
+            !SecondStore.hasOneMemOperand() ||
+            !SecondStore.getOperand(0).isReg() ||
+            !SecondStore.getOperand(1).isImm() ||
+            !SecondStore.getOperand(2).isReg())
           continue;
 
+        // Either memory order is legal. The lower address holds the high word
+        // of the PPE42 virtual doubleword.
+        MachineInstr &HiStore = FirstStore.getOperand(1).getImm() <=
+                                        SecondStore.getOperand(1).getImm()
+                                    ? FirstStore
+                                    : SecondStore;
+        MachineInstr &LoStore = &HiStore == &FirstStore ? SecondStore
+                                                      : FirstStore;
         Register Hi = HiStore.getOperand(0).getReg();
         Register Lo = LoStore.getOperand(0).getReg();
         int64_t Offset = HiStore.getOperand(1).getImm();
@@ -83,16 +93,16 @@ public:
         // words in one VDR tuple. Restrict this to their final uses: otherwise
         // the extra copies could outweigh the saved store instruction.
         Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
-        BuildMI(MBB, HiStore, HiStore.getDebugLoc(),
+        BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(),
                 TII.get(TargetOpcode::REG_SEQUENCE), Pair)
             .addReg(Hi)
             .addImm(PPC::sub_gpr_hi)
             .addReg(Lo)
             .addImm(PPC::sub_gpr_lo);
-        BuildMI(MBB, HiStore, HiStore.getDebugLoc(), TII.get(PPC::STVD))
+        BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(), TII.get(PPC::STVD))
             .addReg(Pair, RegState::Kill)
             .addImm(Offset)
-            .addReg(Base, LoStore.getOperand(2).isKill() ? RegState::Kill : 0)
+            .addReg(Base, SecondStore.getOperand(2).isKill() ? RegState::Kill : 0)
             .addMemOperand(HiMem)
             .addMemOperand(LoMem);
         I = std::next(Next);
