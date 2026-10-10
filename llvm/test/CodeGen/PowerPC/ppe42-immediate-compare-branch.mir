@@ -292,7 +292,7 @@ body: |
     ; CHECK-LABEL: name: changed_compare_input
     ; CHECK: CMPLWI $r3, 0
     ; CHECK: STW $r3, 8, $r5
-    ; CHECK: BC $cr0eq, %bb.1
+    ; CHECK: BC killed $cr0eq, %bb.1
     $cr0 = CMPLWI $r3, 0
     STW $r3, 8, $r5 :: (store (s32) into %ir.p + 8, align 4)
     BC killed $cr0eq, %bb.1
