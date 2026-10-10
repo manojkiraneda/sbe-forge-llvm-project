@@ -9,6 +9,8 @@
 #include "PPC.h"
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -36,6 +38,7 @@ public:
 
     MachineRegisterInfo &MRI = MF.getRegInfo();
     const auto &TII = *ST.getInstrInfo();
+    const auto &TRI = *ST.getRegisterInfo();
     bool Changed = false;
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
@@ -49,8 +52,19 @@ public:
           continue;
 
         auto Next = I;
-        while (Next != MBB.end() && Next->isDebugInstr())
-          ++Next;
+        SmallVector<MachineInstr *, 4> Between;
+        while (Next != MBB.end()) {
+          if (Next->isDebugInstr()) {
+            ++Next;
+            continue;
+          }
+          if (Next->getOpcode() == PPC::STW || Between.size() == 4 ||
+              Next->mayLoad() || Next->mayStore() || Next->isCall() ||
+              Next->isTerminator() || Next->isInlineAsm() ||
+              Next->hasUnmodeledSideEffects())
+            break;
+          Between.push_back(&*Next++);
+        }
         if (Next == MBB.end())
           continue;
         MachineInstr &SecondStore = *Next;
@@ -79,6 +93,12 @@ public:
             !isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
             LoStore.getOperand(1).getImm() != Offset + 4 ||
             Base != LoStore.getOperand(2).getReg())
+          continue;
+        if (llvm::any_of(Between, [&](const MachineInstr *MI) {
+              return MI->modifiesRegister(Hi, &TRI) ||
+                     MI->modifiesRegister(Lo, &TRI) ||
+                     MI->modifiesRegister(Base, &TRI);
+            }))
           continue;
 
         MachineMemOperand *HiMem = *HiStore.memoperands_begin();
