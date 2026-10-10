@@ -37,6 +37,10 @@ jobs:
         with:
           fetch-depth: 1
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install build and integration dependencies
         run: |
           sudo apt-get update
@@ -44,6 +48,21 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add powerpc-unknown-linux-gnu
+
+      - name: Prepare MLGO inliner model and TensorFlow AOT compiler
+        run: |
+          python -m pip install 'tensorflow==2.15.1'
+          mkdir -p "$RUNNER_TEMP/ppe42-mlgo"
+          curl --fail --location --retry 3 \
+            https://github.com/google/ml-compiler-opt/releases/download/inlining-Oz-v1.1/inlining-Oz-99f0063-v1.1.tar.gz \
+            --output "$RUNNER_TEMP/ppe42-mlgo/inliner.tar.gz"
+          printf '%s  %s\n' \
+            308e5fbe2c4382d6f9c154c7afbea46624dac32b95609144ba1160836e906cd2 \
+            "$RUNNER_TEMP/ppe42-mlgo/inliner.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/ppe42-mlgo/inliner.tar.gz" \
+            -C "$RUNNER_TEMP/ppe42-mlgo"
+          test -f "$RUNNER_TEMP/ppe42-mlgo/model/saved_model.pb"
+          printf 'MLGO_MODEL_PATH=%s\n' "$RUNNER_TEMP/ppe42-mlgo/model" >> "$GITHUB_ENV"
 
       - name: Restore compiler object cache
         id: ccache
@@ -59,12 +78,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.BUILD_DIR }}
-          key: ppe42-build-v1-${{ runner.os }}-${{ github.sha }}
+          key: ppe42-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ppe42-build-v1-${{ runner.os }}-
+            ppe42-mlgo-build-v1-${{ runner.os }}-
 
       - name: Configure
         run: |
+          tensorflow_aot_path="$(python -c 'import os, tensorflow; print(os.path.dirname(tensorflow.__file__))')"
           cmake -S llvm -B "$BUILD_DIR" -G Ninja \
             -DLLVM_ENABLE_PROJECTS='clang;lld' \
             -DLLVM_TARGETS_TO_BUILD=PowerPC \
@@ -73,6 +93,10 @@ jobs:
             -DLLVM_BUILD_LLVM_DYLIB=OFF \
             -DLLVM_LINK_LLVM_DYLIB=OFF \
             -DCLANG_LINK_CLANG_DYLIB=OFF \
+            -DTENSORFLOW_AOT_PATH="$tensorflow_aot_path" \
+            -DTENSORFLOW_AOT_COMPILER="$(command -v saved_model_cli)" \
+            -DLLVM_INLINER_MODEL_PATH="$MLGO_MODEL_PATH" \
+            -DLLVM_RAEVICT_MODEL_PATH=none \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/ppe42-toolchain"
 
@@ -81,6 +105,19 @@ jobs:
           cmake --build "$BUILD_DIR" --target \
             clang lld llc opt llvm-ar llvm-objcopy llvm-objdump llvm-nm \
             llvm-mc llvm-readobj llvm-config FileCheck split-file not count
+
+      - name: Test embedded MLGO inliner
+        run: |
+          cat > "$RUNNER_TEMP/ppe42-mlgo/smoke.c" <<'EOF'
+          static int helper(int value) { return value + 1; }
+          int entry(int value) { return helper(value); }
+          EOF
+          "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
+            -Oz -mllvm -enable-ml-inliner=release \
+            -c "$RUNNER_TEMP/ppe42-mlgo/smoke.c" \
+            -o "$RUNNER_TEMP/ppe42-mlgo/smoke.o"
+          "$BUILD_DIR/bin/llvm-readobj" --file-headers \
+            "$RUNNER_TEMP/ppe42-mlgo/smoke.o" | grep -q 'Machine: EM_PPC'
 
       - name: Test PowerPC small-data relocations
         run: |
@@ -144,6 +181,8 @@ jobs:
         run: |
           mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib/clang"
           mkdir -p "$PACKAGE_DIR/lib/ppe42"
+          mkdir -p "$PACKAGE_DIR/share/mlgo/inliner-oz-v1.1" \
+            "$PACKAGE_DIR/share/doc"
           for tool in clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
             cp --dereference "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
             strip "$PACKAGE_DIR/bin/$tool"
@@ -154,11 +193,18 @@ jobs:
           cp -a "$resource_dir" "$PACKAGE_DIR/lib/clang/"
           cp "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
             "$PACKAGE_DIR/lib/ppe42/"
+          cp -a "$MLGO_MODEL_PATH/." \
+            "$PACKAGE_DIR/share/mlgo/inliner-oz-v1.1/"
+          cp llvm/docs/PPE42MLGO.rst "$PACKAGE_DIR/share/doc/"
 
           jq \
             --arg llvm_sha "$GITHUB_SHA" \
             --arg llvm_ref "$GITHUB_REF_NAME" \
-            '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref' \
+            '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref |
+             .mlgo = {"inliner_model": "inlining-Oz-v1.1",
+                      "mode": "embedded-aot",
+                      "activation": "-mllvm -enable-ml-inliner=release",
+                      "source_model": "share/mlgo/inliner-oz-v1.1"}' \
             .github/ppe42-toolchain-manifest.json \
             > "$PACKAGE_DIR/manifest.json"
 
@@ -166,6 +212,14 @@ jobs:
           find "$PACKAGE_DIR" -maxdepth 3 -type f -printf '%s %p\n' | sort -nr
 
           "$PACKAGE_DIR/bin/clang++" --version
+          "$PACKAGE_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
+            -Oz -mllvm -enable-ml-inliner=release \
+            -c "$RUNNER_TEMP/ppe42-mlgo/smoke.c" \
+            -o "$RUNNER_TEMP/ppe42-mlgo/packaged-smoke.o"
+          if ldd "$PACKAGE_DIR/bin/clang" | grep -q 'not found'; then
+            echo 'Packaged clang has a missing shared-library dependency' >&2
+            exit 1
+          fi
 
       - name: Test candidate toolchain against SBE Forge
         env:
@@ -213,7 +267,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BUILD_DIR }}
-          key: ppe42-build-v2-${{ runner.os }}-${{ github.sha }}
+          key: ppe42-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
 
       - name: Save compiler object cache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
