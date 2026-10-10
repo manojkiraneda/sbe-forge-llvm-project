@@ -7,17 +7,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "PPCTargetTransformInfo.h"
-#include "llvm/ADT/APInt.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetSchedule.h"
-#include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsPowerPC.h"
 #include "llvm/IR/ProfDataUtils.h"
 #include "llvm/Support/CommandLine.h"
@@ -26,6 +21,8 @@
 #include <optional>
 
 using namespace llvm;
+
+#define DEBUG_TYPE "ppctti"
 
 static cl::opt<bool> VecMaskCost("ppc-vec-mask-cost",
 cl::desc("add masking cost for i1 vectors"), cl::init(true), cl::Hidden);
@@ -54,238 +51,6 @@ SmallCTRLoopThreshold("min-ctr-loop-threshold", cl::init(4), cl::Hidden,
 // PPC cost model.
 //
 //===----------------------------------------------------------------------===//
-
-// A word-sized bitfield update can become a single byte store on PPE42. The
-// IR still contains a 64-bit load, shift, masks, and a 64-bit store, so the
-// shared-helper rule below would otherwise insist on retaining a call even
-// when the generated helper is just "stb; blr". Only recognize a full-byte
-// replacement whose old bits are discarded and whose new bits stay in that
-// byte; leave partial-byte read/modify/write helpers to the usual cost model.
-static bool isPPE42ByteStoreHelper(const Function &F) {
-  if (F.size() != 1 || !isa<ReturnInst>(F.getEntryBlock().getTerminator()))
-    return false;
-
-  const LoadInst *Load = nullptr;
-  const StoreInst *Store = nullptr;
-  unsigned Count = 0;
-  for (const Instruction &I : F.getEntryBlock()) {
-    if (isa<DbgInfoIntrinsic>(I))
-      continue;
-    if (++Count > 8)
-      return false;
-    if (const auto *L = dyn_cast<LoadInst>(&I)) {
-      if (Load || !L->isSimple() || !L->getType()->isIntegerTy(64))
-        return false;
-      Load = L;
-    } else if (const auto *S = dyn_cast<StoreInst>(&I)) {
-      if (Store || !S->isSimple() ||
-          !S->getValueOperand()->getType()->isIntegerTy(64))
-        return false;
-      Store = S;
-    } else if (isa<CallBase>(I) ||
-               (I.mayHaveSideEffects() && !isa<ReturnInst>(I))) {
-      return false;
-    }
-  }
-  if (!Load || !Store ||
-      Load->getPointerOperand() != Store->getPointerOperand())
-    return false;
-  if (!isa<Argument>(Load->getPointerOperand()) || !Load->hasOneUse())
-    return false;
-
-  const auto *Or = dyn_cast<BinaryOperator>(Store->getValueOperand());
-  if (!Or || Or->getOpcode() != Instruction::Or)
-    return false;
-  for (unsigned Side = 0; Side != 2; ++Side) {
-    const auto *Old = dyn_cast<BinaryOperator>(Or->getOperand(Side));
-    if (!Old || Old->getOpcode() != Instruction::And)
-      continue;
-    const auto *Keep = dyn_cast<ConstantInt>(Old->getOperand(0));
-    const Value *OldValue = Old->getOperand(1);
-    if (!Keep) {
-      Keep = dyn_cast<ConstantInt>(Old->getOperand(1));
-      OldValue = Old->getOperand(0);
-    }
-    if (!Keep || OldValue != Load)
-      continue;
-
-    APInt ByteMask = ~Keep->getValue();
-    unsigned ByteShift = 64;
-    for (unsigned Shift = 0; Shift != 64; Shift += 8)
-      if (ByteMask == (APInt(64, 0xff) << Shift)) {
-        ByteShift = Shift;
-        break;
-      }
-    if (ByteShift == 64)
-      continue;
-
-    const Value *New = Or->getOperand(1 - Side);
-    if (const auto *And = dyn_cast<BinaryOperator>(New))
-      if (And->getOpcode() == Instruction::And)
-        for (unsigned Operand = 0; Operand != 2; ++Operand)
-          if (const auto *Mask =
-                  dyn_cast<ConstantInt>(And->getOperand(Operand)))
-            if (Mask->getValue() == ByteMask) {
-              const Value *Source = And->getOperand(1 - Operand);
-              if (ByteShift == 0 && isa<Argument>(Source))
-                return true;
-              if (const auto *Shift = dyn_cast<BinaryOperator>(Source))
-                if (Shift->getOpcode() == Instruction::Shl &&
-                    isa<Argument>(Shift->getOperand(0)))
-                  if (const auto *Amount =
-                          dyn_cast<ConstantInt>(Shift->getOperand(1)))
-                    if (Amount->equalsInt(ByteShift))
-                      return true;
-            }
-
-    // Shifting an unknown value by 56 leaves bits only in the first or last
-    // byte, so a separate mask is unnecessary in these two cases.
-    if (const auto *Shift = dyn_cast<BinaryOperator>(New))
-      if (const auto *Amount = dyn_cast<ConstantInt>(Shift->getOperand(1)))
-        if (isa<Argument>(Shift->getOperand(0)) && Amount->equalsInt(56) &&
-            ((Shift->getOpcode() == Instruction::Shl && ByteShift == 56) ||
-             (Shift->getOpcode() == Instruction::LShr && ByteShift == 0)))
-          return true;
-  }
-  return false;
-}
-
-bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
-                                       const Function &Callee) const {
-  const Function *Caller = Call.getCaller();
-  if (!ST->isPPE42() || !Caller->hasOptSize() || !Callee.isDSOLocal() ||
-      Callee.isDeclaration() || Callee.arg_size() > 3 || Caller == &Callee ||
-      Call.getCalledFunction() != &Callee)
-    return false;
-
-  if (isPPE42ByteStoreHelper(Callee))
-    return false;
-
-  // An already non-leaf caller pays no additional LR-save cost for a call.
-  auto IsNonLeaf = [&](const Function *F) {
-    for (const BasicBlock &BB : *F)
-      for (const Instruction &I : BB)
-        if (const auto *Other = dyn_cast<CallBase>(&I))
-          if (const Function *Target = Other->getCalledFunction())
-            if (Target != &Callee && !Target->isIntrinsic())
-              return true;
-    return false;
-  };
-  if (!IsNonLeaf(Caller))
-    return false;
-
-  // Keep the existing same-caller decision for four or more uses. Also count
-  // calls from other size-optimized non-leaf callers: they can share the same
-  // out-of-line body without introducing a new LR save in those callers.
-  DenseMap<const Function *, bool> NonLeafCallers;
-  NonLeafCallers[Caller] = true;
-  unsigned LocalCallSites = 0;
-  unsigned SharedCallSites = 0;
-  bool HasRetainedUse = false;
-  for (const User *U : Callee.users())
-    if (const auto *Use = dyn_cast<CallBase>(U))
-      if (Use->getCalledFunction() == &Callee &&
-          !Use->hasFnAttr(Attribute::AlwaysInline)) {
-        const Function *UseCaller = Use->getCaller();
-        if (Use != &Call && (Use->isNoInline() || UseCaller->hasOptNone()))
-          HasRetainedUse = true;
-        if (UseCaller == Caller)
-          ++LocalCallSites;
-        if (UseCaller->hasOptSize()) {
-          auto [It, Inserted] = NonLeafCallers.try_emplace(UseCaller, false);
-          if (Inserted)
-            It->second = IsNonLeaf(UseCaller);
-          if (It->second)
-            ++SharedCallSites;
-        }
-      }
-  unsigned AsmInstructions = 0;
-  unsigned BodyInstructions = 0;
-  unsigned DuplicatedInstructions = 0;
-  for (const BasicBlock &BB : Callee)
-    for (const Instruction &I : BB) {
-      if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I) &&
-          !I.isLifetimeStartOrEnd())
-        ++BodyInstructions;
-      if (const auto *AsmCall = dyn_cast<CallBase>(&I))
-        if (const auto *Asm = dyn_cast<InlineAsm>(AsmCall->getCalledOperand()))
-          if (Asm->hasSideEffects() && !Asm->getAsmString().empty() &&
-              ++AsmInstructions == 4)
-            if (LocalCallSites >= 4)
-              return true;
-
-      // An ordinary nested call occurs at each site whether or not this
-      // helper is inlined. PHIs, allocas, and returns do not duplicate machine
-      // instructions when the helper is inlined either.
-      if (isa<PHINode, DbgInfoIntrinsic, AllocaInst, ReturnInst>(I) ||
-          I.isLifetimeStartOrEnd())
-        continue;
-      if (const auto *NestedCall = dyn_cast<CallBase>(&I))
-        if (!isa<InlineAsm>(NestedCall->getCalledOperand()) &&
-            !isa<IntrinsicInst>(NestedCall)) {
-          continue;
-        }
-
-      unsigned Cost = 1;
-      // PPE42 has 32-bit GPRs. Wide scalar arithmetic and compares can
-      // expand into multiple instructions even if they are one IR operation.
-      Type *Ty = I.getType();
-      if (const auto *Cmp = dyn_cast<ICmpInst>(&I))
-        Ty = Cmp->getOperand(0)->getType();
-      if (Ty->isIntegerTy(64)) {
-        switch (I.getOpcode()) {
-        case Instruction::Add:
-        case Instruction::Sub:
-        case Instruction::And:
-        case Instruction::Or:
-        case Instruction::Xor:
-        case Instruction::ICmp:
-          Cost = 2;
-          break;
-        case Instruction::Shl:
-        case Instruction::LShr:
-        case Instruction::AShr:
-          Cost = 3;
-          break;
-        case Instruction::Mul:
-        case Instruction::UDiv:
-        case Instruction::SDiv:
-        case Instruction::URem:
-        case Instruction::SRem:
-          Cost = 4;
-          break;
-        default:
-          break;
-        }
-      }
-      DuplicatedInstructions += Cost;
-    }
-
-  // Preserve the original decision for repeated calls in one caller. This
-  // keeps the existing QME policy while the refined estimate admits other
-  // demonstrably profitable sharing patterns.
-  if (LocalCallSites >= 4 && BodyInstructions >= 5 &&
-      uint64_t(LocalCallSites - 1) * BodyInstructions >
-          4 * uint64_t(LocalCallSites) + 2)
-    return true;
-
-  // A call in an optnone/noinline caller keeps the out-of-line body alive.
-  // Inlining one more use would duplicate it even though this caller already
-  // pays for saving LR.
-  if (HasRetainedUse && DuplicatedInstructions > 10)
-    return true;
-
-  if (SharedCallSites < 2)
-    return false;
-
-  // Calls cost more than just the branch because arguments and an out-of-line
-  // return must be handled. Require a margin for constant folding and other
-  // simplifications that inlining can expose. This is particularly important
-  // for helpers called only twice.
-  return DuplicatedInstructions >= 6 &&
-         uint64_t(SharedCallSites - 1) * DuplicatedInstructions >
-             4 * uint64_t(SharedCallSites) + 6;
-}
 
 TargetTransformInfo::PopcntSupportKind
 PPCTTIImpl::getPopcntSupport(unsigned TyWidth) const {

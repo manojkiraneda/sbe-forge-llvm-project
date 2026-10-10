@@ -1022,11 +1022,6 @@ public:
     return DefaultCallPenalty;
   }
 
-  virtual bool preferCallForCodeSize(const CallBase &Call,
-                                     const Function &Callee) const {
-    return false;
-  }
-
   virtual bool areTypesABICompatible(const Function *Caller,
                                      const Function *Callee,
                                      const ArrayRef<Type *> &Types) const {

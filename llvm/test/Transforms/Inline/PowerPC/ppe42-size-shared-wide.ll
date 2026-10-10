@@ -1,3 +1,4 @@
+; REQUIRES: ppe42-custom-inline-cost
 ; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -passes='default<Os>' %s | FileCheck %s --check-prefix=SIZE
 ; RUN: sed 's/optsize //' %s | opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -passes='default<O2>' | FileCheck %s --check-prefix=SPEED
 

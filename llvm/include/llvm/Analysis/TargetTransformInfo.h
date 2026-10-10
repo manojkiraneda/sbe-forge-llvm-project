@@ -1743,10 +1743,6 @@ public:
                                          const CallBase &Call,
                                          unsigned DefaultCallPenalty) const;
 
-  /// Return true when retaining this call saves code size on the target.
-  LLVM_ABI bool preferCallForCodeSize(const CallBase &Call,
-                                      const Function &Callee) const;
-
   /// \returns True if the caller and callee agree on how \p Types will be
   /// passed to or returned from the callee.
   /// to the callee.
