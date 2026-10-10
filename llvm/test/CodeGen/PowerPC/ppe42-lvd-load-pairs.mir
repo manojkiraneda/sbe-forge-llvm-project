@@ -9,6 +9,7 @@
   define void @reversed_registers(ptr %p) { ret void }
   define void @separated(ptr %p) { ret void }
   define void @intervening_use(ptr %p) { ret void }
+  define void @reverse_memory_order(ptr %p) { ret void }
 ...
 ---
 name: aligned
@@ -104,4 +105,17 @@ body: |
     $r3 = ADDI $r10, 1
     $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
     BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10, implicit killed $r3
+...
+---
+name: reverse_memory_order
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: reverse_memory_order
+    ; CHECK: $r9_r10 = LVD 8, $r6
+    ; CHECK-NOT: LWZ
+    $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
+    $r9 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
 ...
