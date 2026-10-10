@@ -454,6 +454,46 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
     return Dest.getAlignment() > Align(4);
   };
   if (Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
+    const TargetRegisterInfo *TRI = Fn.getSubtarget().getRegisterInfo();
+    // Scheduling can put independent instructions between a compare and its
+    // branch. Move the comparison to the branch only when neither its inputs
+    // nor CR0 are observed or changed in between.
+    auto FindMovableCompare = [&](MachineInstr &Br) -> MachineInstr * {
+      auto It = Br.getIterator();
+      unsigned Seen = 0;
+      while (It != Br.getParent()->begin() && Seen < 4) {
+        --It;
+        MachineInstr &MI = *It;
+        if (MI.isDebugInstr())
+          continue;
+        if (MI.getOpcode() == PPC::CMPWI || MI.getOpcode() == PPC::CMPLWI ||
+            MI.getOpcode() == PPC::CMPW || MI.getOpcode() == PPC::CMPLW) {
+          if (MI.getOperand(0).getReg() != PPC::CR0)
+            return nullptr;
+          for (auto Between = std::next(It); Between != Br.getIterator();
+               ++Between) {
+            if (Between->isDebugInstr())
+              continue;
+            if (Between->readsRegister(PPC::CR0, TRI) ||
+                Between->modifiesRegister(PPC::CR0, TRI))
+              return nullptr;
+            for (unsigned Op = 1; Op < MI.getNumOperands(); ++Op)
+              if (MI.getOperand(Op).isReg() &&
+                  (Between->readsRegister(MI.getOperand(Op).getReg(), TRI) ||
+                   Between->modifiesRegister(MI.getOperand(Op).getReg(), TRI)))
+                return nullptr;
+          }
+          return &MI;
+        }
+        if (MI.isCall() || MI.isTerminator() || MI.isInlineAsm() ||
+            MI.hasUnmodeledSideEffects() ||
+            MI.readsRegister(PPC::CR0, TRI) ||
+            MI.modifiesRegister(PPC::CR0, TRI))
+          return nullptr;
+        ++Seen;
+      }
+      return nullptr;
+    };
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
       for (auto I = MBB.begin(); I != MBB.end();) {
@@ -523,7 +563,10 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             Br.getIterator() == MBB.begin())
           continue;
 
-        MachineInstr &Cmp = *std::prev(Br.getIterator());
+        MachineInstr *CmpPtr = FindMovableCompare(Br);
+        if (!CmpPtr)
+          continue;
+        MachineInstr &Cmp = *CmpPtr;
         bool IsUnsigned = Cmp.getOpcode() == PPC::CMPLW;
         if ((!IsUnsigned && Cmp.getOpcode() != PPC::CMPW) ||
             Cmp.getOperand(0).getReg() != PPC::CR0)
@@ -569,7 +612,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             Distance < -2036 || Distance > 2036)
           continue;
 
-        BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(),
+        BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(),
                 TII->get(IsUnsigned ? PPC::CMPLWBC : PPC::CMPWBC))
             .addImm(PX)
             .addImm(BIX)
@@ -606,7 +649,10 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             Br.getIterator() == MBB.begin())
           continue;
 
-        MachineInstr &Cmp = *std::prev(Br.getIterator());
+        MachineInstr *CmpPtr = FindMovableCompare(Br);
+        if (!CmpPtr)
+          continue;
+        MachineInstr &Cmp = *CmpPtr;
         if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
             Cmp.getOperand(0).getReg() != PPC::CR0 ||
             !Cmp.getOperand(2).isImm() ||
@@ -655,7 +701,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             Distance < -2036 || Distance > 2036)
           continue;
 
-        BuildMI(MBB, Cmp.getIterator(), Br.getDebugLoc(),
+        BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(),
                 TII->get(PPC::CMPWIBC))
             .addImm(PX)
             .addImm(BIX)
