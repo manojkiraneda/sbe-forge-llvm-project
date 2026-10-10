@@ -329,36 +329,41 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             !Second.getOperand(1).isImm() || !Second.getOperand(2).isReg())
           continue;
 
-        int64_t Offset = First.getOperand(1).getImm();
-        Register Base = First.getOperand(2).getReg();
+        MachineInstr &HiLoad = First.getOperand(1).getImm() <=
+                                       Second.getOperand(1).getImm()
+                                   ? First
+                                   : Second;
+        MachineInstr &LoLoad = &HiLoad == &First ? Second : First;
+        int64_t Offset = HiLoad.getOperand(1).getImm();
+        Register Base = HiLoad.getOperand(2).getReg();
         if (!isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
-            Second.getOperand(1).getImm() != Offset + 4 ||
-            Base != Second.getOperand(2).getReg() ||
+            LoLoad.getOperand(1).getImm() != Offset + 4 ||
+            Base != LoLoad.getOperand(2).getReg() ||
             Base == First.getOperand(0).getReg() ||
             Base == Second.getOperand(0).getReg())
           continue;
 
-        MachineMemOperand *FirstMem = *First.memoperands_begin();
-        MachineMemOperand *SecondMem = *Second.memoperands_begin();
+        MachineMemOperand *HiMem = *HiLoad.memoperands_begin();
+        MachineMemOperand *LoMem = *LoLoad.memoperands_begin();
         // The PPE42 memory interface requires doubleword alignment for LVD.
-        if (!FirstMem->isLoad() || !SecondMem->isLoad() ||
-            FirstMem->isVolatile() || SecondMem->isVolatile() ||
-            FirstMem->isAtomic() || SecondMem->isAtomic() ||
-            FirstMem->getAlign() < Align(8) ||
-            SecondMem->getAlign() < Align(4))
+        if (!HiMem->isLoad() || !LoMem->isLoad() ||
+            HiMem->isVolatile() || LoMem->isVolatile() ||
+            HiMem->isAtomic() || LoMem->isAtomic() ||
+            HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
           continue;
 
         Register Pair = TRI.getMatchingSuperReg(
-            First.getOperand(0).getReg(), PPC::sub_gpr_hi,
+            HiLoad.getOperand(0).getReg(), PPC::sub_gpr_hi,
             &PPC::VDRCRegClass);
         if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
-                         Second.getOperand(0).getReg().asMCReg())
+                         LoLoad.getOperand(0).getReg().asMCReg())
           continue;
 
-        Register Hi = First.getOperand(0).getReg();
-        Register Lo = Second.getOperand(0).getReg();
+        Register Hi = HiLoad.getOperand(0).getReg();
+        Register Lo = LoLoad.getOperand(0).getReg();
         if (llvm::any_of(Between, [&](const MachineInstr *MI) {
-              return MI->modifiesRegister(Hi, &TRI) ||
+              return MI->readsRegister(Hi, &TRI) ||
+                     MI->modifiesRegister(Hi, &TRI) ||
                      MI->readsRegister(Lo, &TRI) ||
                      MI->modifiesRegister(Lo, &TRI);
             }))
@@ -368,8 +373,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
                 TII.get(PPC::LVD), Pair)
             .addImm(Offset)
             .addReg(Base, Second.getOperand(2).isKill() ? RegState::Kill : 0)
-            .addMemOperand(FirstMem)
-            .addMemOperand(SecondMem);
+            .addMemOperand(HiMem)
+            .addMemOperand(LoMem);
         I = std::next(Next);
         First.eraseFromParent();
         Second.eraseFromParent();
