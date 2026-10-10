@@ -456,8 +456,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   if (Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
     const TargetRegisterInfo *TRI = Fn.getSubtarget().getRegisterInfo();
     // Scheduling can put independent instructions between a compare and its
-    // branch. Move the comparison to the branch only when neither its inputs
-    // nor CR0 are observed or changed in between.
+    // branch. Move the comparison to the branch only when its inputs are not
+    // changed and CR0 is neither observed nor changed in between.
     auto FindMovableCompare = [&](MachineInstr &Br) -> MachineInstr * {
       auto It = Br.getIterator();
       unsigned Seen = 0;
@@ -479,8 +479,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
               return nullptr;
             for (unsigned Op = 1; Op < MI.getNumOperands(); ++Op)
               if (MI.getOperand(Op).isReg() &&
-                  (Between->readsRegister(MI.getOperand(Op).getReg(), TRI) ||
-                   Between->modifiesRegister(MI.getOperand(Op).getReg(), TRI)))
+                  Between->modifiesRegister(MI.getOperand(Op).getReg(), TRI))
                 return nullptr;
           }
           return &MI;
