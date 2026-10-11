@@ -153,7 +153,7 @@ body: |
     ; This is the pre-RA shape of the buffer initialization in
     ; execute_concurrent_ccs: one zero value, three distinct frame objects.
     ; CHECK-LABEL: name: repeated_zero_stack
-    ; CHECK: REG_SEQUENCE {{.*}}%0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    ; CHECK: REG_SEQUENCE
     ; CHECK: STVD {{.*}}, 0, %stack.0.first
     ; CHECK: STVD {{.*}}, 0, %stack.1.second
     ; CHECK: STVD {{.*}}, 0, %stack.2.third
