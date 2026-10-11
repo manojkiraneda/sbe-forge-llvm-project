@@ -2262,7 +2262,8 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
   // area and make STSKU ineligible.  Reserve the implicit write area before
   // PEI assigns local frame offsets.  This slot is never accessed directly.
   if (Subtarget.isPPE42() && Subtarget.hasPPE42XStack() && MFI.hasCalls() &&
-      !hasFP(MF) && !MFI.hasVarSizedObjects()) {
+      MFI.getObjectIndexEnd() > 0 && !hasFP(MF) &&
+      !MFI.hasVarSizedObjects()) {
     int FI = MFI.CreateFixedObject(8, -16, /*IsImmutable=*/true,
                                    /*IsAliased=*/false);
     MF.getInfo<PPCFunctionInfo>()->setPPE42StackSaveFrameIndex(FI);
