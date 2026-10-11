@@ -413,8 +413,10 @@ PPCFrameLowering::determineFrameLayoutAndUpdate(MachineFunction &MF,
   // when that area reaches the save pairs, give it its own 16 bytes.  Keep
   // all the other eligibility checks (including fixed-object overlap) in
   // canUsePPE42StackOps before growing the frame.
-  if (Subtarget.isPPE42() && Subtarget.hasPPE42XStack() && FrameSize >= 16 &&
-      FrameSize <= 32744 && NewMaxCallFrameSize > FrameSize - 16 &&
+  uint64_t SaveBytes = FrameSize == 8 ? 0 : FrameSize == 16 ? 8 : 16;
+  if (Subtarget.isPPE42() && Subtarget.hasPPE42XStack() && FrameSize >= 8 &&
+      FrameSize <= 32744 &&
+      NewMaxCallFrameSize > FrameSize - SaveBytes &&
       canUsePPE42StackOps(MF, FrameSize + 16)) {
     FrameSize += 16;
     MF.getFrameInfo().setStackSize(FrameSize);
