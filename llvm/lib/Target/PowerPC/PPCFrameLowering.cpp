@@ -408,6 +408,17 @@ PPCFrameLowering::determineFrameLayoutAndUpdate(MachineFunction &MF,
                                             &NewMaxCallFrameSize);
   MF.getFrameInfo().setStackSize(FrameSize);
   MF.getFrameInfo().setMaxCallFrameSize(NewMaxCallFrameSize);
+  // STSKU writes the callee-save pairs just below the incoming SP.  The
+  // ordinary frame layout only reserves space for the outgoing call area;
+  // when that area reaches the save pairs, give it its own 16 bytes.  Keep
+  // all the other eligibility checks (including fixed-object overlap) in
+  // canUsePPE42StackOps before growing the frame.
+  if (Subtarget.isPPE42() && Subtarget.hasPPE42XStack() && FrameSize >= 16 &&
+      FrameSize <= 32744 && NewMaxCallFrameSize > FrameSize - 16 &&
+      canUsePPE42StackOps(MF, FrameSize + 16)) {
+    FrameSize += 16;
+    MF.getFrameInfo().setStackSize(FrameSize);
+  }
   return FrameSize;
 }
 
