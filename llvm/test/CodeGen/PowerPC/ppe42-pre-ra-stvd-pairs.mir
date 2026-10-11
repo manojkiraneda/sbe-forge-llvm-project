@@ -6,6 +6,8 @@
   define void @unaligned(ptr %p) #0 { ret void }
   define void @reverse_order(ptr %p) #0 { ret void }
   define void @interleaved_reg_op(ptr %p) #0 { ret void }
+  define void @repeated_zero(ptr %p) #0 { ret void }
+  define void @single_same_word(ptr %p) #0 { ret void }
   attributes #0 = { optsize }
 ...
 ---
@@ -93,5 +95,43 @@ body: |
     %3:gprc = LI 7
     STW %1, 12, %2 :: (store (s32) into %ir.p + 12, align 4)
     $r3 = COPY %3
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: repeated_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: repeated_zero
+    ; CHECK: REG_SEQUENCE {{.*}}%0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    ; CHECK: STVD {{.*}}, 16, {{.*}}
+    ; CHECK: STVD {{.*}}, 8, {{.*}}
+    ; CHECK: STVD {{.*}}, 0, {{.*}}
+    ; CHECK-NOT: STW
+    %0:gprc = LI 0
+    %1:gprc_nor0 = COPY $r6
+    STW %0, 20, %1 :: (store (s32) into %ir.p + 20, align 4)
+    STW %0, 16, %1 :: (store (s32) into %ir.p + 16, align 8)
+    STW %0, 12, %1 :: (store (s32) into %ir.p + 12, align 4)
+    STW %0, 8, %1 :: (store (s32) into %ir.p + 8, align 8)
+    STW %0, 4, %1 :: (store (s32) into %ir.p + 4, align 4)
+    STW %0, 0, %1 :: (store (s32) into %ir.p, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: single_same_word
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: single_same_word
+    ; CHECK: STW %0, 8, %1
+    ; CHECK: STW %0, 12, %1
+    ; CHECK-NOT: STVD
+    %0:gprc = LI 0
+    %1:gprc_nor0 = COPY $r6
+    STW %0, 8, %1 :: (store (s32) into %ir.p + 8, align 8)
+    STW %0, 12, %1 :: (store (s32) into %ir.p + 12, align 4)
     BLR implicit $lr, implicit undef $rm
 ...
