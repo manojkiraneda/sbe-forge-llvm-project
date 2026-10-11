@@ -1,4 +1,4 @@
-# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs -o - %s | tee /dev/stderr | FileCheck %s
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs -o - %s | FileCheck %s
 
 --- |
   define void @pair(ptr %p) #0 { ret void }
