@@ -15,6 +15,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include <iterator>
 
 using namespace llvm;
@@ -43,6 +44,11 @@ public:
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &FirstStore = *I++;
+        if (MF.getName() == "repeated_zero_stack" &&
+            FirstStore.getOpcode() == PPC::STW)
+          errs() << "PPE-FIRST " << FirstStore << " opcount "
+                 << FirstStore.getNumOperands() << " memcount "
+                 << FirstStore.memoperands().size() << "\n";
         if (FirstStore.getOpcode() != PPC::STW ||
             FirstStore.getNumOperands() != 3 ||
             !FirstStore.hasOneMemOperand() ||
@@ -69,6 +75,8 @@ public:
         if (Next == MBB.end())
           continue;
         MachineInstr &SecondStore = *Next;
+        if (MF.getName() == "repeated_zero_stack")
+          errs() << "PPE-SECOND " << SecondStore << "\n";
         if (SecondStore.getOpcode() != PPC::STW ||
             SecondStore.getNumOperands() != 3 ||
             !SecondStore.hasOneMemOperand() ||
@@ -112,6 +120,9 @@ public:
 
         MachineMemOperand *HiMem = *HiStore.memoperands_begin();
         MachineMemOperand *LoMem = *LoStore.memoperands_begin();
+        if (MF.getName() == "repeated_zero_stack")
+          errs() << "PPE-MEMS " << HiMem->getAlign().value() << " "
+                 << LoMem->getAlign().value() << "\n";
         if (!HiMem->isStore() || !LoMem->isStore() ||
             HiMem->isVolatile() || LoMem->isVolatile() ||
             HiMem->isAtomic() || LoMem->isAtomic() ||
