@@ -138,6 +138,10 @@ private:
   /// CRSpillFrameIndex - FrameIndex for CR spill slot for 32-bit SVR4.
   int CRSpillFrameIndex = 0;
 
+  /// Fixed slot reserved for the R28/R29 bytes written by STSKU even when
+  /// those registers do not otherwise need callee-save spill slots.
+  int PPE42StackSaveFrameIndex = 0;
+
   /// If any of CR[2-4] need to be saved in the prologue and restored in the
   /// epilogue then they are added to this array. This is used for the
   /// 64-bit SVR4 ABI.
@@ -271,6 +275,11 @@ public:
 
   int getCRSpillFrameIndex() const { return CRSpillFrameIndex; }
   void setCRSpillFrameIndex(int idx) { CRSpillFrameIndex = idx; }
+
+  int getPPE42StackSaveFrameIndex() const { return PPE42StackSaveFrameIndex; }
+  void setPPE42StackSaveFrameIndex(int Idx) {
+    PPE42StackSaveFrameIndex = Idx;
+  }
 
   const SmallVectorImpl<Register> &
     getMustSaveCRs() const { return MustSaveCRs; }
