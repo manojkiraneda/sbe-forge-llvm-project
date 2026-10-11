@@ -88,8 +88,9 @@ public:
         Register Lo = LoStore.getOperand(0).getReg();
         int64_t Offset = HiStore.getOperand(1).getImm();
         Register Base = HiStore.getOperand(2).getReg();
-        if (!Hi.isVirtual() || !Lo.isVirtual() || Hi == Lo ||
-            !MRI.hasOneNonDBGUse(Hi) || !MRI.hasOneNonDBGUse(Lo) ||
+        if (!Hi.isVirtual() || !Lo.isVirtual() ||
+            (Hi != Lo && (!MRI.hasOneNonDBGUse(Hi) ||
+                          !MRI.hasOneNonDBGUse(Lo))) ||
             !isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
             LoStore.getOperand(1).getImm() != Offset + 4 ||
             Base != LoStore.getOperand(2).getReg())
@@ -108,6 +109,83 @@ public:
             HiMem->isAtomic() || LoMem->isAtomic() ||
             HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
           continue;
+
+        if (Hi == Lo) {
+          // A pair of stores of one value needs a copy into the other half
+          // of a VDR.  That copy only pays for itself when the resulting VDR
+          // can serve at least two pairs.  Keep the run contiguous so the
+          // pair's live range stays short and no intervening definition or
+          // memory operation can change what the stores observe.
+          if (!Between.empty())
+            continue;
+          SmallVector<std::pair<MachineInstr *, MachineInstr *>, 4> Pairs;
+          Pairs.emplace_back(&HiStore, &LoStore);
+          auto After = std::next(Next);
+          while (After != MBB.end()) {
+            if (After->isDebugInstr()) {
+              ++After;
+              continue;
+            }
+            auto Other = std::next(After);
+            while (Other != MBB.end() && Other->isDebugInstr())
+              ++Other;
+            if (Other == MBB.end() || After->getOpcode() != PPC::STW ||
+                Other->getOpcode() != PPC::STW ||
+                !After->hasOneMemOperand() || !Other->hasOneMemOperand() ||
+                After->getNumOperands() != 3 || Other->getNumOperands() != 3 ||
+                !After->getOperand(0).isReg() ||
+                !Other->getOperand(0).isReg() ||
+                !After->getOperand(1).isImm() ||
+                !Other->getOperand(1).isImm() ||
+                !After->getOperand(2).isReg() ||
+                !Other->getOperand(2).isReg())
+              break;
+            MachineInstr *High = &*After;
+            MachineInstr *Low = &*Other;
+            if (High->getOperand(1).getImm() > Low->getOperand(1).getImm())
+              std::swap(High, Low);
+            int64_t PairOffset = High->getOperand(1).getImm();
+            MachineMemOperand *HighMem = *High->memoperands_begin();
+            MachineMemOperand *LowMem = *Low->memoperands_begin();
+            if (High->getOperand(0).getReg() != Hi ||
+                Low->getOperand(0).getReg() != Hi ||
+                High->getOperand(2).getReg() != Base ||
+                Low->getOperand(2).getReg() != Base ||
+                !isInt<16>(PairOffset) || !isInt<16>(PairOffset + 4) ||
+                Low->getOperand(1).getImm() != PairOffset + 4 ||
+                !HighMem->isStore() || !LowMem->isStore() ||
+                HighMem->isVolatile() || LowMem->isVolatile() ||
+                HighMem->isAtomic() || LowMem->isAtomic() ||
+                HighMem->getAlign() < Align(8) ||
+                LowMem->getAlign() < Align(4))
+              break;
+            Pairs.emplace_back(High, Low);
+            After = std::next(Other);
+          }
+          if (Pairs.size() < 2)
+            continue;
+
+          Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
+          BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(),
+                  TII.get(TargetOpcode::REG_SEQUENCE), Pair)
+              .addReg(Hi)
+              .addImm(PPC::sub_gpr_hi)
+              .addReg(Hi)
+              .addImm(PPC::sub_gpr_lo);
+          for (auto [High, Low] : Pairs) {
+            BuildMI(MBB, *High, High->getDebugLoc(), TII.get(PPC::STVD))
+                .addReg(Pair, High == Pairs.back().first ? RegState::Kill : 0)
+                .addImm(High->getOperand(1).getImm())
+                .addReg(Base)
+                .addMemOperand(*High->memoperands_begin())
+                .addMemOperand(*Low->memoperands_begin());
+            High->eraseFromParent();
+            Low->eraseFromParent();
+          }
+          I = After;
+          Changed = true;
+          continue;
+        }
 
         // A REG_SEQUENCE gives the allocator a chance to place both source
         // words in one VDR tuple. Restrict this to their final uses: otherwise
