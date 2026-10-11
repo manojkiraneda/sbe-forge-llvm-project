@@ -2,6 +2,7 @@
 ; RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -mattr=-ppe42x-stack -disable-tail-calls -verify-machineinstrs < %s | FileCheck %s --check-prefix=NO-STACK
 
 declare void @sink(ptr)
+declare void @sink_many(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32)
 
 ; A call frame can use the stack pair to save LR alone.
 define void @caller(ptr %p) {
@@ -43,6 +44,23 @@ define void @saved_r30(ptr %p) {
 entry:
   call void asm sideeffect "", "~{r30}"()
   call void @sink(ptr %p)
+  ret void
+}
+
+; The outgoing argument area needs room below STSKU's implicit GPR save
+; slots. Grow this frame instead of falling back to mflr/stwu/stw.
+define void @large_call_frame() {
+; CHECK-LABEL: large_call_frame:
+; CHECK-NOT: mflr
+; CHECK: stsku 1, -{{[0-9]+}}(1)
+; CHECK: bl sink_many
+; CHECK: lsku 1, {{[0-9]+}}(1)
+; CHECK: blr
+; NO-STACK-LABEL: large_call_frame:
+; NO-STACK-NOT: stsku
+; NO-STACK: stwu 1,
+entry:
+  call void @sink_many(i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0, i32 0)
   ret void
 }
 
