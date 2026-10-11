@@ -8,7 +8,12 @@
   define void @interleaved_reg_op(ptr %p) #0 { ret void }
   define void @repeated_zero(ptr %p) #0 { ret void }
   define void @single_same_word(ptr %p) #0 { ret void }
-  define void @repeated_zero_stack() #0 { ret void }
+  define void @repeated_zero_stack() #0 {
+    %first = alloca i64, align 8
+    %second = alloca i64, align 8
+    %third = alloca i64, align 8
+    ret void
+  }
   attributes #0 = { optsize }
 ...
 ---
