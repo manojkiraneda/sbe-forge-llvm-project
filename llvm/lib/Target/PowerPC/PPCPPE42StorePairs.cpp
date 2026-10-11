@@ -48,7 +48,8 @@ public:
             !FirstStore.hasOneMemOperand() ||
             !FirstStore.getOperand(0).isReg() ||
             !FirstStore.getOperand(1).isImm() ||
-            !FirstStore.getOperand(2).isReg())
+            !FirstStore.getOperand(2).isReg() &&
+            !FirstStore.getOperand(2).isFI())
           continue;
 
         auto Next = I;
@@ -73,7 +74,8 @@ public:
             !SecondStore.hasOneMemOperand() ||
             !SecondStore.getOperand(0).isReg() ||
             !SecondStore.getOperand(1).isImm() ||
-            !SecondStore.getOperand(2).isReg())
+            !SecondStore.getOperand(2).isReg() &&
+            !SecondStore.getOperand(2).isFI())
           continue;
 
         // Either memory order is legal. The lower address holds the high word
@@ -87,18 +89,24 @@ public:
         Register Hi = HiStore.getOperand(0).getReg();
         Register Lo = LoStore.getOperand(0).getReg();
         int64_t Offset = HiStore.getOperand(1).getImm();
-        Register Base = HiStore.getOperand(2).getReg();
+        const MachineOperand &Base = HiStore.getOperand(2);
+        auto SameBaseOperands = [&](const MachineOperand &A,
+                                    const MachineOperand &B) {
+          return (A.isReg() && B.isReg() && A.getReg() == B.getReg()) ||
+                 (A.isFI() && B.isFI() && A.getIndex() == B.getIndex());
+        };
         if (!Hi.isVirtual() || !Lo.isVirtual() ||
             (Hi != Lo && (!MRI.hasOneNonDBGUse(Hi) ||
                           !MRI.hasOneNonDBGUse(Lo))) ||
             !isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
             LoStore.getOperand(1).getImm() != Offset + 4 ||
-            Base != LoStore.getOperand(2).getReg())
+            !SameBaseOperands(Base, LoStore.getOperand(2)))
           continue;
         if (llvm::any_of(Between, [&](const MachineInstr *MI) {
               return MI->modifiesRegister(Hi, &TRI) ||
                      MI->modifiesRegister(Lo, &TRI) ||
-                     MI->modifiesRegister(Base, &TRI);
+                     (Base.isReg() &&
+                      MI->modifiesRegister(Base.getReg(), &TRI));
             }))
           continue;
 
@@ -138,7 +146,8 @@ public:
                 !After->getOperand(1).isImm() ||
                 !Other->getOperand(1).isImm() ||
                 !After->getOperand(2).isReg() ||
-                !Other->getOperand(2).isReg())
+                !Other->getOperand(2).isReg() &&
+                !Other->getOperand(2).isFI())
               break;
             MachineInstr *High = &*After;
             MachineInstr *Low = &*Other;
@@ -149,8 +158,8 @@ public:
             MachineMemOperand *LowMem = *Low->memoperands_begin();
             if (High->getOperand(0).getReg() != Hi ||
                 Low->getOperand(0).getReg() != Hi ||
-                High->getOperand(2).getReg() != Base ||
-                Low->getOperand(2).getReg() != Base ||
+                !SameBaseOperands(High->getOperand(2),
+                                  Low->getOperand(2)) ||
                 !isInt<16>(PairOffset) || !isInt<16>(PairOffset + 4) ||
                 Low->getOperand(1).getImm() != PairOffset + 4 ||
                 !HighMem->isStore() || !LowMem->isStore() ||
@@ -173,11 +182,16 @@ public:
               .addReg(Hi)
               .addImm(PPC::sub_gpr_lo);
           for (auto [High, Low] : Pairs) {
-            BuildMI(MBB, *High, High->getDebugLoc(), TII.get(PPC::STVD))
+            MachineInstrBuilder Store =
+                BuildMI(MBB, *High, High->getDebugLoc(), TII.get(PPC::STVD))
                 .addReg(Pair, High == Pairs.back().first ? RegState::Kill : 0)
-                .addImm(High->getOperand(1).getImm())
-                .addReg(Base)
-                .addMemOperand(*High->memoperands_begin())
+                .addImm(High->getOperand(1).getImm());
+            const MachineOperand &PairBase = High->getOperand(2);
+            if (PairBase.isFI())
+              Store.addFrameIndex(PairBase.getIndex());
+            else
+              Store.addReg(PairBase.getReg());
+            Store.addMemOperand(*High->memoperands_begin())
                 .addMemOperand(*Low->memoperands_begin());
             High->eraseFromParent();
             Low->eraseFromParent();
@@ -197,12 +211,17 @@ public:
             .addImm(PPC::sub_gpr_hi)
             .addReg(Lo)
             .addImm(PPC::sub_gpr_lo);
-        BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(), TII.get(PPC::STVD))
+        MachineInstrBuilder Store =
+            BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(), TII.get(PPC::STVD))
             .addReg(Pair, RegState::Kill)
-            .addImm(Offset)
-            .addReg(Base, SecondStore.getOperand(2).isKill() ? RegState::Kill : 0)
-            .addMemOperand(HiMem)
-            .addMemOperand(LoMem);
+            .addImm(Offset);
+        if (Base.isFI())
+          Store.addFrameIndex(Base.getIndex());
+        else
+          Store.addReg(Base.getReg(), SecondStore.getOperand(2).isKill()
+                                          ? RegState::Kill
+                                          : 0);
+        Store.addMemOperand(HiMem).addMemOperand(LoMem);
         I = std::next(Next);
         HiStore.eraseFromParent();
         LoStore.eraseFromParent();
