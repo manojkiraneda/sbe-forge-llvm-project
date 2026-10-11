@@ -146,6 +146,9 @@ bool PPCFrameLowering::canUsePPE42StackOps(const MachineFunction &MF,
        ++I) {
     if (MFI.isDeadObjectIndex(I))
       continue;
+    if (FI->getPPE42StackSaveFrameIndex() != 0 &&
+        I == FI->getPPE42StackSaveFrameIndex())
+      continue;
     bool IsStackOpSaveSlot = false;
     for (const CalleeSavedInfo &CSI : MFI.getCalleeSavedInfo())
       if (CSI.getReg() != PPC::LR && CSI.getFrameIdx() == I)
@@ -2252,6 +2255,18 @@ void PPCFrameLowering::processFunctionBeforeFrameFinalized(MachineFunction &MF,
   // Get callee saved register information.
   MachineFrameInfo &MFI = MF.getFrameInfo();
   const std::vector<CalleeSavedInfo> &CSI = MFI.getCalleeSavedInfo();
+
+  // STSKU writes R28/R29 at -16..-8 even when neither register is used by
+  // the function.  The ordinary frame layout reserves only the callee-save
+  // slots actually present in CSI, so it can otherwise place locals in this
+  // area and make STSKU ineligible.  Reserve the implicit write area before
+  // PEI assigns local frame offsets.  This slot is never accessed directly.
+  if (Subtarget.isPPE42() && Subtarget.hasPPE42XStack() && MFI.hasCalls() &&
+      !hasFP(MF) && !MFI.hasVarSizedObjects()) {
+    int FI = MFI.CreateFixedObject(8, -16, /*IsImmutable=*/true,
+                                   /*IsAliased=*/false);
+    MF.getInfo<PPCFunctionInfo>()->setPPE42StackSaveFrameIndex(FI);
+  }
 
   // If the function is shrink-wrapped, and if the function has a tail call, the
   // tail call might not be in the new RestoreBlock, so real branch instruction

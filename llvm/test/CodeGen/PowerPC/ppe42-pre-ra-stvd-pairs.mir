@@ -8,6 +8,7 @@
   define void @interleaved_reg_op(ptr %p) #0 { ret void }
   define void @repeated_zero(ptr %p) #0 { ret void }
   define void @single_same_word(ptr %p) #0 { ret void }
+  define void @repeated_zero_stack() #0 { ret void }
   attributes #0 = { optsize }
 ...
 ---
@@ -133,5 +134,31 @@ body: |
     %1:gprc_nor0 = COPY $r6
     STW %0, 8, %1 :: (store (s32) into %ir.p + 8, align 8)
     STW %0, 12, %1 :: (store (s32) into %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: repeated_zero_stack
+tracksRegLiveness: true
+stack:
+  - { id: 0, name: first, type: default, offset: 0, size: 8, alignment: 8 }
+  - { id: 1, name: second, type: default, offset: 0, size: 8, alignment: 8 }
+  - { id: 2, name: third, type: default, offset: 0, size: 8, alignment: 8 }
+body: |
+  bb.0:
+    ; This is the pre-RA shape of the buffer initialization in
+    ; execute_concurrent_ccs: one zero value, three distinct frame objects.
+    ; CHECK-LABEL: name: repeated_zero_stack
+    ; CHECK: REG_SEQUENCE {{.*}}%0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    ; CHECK: STVD {{.*}}, 0, %stack.0.first
+    ; CHECK: STVD {{.*}}, 0, %stack.1.second
+    ; CHECK: STVD {{.*}}, 0, %stack.2.third
+    ; CHECK-NOT: STW
+    %0:gprc = LI 0
+    STW %0, 4, %stack.0.first :: (store (s32) into %stack.0.first + 4, basealign 8)
+    STW %0, 0, %stack.0.first :: (store (s32) into %stack.0.first, align 8)
+    STW %0, 4, %stack.1.second :: (store (s32) into %stack.1.second + 4, basealign 8)
+    STW %0, 0, %stack.1.second :: (store (s32) into %stack.1.second, align 8)
+    STW %0, 4, %stack.2.third :: (store (s32) into %stack.2.third + 4, basealign 8)
+    STW %0, 0, %stack.2.third :: (store (s32) into %stack.2.third, align 8)
     BLR implicit $lr, implicit undef $rm
 ...

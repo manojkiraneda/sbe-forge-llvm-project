@@ -64,6 +64,25 @@ entry:
   ret void
 }
 
+; A called function with an eight-byte local must leave the implicit
+; R28/R29 save area free even if only R30/R31 are used.
+define void @caller_with_local() {
+; CHECK-LABEL: caller_with_local:
+; CHECK-NOT: mflr
+; CHECK: stsku 1,
+; CHECK: bl sink
+; CHECK: lsku 1,
+; CHECK: blr
+; NO-STACK-LABEL: caller_with_local:
+; NO-STACK-NOT: stsku
+; NO-STACK: stwu 1,
+entry:
+  %slot = alloca i64, align 8
+  store volatile i64 0, ptr %slot, align 8
+  call void @sink(ptr %slot)
+  ret void
+}
+
 ; A local in the VDR30 save slot requires the ordinary frame sequence.
 define i32 @leaf_stack(i32 %x) {
 ; CHECK-LABEL: leaf_stack:
