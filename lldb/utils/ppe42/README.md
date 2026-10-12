@@ -15,7 +15,8 @@ as `--base`:
 ```sh
 python3 share/ppe42/ppe42_core.py \
   --pibmem sppe_pibmem.bin --base 0xfff80000 \
-  --registers sppe_registers.txt --output sppe.core
+  --registers sppe_registers.txt \
+  --elf /path/to/odyssey_sppe.out --output sppe.core
 bin/lldb /path/to/odyssey_sppe.out -c sppe.core
 (lldb) register read pc r1 lr
 (lldb) bt
