@@ -29,6 +29,7 @@
 #include "Register/Common/RegisterInfo_arm.h"
 #include "Register/Common/RegisterInfo_arm64.h"
 #include "Register/Common/RegisterInfo_ppc64le.h"
+#include "Plugins/Process/Utility/RegisterInfoPOSIX_ppc32.h"
 #include "ProcessElfCore.h"
 #include "RegisterContextLinuxCore_x86.h"
 #include "RegisterContextELFCore_arm.h"
@@ -132,6 +133,9 @@ ThreadElfCore::CreateRegisterContextForFrame(StackFrame *frame) {
         break;
       case llvm::Triple::ppc64le:
         reg_interface = new RegisterInfo_ppc64le(arch);
+        break;
+      case llvm::Triple::ppc:
+        reg_interface = new RegisterInfoPOSIX_ppc32(arch);
         break;
       case llvm::Triple::systemz:
         reg_interface = new RegisterInfoLinux_s390x(arch);
