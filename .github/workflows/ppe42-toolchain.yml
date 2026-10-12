@@ -44,7 +44,7 @@ jobs:
       - name: Install build and integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ccache cmake ninja-build meson rustup zstd
+          sudo apt-get install -y ccache cmake ninja-build meson patchelf rustup zstd
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add powerpc-unknown-linux-gnu
@@ -86,13 +86,16 @@ jobs:
         run: |
           tensorflow_aot_path="$(python -c 'import os, tensorflow; print(os.path.dirname(tensorflow.__file__))')"
           cmake -S llvm -B "$BUILD_DIR" -G Ninja \
-            -DLLVM_ENABLE_PROJECTS='clang;lld' \
+            -DLLVM_ENABLE_PROJECTS='clang;lld;lldb' \
             -DLLVM_TARGETS_TO_BUILD=PowerPC \
             -DLLVM_ENABLE_ASSERTIONS=ON \
             -DLLVM_CCACHE_BUILD=ON \
             -DLLVM_BUILD_LLVM_DYLIB=OFF \
             -DLLVM_LINK_LLVM_DYLIB=OFF \
             -DCLANG_LINK_CLANG_DYLIB=OFF \
+            -DLLDB_ENABLE_PYTHON=OFF \
+            -DLLDB_ENABLE_LIBEDIT=OFF \
+            -DLLDB_ENABLE_CURSES=OFF \
             -DTENSORFLOW_AOT_PATH="$tensorflow_aot_path" \
             -DTENSORFLOW_AOT_COMPILER="$(command -v saved_model_cli)" \
             -DLLVM_INLINER_MODEL_PATH="$MLGO_MODEL_PATH" \
@@ -103,8 +106,28 @@ jobs:
       - name: Incrementally build required tools
         run: |
           cmake --build "$BUILD_DIR" --target \
-            clang lld llc opt llvm-ar llvm-objcopy llvm-objdump llvm-nm \
+            clang lld lldb llc opt llvm-ar llvm-objcopy llvm-objdump llvm-nm \
             llvm-mc llvm-readobj llvm-config FileCheck split-file not count
+
+      - name: Test PPE42 PIBMEM core support
+        run: |
+          python -m unittest discover -s lldb/utils/ppe42 -p 'test_*.py'
+          printf '\x12\x34\x56\x78' > "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin"
+          cat > "$RUNNER_TEMP/ppe42-mlgo/registers.txt" <<'EOF'
+          | iar | 0xfff81234 | r1 | 0xfff80000 |
+          | lr  | 0xfff81000 | cr | 0x20000000 |
+          EOF
+          python lldb/utils/ppe42/ppe42_core.py \
+            --pibmem "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin" \
+            --base 0xfff80000 \
+            --registers "$RUNNER_TEMP/ppe42-mlgo/registers.txt" \
+            --output "$RUNNER_TEMP/ppe42-mlgo/ppe42.core"
+          "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
+            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
+            --one-line 'register read pc r1 lr' \
+            > "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
+          grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
+          grep -q '0xfff80000' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
 
       - name: Test embedded MLGO inliner
         run: |
@@ -180,13 +203,19 @@ jobs:
       - name: Stage minimal toolchain
         run: |
           mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib/clang"
-          mkdir -p "$PACKAGE_DIR/lib/ppe42"
+          mkdir -p "$PACKAGE_DIR/lib/ppe42" "$PACKAGE_DIR/share/ppe42"
           mkdir -p "$PACKAGE_DIR/share/mlgo/inliner-oz-v1.1" \
             "$PACKAGE_DIR/share/doc"
           for tool in clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
             cp --dereference "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
             strip "$PACKAGE_DIR/bin/$tool"
           done
+          cp --dereference "$BUILD_DIR/bin/lldb" "$PACKAGE_DIR/bin/lldb"
+          cp -a "$BUILD_DIR/lib/liblldb.so"* "$PACKAGE_DIR/lib/"
+          patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/lldb"
+          find "$PACKAGE_DIR/lib" -maxdepth 1 -name 'liblldb.so*' -type f \
+            -exec patchelf --set-rpath '$ORIGIN' {} +
+          strip "$PACKAGE_DIR/bin/lldb"
           ln -s clang "$PACKAGE_DIR/bin/clang++"
 
           resource_dir="$("$BUILD_DIR/bin/clang" --print-resource-dir)"
@@ -196,6 +225,8 @@ jobs:
           cp -a "$MLGO_MODEL_PATH/." \
             "$PACKAGE_DIR/share/mlgo/inliner-oz-v1.1/"
           cp llvm/docs/PPE42MLGO.rst "$PACKAGE_DIR/share/doc/"
+          cp lldb/utils/ppe42/ppe42_core.py "$PACKAGE_DIR/share/ppe42/"
+          cp lldb/utils/ppe42/README.md "$PACKAGE_DIR/share/doc/PPE42LLDB.md"
 
           jq \
             --arg llvm_sha "$GITHUB_SHA" \
@@ -220,6 +251,16 @@ jobs:
             echo 'Packaged clang has a missing shared-library dependency' >&2
             exit 1
           fi
+          if ldd "$PACKAGE_DIR/bin/lldb" | grep -q 'not found' || \
+             ldd "$PACKAGE_DIR/lib/liblldb.so" | grep -q 'not found'; then
+            echo 'Packaged lldb has a missing shared-library dependency' >&2
+            exit 1
+          fi
+          "$PACKAGE_DIR/bin/lldb" --batch --no-lldbinit \
+            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
+            --one-line 'register read pc r1 lr' \
+            > "$RUNNER_TEMP/ppe42-mlgo/packaged-lldb.log"
+          grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/packaged-lldb.log"
 
       - name: Test candidate toolchain against SBE Forge
         env:
