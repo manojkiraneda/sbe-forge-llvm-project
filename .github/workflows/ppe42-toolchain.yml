@@ -132,8 +132,10 @@ jobs:
           cat > "$RUNNER_TEMP/ppe42-mlgo/fault.s" <<'EOF'
           .text
           .globl ppe42_fault
+          .type ppe42_fault, @function
           ppe42_fault:
             trap
+          .size ppe42_fault, . - ppe42_fault
           EOF
           "$BUILD_DIR/bin/llvm-mc" -triple=powerpc-unknown-elf \
             -mcpu=ppe42 -filetype=obj \
@@ -149,6 +151,8 @@ jobs:
           "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
+            --one-line 'target modules list' \
+            --one-line 'image lookup -a 0xfff81234' \
             --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
           grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
 
