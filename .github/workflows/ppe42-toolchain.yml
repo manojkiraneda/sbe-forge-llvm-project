@@ -145,7 +145,7 @@ jobs:
           "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
-            --one-line bt > "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
+            --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
           grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
 
       - name: Test embedded MLGO inliner
@@ -283,7 +283,7 @@ jobs:
           "$PACKAGE_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
-            --one-line bt > "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
+            --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
           grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
 
       - name: Test candidate toolchain against SBE Forge
