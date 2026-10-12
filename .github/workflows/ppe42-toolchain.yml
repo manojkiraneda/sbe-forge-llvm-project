@@ -128,6 +128,22 @@ jobs:
             > "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
           grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
           grep -q '0xfff80000' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
+          cat > "$RUNNER_TEMP/ppe42-mlgo/fault.s" <<'EOF'
+          .text
+          .globl ppe42_fault
+          ppe42_fault:
+            trap
+          EOF
+          "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
+            -fuse-ld=lld -nostdlib \
+            -Wl,-Ttext=0xfff81234 -Wl,-e,ppe42_fault \
+            "$RUNNER_TEMP/ppe42-mlgo/fault.s" \
+            -o "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
+          "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
+            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
+            "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
+            --one-line bt > "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
+          grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
 
       - name: Test embedded MLGO inliner
         run: |
@@ -261,6 +277,11 @@ jobs:
             --one-line 'register read pc r1 lr' \
             > "$RUNNER_TEMP/ppe42-mlgo/packaged-lldb.log"
           grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/packaged-lldb.log"
+          "$PACKAGE_DIR/bin/lldb" --batch --no-lldbinit \
+            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
+            "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
+            --one-line bt > "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
+          grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
 
       - name: Test candidate toolchain against SBE Forge
         env:
