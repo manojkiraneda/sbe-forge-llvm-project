@@ -165,6 +165,8 @@ static const CoreDefinition g_core_definitions[] = {
 
     {eByteOrderBig, 4, 4, 4, llvm::Triple::ppc, ArchSpec::eCore_ppc_generic,
      "powerpc"},
+    {eByteOrderBig, 4, 4, 4, llvm::Triple::ppc, ArchSpec::eCore_ppc_ppe42,
+     "ppe42"},
     {eByteOrderBig, 4, 4, 4, llvm::Triple::ppc, ArchSpec::eCore_ppc_ppc601,
      "ppc601"},
     {eByteOrderBig, 4, 4, 4, llvm::Triple::ppc, ArchSpec::eCore_ppc_ppc602,
@@ -619,6 +621,8 @@ void ArchSpec::SetFlags(const std::string &elf_abi) {
 
 std::string ArchSpec::GetClangTargetCPU() const {
   std::string cpu;
+  if (GetCore() == ArchSpec::eCore_ppc_ppe42)
+    return "ppe42";
   if (IsMIPS()) {
     switch (m_core) {
     case ArchSpec::eCore_mips32:
