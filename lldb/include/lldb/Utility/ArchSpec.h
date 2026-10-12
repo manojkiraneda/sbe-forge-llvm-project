@@ -185,6 +185,8 @@ public:
     eCore_msp430,
 
     eCore_ppc_generic,
+    // IBM PPE42: 32-bit PowerPC-derived core with a reduced register file.
+    eCore_ppc_ppe42,
     eCore_ppc_ppc601,
     eCore_ppc_ppc602,
     eCore_ppc_ppc603,
