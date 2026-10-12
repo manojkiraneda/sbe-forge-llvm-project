@@ -134,10 +134,13 @@ jobs:
           ppe42_fault:
             trap
           EOF
-          "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
-            -fuse-ld=lld -nostdlib \
-            -Wl,-Ttext=0xfff81234 -Wl,-e,ppe42_fault \
+          "$BUILD_DIR/bin/llvm-mc" -triple=powerpc-unknown-elf \
+            -mcpu=ppe42 -filetype=obj \
             "$RUNNER_TEMP/ppe42-mlgo/fault.s" \
+            -o "$RUNNER_TEMP/ppe42-mlgo/fault.o"
+          "$BUILD_DIR/bin/ld.lld" -m elf32ppc \
+            -Ttext=0xfff81234 -e ppe42_fault \
+            "$RUNNER_TEMP/ppe42-mlgo/fault.o" \
             -o "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
           "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
