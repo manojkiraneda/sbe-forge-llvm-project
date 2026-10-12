@@ -18,6 +18,7 @@ add_lldb_library(lldbPluginProcessUtility
   RegisterContextHistory.cpp
   RegisterContextMemory.cpp
   RegisterContextThreadMemory.cpp
+  RegisterInfoPOSIX_ppc32.cpp
   StopInfoMachException.cpp
   ThreadMemory.cpp
 
