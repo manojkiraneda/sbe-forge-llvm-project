@@ -112,7 +112,8 @@ jobs:
       - name: Test PPE42 PIBMEM core support
         run: |
           python -m unittest discover -s lldb/utils/ppe42 -p 'test_*.py'
-          printf '\x12\x34\x56\x78' > "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin"
+          python -c 'import pathlib,sys; data=bytearray(0x2000); data[0x1234:0x1238]=bytes.fromhex("7fe00008"); pathlib.Path(sys.argv[1]).write_bytes(data)' \
+            "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin"
           cat > "$RUNNER_TEMP/ppe42-mlgo/registers.txt" <<'EOF'
           | iar | 0xfff81234 | r1 | 0xfff80000 |
           | lr  | 0xfff81000 | cr | 0x20000000 |
@@ -142,6 +143,9 @@ jobs:
             -Ttext=0xfff81234 -e ppe42_fault \
             "$RUNNER_TEMP/ppe42-mlgo/fault.o" \
             -o "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
+          "$BUILD_DIR/bin/llvm-nm" "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
+          symbol_address="$("$BUILD_DIR/bin/llvm-nm" "$RUNNER_TEMP/ppe42-mlgo/fault.elf" | awk '$3 == "ppe42_fault" {print tolower($1)}')"
+          test "$symbol_address" = fff81234
           "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
