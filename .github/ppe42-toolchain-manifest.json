@@ -3,9 +3,9 @@
   "llvm_sha": "@LLVM_SHA@",
   "llvm_ref": "@LLVM_REF@",
   "host": "linux-x86_64",
-  "projects": ["clang", "lld"],
+  "projects": ["clang", "lld", "lldb"],
   "targets": ["PowerPC"],
-  "tools": ["clang", "clang++", "ld.lld", "llvm-ar", "llvm-objcopy", "llvm-objdump", "llvm-nm"],
+  "tools": ["clang", "clang++", "ld.lld", "lldb", "llvm-ar", "llvm-objcopy", "llvm-objdump", "llvm-nm"],
   "build_type": "Release",
   "assertions": true
 }
