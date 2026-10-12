@@ -44,6 +44,18 @@ class PPE42CoreTest(unittest.TestCase):
             core.make_core(b"\0" * 16, 0xFFFFFFF8,
                            {"r1": 0x1000, "iar": 0x2000})
 
+    def test_auxv_contains_executable_entry(self):
+        image = core.make_core(b"\0" * 4, 0xFFF80000,
+                               {"r1": 0xFFF80000, "iar": 0xFFF81234},
+                               entry=0xFFF80010)
+        note_offset = struct.unpack_from(">I", image, 56)[0]
+        first_desc_size = struct.unpack_from(">I", image, note_offset + 4)[0]
+        second_note = note_offset + 12 + 8 + first_desc_size
+        self.assertEqual(struct.unpack_from(">I", image, second_note + 8)[0],
+                         6)  # NT_AUXV
+        self.assertEqual(struct.unpack_from(">IIII", image, second_note + 20),
+                         (9, 0xFFF80010, 0, 0))
+
 
 if __name__ == "__main__":
     unittest.main()
