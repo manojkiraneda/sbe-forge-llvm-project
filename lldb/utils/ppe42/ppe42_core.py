@@ -39,7 +39,16 @@ def make_note(name, kind, data):
             + data.ljust((len(data) + 3) & ~3, b"\0"))
 
 
-def make_core(memory, base, registers, pc_source="iar"):
+def executable_entry(elf):
+    header = elf.read_bytes()[:52]
+    if (len(header) < 52 or header[:4] != b"\x7fELF" or
+            header[4:7] != bytes([1, 2, 1]) or
+            struct.unpack_from(">H", header, 18)[0] != 20):
+        raise ValueError("executable must be a 32-bit big-endian PowerPC ELF")
+    return struct.unpack_from(">I", header, 24)[0]
+
+
+def make_core(memory, base, registers, pc_source="iar", entry=None):
     if not memory:
         raise ValueError("PIBMEM image is empty")
     if not 0 <= base <= 0xFFFFFFFF or base + len(memory) > 0x100000000:
@@ -62,6 +71,11 @@ def make_core(memory, base, registers, pc_source="iar"):
     struct.pack_into(">I", prstatus, 24, 1)  # pr_pid, for a visible thread
     prstatus += struct.pack(">44I", *values)
     note = make_note("CORE", 1, prstatus)  # NT_PRSTATUS
+    if entry is not None:
+        # AT_ENTRY is needed by LLDB's ELF core loader to set the executable's
+        # section load addresses. Without it, `image lookup -a` can find a
+        # symbol by file address while `bt` still shows only a raw PC.
+        note += make_note("CORE", 6, struct.pack(">IIII", 9, entry, 0, 0))
 
     ehdr_size, phdr_size = 52, 32
     note_offset = ehdr_size + phdr_size * 2
@@ -84,6 +98,8 @@ def main():
                         help="address of the first PIBMEM byte (e.g. 0xfff80000)")
     parser.add_argument("--registers", type=pathlib.Path, required=True,
                         help="saved Simics register table or name/value list")
+    parser.add_argument("--elf", type=pathlib.Path, required=True,
+                        help="matching unstripped PPE42 firmware ELF")
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--pc-source", choices=("iar", "srr0"), default="iar",
                         help="use srr0 to show a fault before an exception handler")
@@ -105,7 +121,7 @@ def main():
         registers[name] = number
     memory = args.pibmem.read_bytes()
     args.output.write_bytes(make_core(memory, args.base, registers,
-                                      args.pc_source))
+                                      args.pc_source, executable_entry(args.elf)))
     print(f"Created {args.output}; load with: lldb -c {args.output} <firmware.elf>")
 
 

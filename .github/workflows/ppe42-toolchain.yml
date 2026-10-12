@@ -118,17 +118,6 @@ jobs:
           | iar | 0xfff81234 | r1 | 0xfff80000 |
           | lr  | 0xfff81000 | cr | 0x20000000 |
           EOF
-          python lldb/utils/ppe42/ppe42_core.py \
-            --pibmem "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin" \
-            --base 0xfff80000 \
-            --registers "$RUNNER_TEMP/ppe42-mlgo/registers.txt" \
-            --output "$RUNNER_TEMP/ppe42-mlgo/ppe42.core"
-          "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
-            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
-            --one-line 'register read pc r1 lr' \
-            > "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
-          grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
-          grep -q '0xfff80000' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
           cat > "$RUNNER_TEMP/ppe42-mlgo/fault.s" <<'EOF'
           .text
           .globl ppe42_fault
@@ -148,13 +137,25 @@ jobs:
           "$BUILD_DIR/bin/llvm-nm" "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
           symbol_address="$("$BUILD_DIR/bin/llvm-nm" "$RUNNER_TEMP/ppe42-mlgo/fault.elf" | awk '$3 == "ppe42_fault" {print tolower($1)}')"
           test "$symbol_address" = fff81234
+          python lldb/utils/ppe42/ppe42_core.py \
+            --pibmem "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin" \
+            --base 0xfff80000 \
+            --registers "$RUNNER_TEMP/ppe42-mlgo/registers.txt" \
+            --elf "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
+            --output "$RUNNER_TEMP/ppe42-mlgo/ppe42.core"
+          "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
+            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
+            --one-line 'register read pc r1 lr' \
+            > "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
+          grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
+          grep -q '0xfff80000' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
           "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
             --one-line 'target modules list' \
             --one-line 'image lookup -a 0xfff81234' \
             --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
-          grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
+          grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
 
       - name: Test embedded MLGO inliner
         run: |
@@ -292,7 +293,7 @@ jobs:
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
             --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
-          grep -q ppe42_fault "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
+          grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
 
       - name: Test candidate toolchain against SBE Forge
         env:
