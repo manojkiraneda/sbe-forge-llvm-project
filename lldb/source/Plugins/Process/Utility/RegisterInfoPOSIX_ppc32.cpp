@@ -27,9 +27,13 @@ RegisterInfoPOSIX_ppc32::RegisterInfoPOSIX_ppc32(const ArchSpec &target_arch)
       reg.byte_offset = 32 * 4;
     else if (std::strcmp(reg.name, "ctr") == 0)
       reg.byte_offset = 35 * 4;
-    else if (std::strcmp(reg.name, "lr") == 0)
+    else if (std::strcmp(reg.name, "lr") == 0) {
       reg.byte_offset = 36 * 4;
-    else if (std::strcmp(reg.name, "xer") == 0)
+      // Linux/PPC32 (including PPE42) CFI uses DWARF register 65 for LR.
+      // The FreeBSD table uses 108, which prevents unwinding past frame 0.
+      reg.kinds[lldb::eRegisterKindEHFrame] = 65;
+      reg.kinds[lldb::eRegisterKindDWARF] = 65;
+    } else if (std::strcmp(reg.name, "xer") == 0)
       reg.byte_offset = 37 * 4;
     else if (std::strcmp(reg.name, "cr") == 0)
       reg.byte_offset = 38 * 4;
