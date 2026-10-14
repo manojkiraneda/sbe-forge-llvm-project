@@ -116,15 +116,27 @@ jobs:
             "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin"
           cat > "$RUNNER_TEMP/ppe42-mlgo/registers.txt" <<'EOF'
           | iar | 0xfff81234 | r1 | 0xfff80000 |
-          | lr  | 0xfff81000 | cr | 0x20000000 |
+          | lr  | 0xfff8123c | cr | 0x20000000 |
           EOF
           cat > "$RUNNER_TEMP/ppe42-mlgo/fault.s" <<'EOF'
           .text
           .globl ppe42_fault
           .type ppe42_fault, @function
           ppe42_fault:
+            .cfi_startproc
+            .cfi_return_column 65
             trap
+            .cfi_endproc
           .size ppe42_fault, . - ppe42_fault
+          .globl ppe42_caller
+          .type ppe42_caller, @function
+          ppe42_caller:
+            .cfi_startproc
+            .cfi_return_column 65
+            bl ppe42_fault
+            blr
+            .cfi_endproc
+          .size ppe42_caller, . - ppe42_caller
           EOF
           "$BUILD_DIR/bin/llvm-mc" -triple=powerpc-unknown-elf \
             -mcpu=ppe42 -filetype=obj \
@@ -156,6 +168,7 @@ jobs:
             --one-line 'image lookup -a 0xfff81234' \
             --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
           grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
+          grep -q 'frame #1:.*ppe42_caller' "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
 
       - name: Test embedded MLGO inliner
         run: |
@@ -294,6 +307,7 @@ jobs:
             "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
             --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
           grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
+          grep -q 'frame #1:.*ppe42_caller' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
 
       - name: Test candidate toolchain against SBE Forge
         env:
