@@ -19,6 +19,17 @@ RegisterInfoPOSIX_ppc32::RegisterInfoPOSIX_ppc32(const ArchSpec &target_arch)
   const RegisterInfo *info = generic.GetRegisterInfo();
   m_register_info.assign(info, info + generic.GetRegisterCount());
 
+  // The FreeBSD register table numbers FPSCR as 65 and MSR as 66.  Linux
+  // PowerPC CFI uses those numbers for LR and CTR, respectively.  Keep the
+  // inherited register list, but remove these conflicting DWARF aliases.
+  for (RegisterInfo &reg : m_register_info) {
+    if (std::strcmp(reg.name, "fpscr") == 0 ||
+        std::strcmp(reg.name, "msr") == 0) {
+      reg.kinds[lldb::eRegisterKindEHFrame] = LLDB_INVALID_REGNUM;
+      reg.kinds[lldb::eRegisterKindDWARF] = LLDB_INVALID_REGNUM;
+    }
+  }
+
   // Linux pt_regs uses r0-r31, nip, msr, orig_r3, ctr, link, xer, ccr,
   // followed by mq, trap, dar, dsisr, and result.  The FreeBSD PPC32 layout
   // has the same GPR names but puts its special registers in another order.
