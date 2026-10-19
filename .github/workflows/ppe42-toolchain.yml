@@ -44,7 +44,7 @@ jobs:
       - name: Install build and integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ccache cmake ninja-build meson patchelf rustup zstd
+          sudo apt-get install -y ccache cmake libedit-dev ninja-build meson patchelf rustup zstd
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add powerpc-unknown-linux-gnu
@@ -94,7 +94,7 @@ jobs:
             -DLLVM_LINK_LLVM_DYLIB=OFF \
             -DCLANG_LINK_CLANG_DYLIB=OFF \
             -DLLDB_ENABLE_PYTHON=OFF \
-            -DLLDB_ENABLE_LIBEDIT=OFF \
+            -DLLDB_ENABLE_LIBEDIT=ON \
             -DLLDB_ENABLE_CURSES=OFF \
             -DTENSORFLOW_AOT_PATH="$tensorflow_aot_path" \
             -DTENSORFLOW_AOT_COMPILER="$(command -v saved_model_cli)" \
@@ -102,6 +102,7 @@ jobs:
             -DLLVM_RAEVICT_MODEL_PATH=none \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/ppe42-toolchain"
+          grep -q '^LLDB_ENABLE_LIBEDIT:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"
 
       - name: Incrementally build required tools
         run: |
@@ -253,8 +254,25 @@ jobs:
           done
           cp --dereference "$BUILD_DIR/bin/lldb" "$PACKAGE_DIR/bin/lldb"
           cp -a "$BUILD_DIR/lib/liblldb.so"* "$PACKAGE_DIR/lib/"
+          # libedit is not installed on every toolchain host. Its non-glibc
+          # dependencies also need to travel with the packaged LLDB.
+          lldb_dependencies="$(ldd "$BUILD_DIR/lib/liblldb.so")"
+          for name in libedit.so libtinfo.so libbsd.so libmd.so; do
+            path="$(printf '%s\n' "$lldb_dependencies" | awk -v prefix="$name" \
+              'index($1, prefix) == 1 {print $3; exit}')"
+            if [ -n "$path" ]; then
+              cp --dereference "$path" "$PACKAGE_DIR/lib/$(basename "$path")"
+            elif [ "$name" = libedit.so ]; then
+              echo 'LLDB was built without a dynamic libedit dependency' >&2
+              exit 1
+            fi
+          done
           patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/lldb"
           find "$PACKAGE_DIR/lib" -maxdepth 1 -name 'liblldb.so*' -type f \
+            -exec patchelf --set-rpath '$ORIGIN' {} +
+          find "$PACKAGE_DIR/lib" -maxdepth 1 -type f \
+            \( -name 'libedit.so*' -o -name 'libtinfo.so*' -o \
+               -name 'libbsd.so*' -o -name 'libmd.so*' \) \
             -exec patchelf --set-rpath '$ORIGIN' {} +
           strip "$PACKAGE_DIR/bin/lldb"
           ln -s clang "$PACKAGE_DIR/bin/clang++"
@@ -297,6 +315,8 @@ jobs:
             echo 'Packaged lldb has a missing shared-library dependency' >&2
             exit 1
           fi
+          ldd "$PACKAGE_DIR/lib/liblldb.so" | \
+            grep -Fq "$(realpath "$PACKAGE_DIR/lib")/libedit.so"
           "$PACKAGE_DIR/bin/lldb" --batch --no-lldbinit \
             --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
             --one-line 'register read pc r1 lr' \
