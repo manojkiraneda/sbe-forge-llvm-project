@@ -102,7 +102,7 @@ jobs:
             -DLLVM_RAEVICT_MODEL_PATH=none \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/ppe42-toolchain"
-          grep -q '^LLDB_ENABLE_LIBEDIT:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"
+          grep -q '^LLDB_ENABLE_LIBEDIT:STRING=ON$' "$BUILD_DIR/CMakeCache.txt"
 
       - name: Incrementally build required tools
         run: |
