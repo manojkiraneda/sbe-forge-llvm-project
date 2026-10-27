@@ -5959,6 +5959,16 @@ bool PPCTargetLowering::isEligibleForTCO(
   if (Subtarget.useLongCalls() && !(CB && CB->isMustTailCall()))
     return false;
 
+  // A no-argument, void PPE42 call can reuse its caller's LR and stack frame.
+  // In particular, an indirect call can branch through CTR without linking.
+  // Keep this separate from GuaranteedTailCallOpt, which also changes stack
+  // argument placement and the fast calling convention.
+  if (Subtarget.isPPE42() && CB && CallerFunc &&
+      CallerCC == CallingConv::C && CalleeCC == CallingConv::C &&
+      !isVarArg && CB->arg_empty() && CB->getType()->isVoidTy() &&
+      CallerFunc->getReturnType()->isVoidTy() && Outs.empty() && Ins.empty())
+    return true;
+
   if (Subtarget.isSVR4ABI() && Subtarget.isPPC64())
     return IsEligibleForTailCallOptimization_64SVR4(
         CalleeGV, CalleeCC, CallerCC, CB, isVarArg, Outs, Ins, CallerFunc,
@@ -6005,7 +6015,7 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       // of a function pointer) or it may be a register copy (to move the
       // address of the callee from a function parameter into a virtual
       // register). It may also be an ExternalSymbolSDNode (ex memcopy).
-      assert((Subtarget.isUsingPCRelativeCalls() ||
+      assert((Subtarget.isPPE42() || Subtarget.isUsingPCRelativeCalls() ||
               isa<GlobalAddressSDNode>(Callee)) &&
              "Callee should be an llvm::Function object.");
 
