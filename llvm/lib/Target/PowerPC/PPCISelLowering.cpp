@@ -6149,13 +6149,26 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
   // stored.
   unsigned NumBytes = CCByValInfo.getStackSize();
 
+  // A PPE42 sibling call with no operands needs no outgoing parameter area.
+  // Reuse the incoming frame and LR unchanged. The generic PPC32 tail-call
+  // path aligns the caller's reserved area against the eight-byte linkage
+  // area, then moves the saved return address and adjusts SP unnecessarily.
+  const bool IsPPE42VoidSiblingCall =
+      Subtarget.isPPE42() && IsTailCall && Outs.empty() && Ins.empty() &&
+      CallConv == CallingConv::C;
+  if (IsPPE42VoidSiblingCall)
+    NumBytes = 0;
+
   // Calculate by how many bytes the stack has to be adjusted in case of tail
   // call optimization.
-  int SPDiff = CalculateTailCallSPDiff(DAG, IsTailCall, NumBytes);
+  int SPDiff = IsPPE42VoidSiblingCall
+                   ? 0
+                   : CalculateTailCallSPDiff(DAG, IsTailCall, NumBytes);
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
+  if (!IsPPE42VoidSiblingCall)
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be moved somewhere else
@@ -6285,7 +6298,7 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
     InGlue = Chain.getValue(1);
   }
 
-  if (IsTailCall)
+  if (IsTailCall && !IsPPE42VoidSiblingCall)
     PrepareTailCall(DAG, InGlue, Chain, dl, SPDiff, NumBytes, LROp, FPOp,
                     TailCallArguments);
 
