@@ -108,14 +108,13 @@ body: |
     liveins: $r6
     ; CHECK-LABEL: name: intervening_use
     ; CHECK: LWZ 8,
-    ; CHECK: ADDI %1, 1
+    ; CHECK: $r3 = COPY %1
     ; CHECK: LWZ 12,
     ; CHECK-NOT: LVD
     %0:gprc_nor0 = COPY $r6
     %1:gprc = LWZ 8, %0 :: (load (s32) from %ir.p + 8, align 8)
-    %3:gprc = ADDI %1, 1
+    $r3 = COPY %1
     %2:gprc = LWZ 12, %0 :: (load (s32) from %ir.p + 12, align 4)
-    STW %3, 16, %0 :: (store (s32) into %ir.p + 16, align 4)
     STW %2, 20, %0 :: (store (s32) into %ir.p + 20, align 4)
     BLR implicit $lr, implicit undef $rm
 ...
