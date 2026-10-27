@@ -118,6 +118,14 @@ jobs:
             "$BUILD_DIR/bin/FileCheck" \
               llvm/test/CodeGen/PowerPC/ppe42-tailcall-void.ll
 
+      - name: Test PPE42 fused branches across fixed inline assembly
+        run: |
+          "$BUILD_DIR/bin/llc" -mtriple=powerpc-unknown-elf -mcpu=ppe42 \
+            -run-pass=ppc-branch-select -verify-machineinstrs \
+            llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir \
+            -o - | "$BUILD_DIR/bin/FileCheck" \
+              llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir
+
       - name: Test PPE42 PIBMEM core support
         run: |
           python -m unittest discover -s lldb/utils/ppe42 -p 'test_*.py'
