@@ -1,4 +1,4 @@
-//===-- PPCPPE42StorePairs.cpp - Form PPE42 VDR stores before allocation --===//
+//===-- PPCPPE42StorePairs.cpp - Form PPE42 VDR pairs before allocation ---===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -28,7 +28,7 @@ public:
   PPCPPE42StorePairs() : MachineFunctionPass(ID) {}
 
   StringRef getPassName() const override {
-    return "PPE42 virtual doubleword store pairs";
+    return "PPE42 virtual doubleword load and store pairs";
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
@@ -40,6 +40,102 @@ public:
     const auto &TII = *ST.getInstrInfo();
     const auto &TRI = *ST.getRegisterInfo();
     bool Changed = false;
+    for (MachineBasicBlock &MBB : MF) {
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &First = *I++;
+        if (First.getOpcode() != PPC::LWZ || First.getNumOperands() != 3 ||
+            !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
+            !First.getOperand(0).getReg().isVirtual() ||
+            !First.getOperand(1).isImm() ||
+            (!First.getOperand(2).isReg() && !First.getOperand(2).isFI()))
+          continue;
+
+        auto Next = I;
+        SmallVector<MachineInstr *, 4> Between;
+        while (Next != MBB.end()) {
+          if (Next->isDebugInstr()) {
+            ++Next;
+            continue;
+          }
+          if (Next->getOpcode() == PPC::LWZ || Between.size() == 4 ||
+              Next->mayLoad() || Next->mayStore() || Next->isCall() ||
+              Next->isTerminator() || Next->isInlineAsm() ||
+              Next->hasUnmodeledSideEffects())
+            break;
+          Between.push_back(&*Next++);
+        }
+        if (Next == MBB.end())
+          continue;
+        MachineInstr &Second = *Next;
+        if (Second.getOpcode() != PPC::LWZ || Second.getNumOperands() != 3 ||
+            !Second.hasOneMemOperand() || !Second.getOperand(0).isReg() ||
+            !Second.getOperand(0).getReg().isVirtual() ||
+            !Second.getOperand(1).isImm() ||
+            (!Second.getOperand(2).isReg() && !Second.getOperand(2).isFI()))
+          continue;
+
+        MachineInstr &HiLoad =
+            First.getOperand(1).getImm() <= Second.getOperand(1).getImm()
+                ? First
+                : Second;
+        MachineInstr &LoLoad = &HiLoad == &First ? Second : First;
+        int64_t Offset = HiLoad.getOperand(1).getImm();
+        Register Hi = HiLoad.getOperand(0).getReg();
+        Register Lo = LoLoad.getOperand(0).getReg();
+        const MachineOperand &Base = HiLoad.getOperand(2);
+        auto SameBase = [](const MachineOperand &A, const MachineOperand &B) {
+          return (A.isReg() && B.isReg() && A.getReg() == B.getReg()) ||
+                 (A.isFI() && B.isFI() && A.getIndex() == B.getIndex());
+        };
+        if (Hi == Lo || !isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
+            LoLoad.getOperand(1).getImm() != Offset + 4 ||
+            !SameBase(Base, LoLoad.getOperand(2)) ||
+            (Base.isReg() && (Base.getReg() == Hi || Base.getReg() == Lo)))
+          continue;
+
+        MachineMemOperand *HiMem = *HiLoad.memoperands_begin();
+        MachineMemOperand *LoMem = *LoLoad.memoperands_begin();
+        if (!HiMem->isLoad() || !LoMem->isLoad() || HiMem->isVolatile() ||
+            LoMem->isVolatile() || HiMem->isAtomic() || LoMem->isAtomic() ||
+            HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
+          continue;
+
+        if (llvm::any_of(Between, [&](const MachineInstr *MI) {
+              return MI->readsRegister(Hi, &TRI) ||
+                     MI->modifiesRegister(Hi, &TRI) ||
+                     MI->readsRegister(Lo, &TRI) ||
+                     MI->modifiesRegister(Lo, &TRI) ||
+                     (Base.isReg() &&
+                      MI->modifiesRegister(Base.getReg(), &TRI));
+            }))
+          continue;
+
+        Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
+        MachineInstrBuilder Load =
+            BuildMI(MBB, First, First.getDebugLoc(), TII.get(PPC::LVD), Pair)
+                .addImm(Offset);
+        if (Base.isFI())
+          Load.addFrameIndex(Base.getIndex());
+        else
+          Load.addReg(Base.getReg());
+        Load.addMemOperand(HiMem).addMemOperand(LoMem);
+
+        // Keep the scalar users, but let allocation assign their subregisters
+        // together as one VDR. No two extra COPY instructions are needed.
+        for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Hi))) {
+          Use.setReg(Pair);
+          Use.setSubReg(PPC::sub_gpr_hi);
+        }
+        for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Lo))) {
+          Use.setReg(Pair);
+          Use.setSubReg(PPC::sub_gpr_lo);
+        }
+        I = std::next(Next);
+        First.eraseFromParent();
+        Second.eraseFromParent();
+        Changed = true;
+      }
+    }
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &FirstStore = *I++;
@@ -235,7 +331,7 @@ public:
 } // namespace
 
 INITIALIZE_PASS(PPCPPE42StorePairs, DEBUG_TYPE,
-                "PPE42 virtual doubleword store pairs", false, false)
+                "PPE42 virtual doubleword load and store pairs", false, false)
 
 char PPCPPE42StorePairs::ID = 0;
 FunctionPass *llvm::createPPCPPE42StorePairsPass() {
