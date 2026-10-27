@@ -410,8 +410,9 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   // fold a single-bit mask whose result and comparison are killed by the
   // branch. A small margin covers the change in branch position and padding.
   // An inline asm can expand to an unknown number of bytes. The PPE42 nop,
-  // trap, and PK_PANIC's exact "tw 31, $0, $1" spellings are single fixed-
-  // width instructions, so they do not make a displacement imprecise. Check
+  // trap, PK_PANIC's exact "tw 31, $0, $1", and the QME wait instruction
+  // "tw 0, 0, 0" are single fixed-width instructions, so they do not make a
+  // displacement imprecise. Check
   // only the instructions between the branch and its target: asm before a
   // forward branch or after its target cannot affect the displacement.
   auto HasImpreciseAsm = [](MachineBasicBlock::const_iterator Begin,
@@ -421,7 +422,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         return false;
       StringRef Asm = MI.getOperand(0).getSymbolName();
       Asm = Asm.trim();
-      return Asm != "nop" && Asm != "trap" && Asm != "tw 31, $0, $1";
+      return Asm != "nop" && Asm != "trap" && Asm != "tw 31, $0, $1" &&
+             Asm != "tw 0, 0, 0";
     });
   };
   auto HasImpreciseBranchSpan = [&](const MachineInstr &Br,
