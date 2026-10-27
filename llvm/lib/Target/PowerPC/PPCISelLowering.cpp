@@ -5896,7 +5896,8 @@ SDValue PPCTargetLowering::FinishCall(
             Callee.getOpcode() == ISD::TargetExternalSymbol ||
             Callee.getOpcode() == ISD::TargetGlobalAddress ||
             isa<ConstantSDNode>(Callee) ||
-            (CFlags.IsIndirect && Subtarget.isUsingPCRelativeCalls())) &&
+            (CFlags.IsIndirect &&
+             (Subtarget.isUsingPCRelativeCalls() || Subtarget.isPPE42()))) &&
            "Expecting a global address, external symbol, absolute value, "
            "register or an indirect tail call when PC Relative calls are "
            "used.");
