@@ -110,6 +110,14 @@ jobs:
             clang lld lldb llc opt llvm-ar llvm-objcopy llvm-objdump llvm-nm \
             llvm-mc llvm-readobj llvm-config FileCheck split-file not count
 
+      - name: Test PPE42 void sibling call
+        run: |
+          "$BUILD_DIR/bin/llc" -mtriple=powerpc-unknown-elf -mcpu=ppe42 \
+            -verify-machineinstrs \
+            < llvm/test/CodeGen/PowerPC/ppe42-tailcall-void.ll | \
+            "$BUILD_DIR/bin/FileCheck" \
+              llvm/test/CodeGen/PowerPC/ppe42-tailcall-void.ll
+
       - name: Test PPE42 PIBMEM core support
         run: |
           python -m unittest discover -s lldb/utils/ppe42 -p 'test_*.py'
