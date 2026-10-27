@@ -5896,7 +5896,8 @@ SDValue PPCTargetLowering::FinishCall(
             Callee.getOpcode() == ISD::TargetExternalSymbol ||
             Callee.getOpcode() == ISD::TargetGlobalAddress ||
             isa<ConstantSDNode>(Callee) ||
-            (CFlags.IsIndirect && Subtarget.isUsingPCRelativeCalls())) &&
+            (CFlags.IsIndirect &&
+             (Subtarget.isUsingPCRelativeCalls() || Subtarget.isPPE42()))) &&
            "Expecting a global address, external symbol, absolute value, "
            "register or an indirect tail call when PC Relative calls are "
            "used.");
@@ -5959,6 +5960,16 @@ bool PPCTargetLowering::isEligibleForTCO(
   if (Subtarget.useLongCalls() && !(CB && CB->isMustTailCall()))
     return false;
 
+  // A no-argument, void PPE42 call can reuse its caller's LR and stack frame.
+  // In particular, an indirect call can branch through CTR without linking.
+  // Keep this separate from GuaranteedTailCallOpt, which also changes stack
+  // argument placement and the fast calling convention.
+  if (Subtarget.isPPE42() && CB && CallerFunc &&
+      CallerCC == CallingConv::C && CalleeCC == CallingConv::C &&
+      !isVarArg && CB->arg_empty() && CB->getType()->isVoidTy() &&
+      CallerFunc->getReturnType()->isVoidTy() && Outs.empty() && Ins.empty())
+    return true;
+
   if (Subtarget.isSVR4ABI() && Subtarget.isPPC64())
     return IsEligibleForTailCallOptimization_64SVR4(
         CalleeGV, CalleeCC, CallerCC, CB, isVarArg, Outs, Ins, CallerFunc,
@@ -6005,7 +6016,7 @@ PPCTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       // of a function pointer) or it may be a register copy (to move the
       // address of the callee from a function parameter into a virtual
       // register). It may also be an ExternalSymbolSDNode (ex memcopy).
-      assert((Subtarget.isUsingPCRelativeCalls() ||
+      assert((Subtarget.isPPE42() || Subtarget.isUsingPCRelativeCalls() ||
               isa<GlobalAddressSDNode>(Callee)) &&
              "Callee should be an llvm::Function object.");
 
@@ -6138,13 +6149,26 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
   // stored.
   unsigned NumBytes = CCByValInfo.getStackSize();
 
+  // A PPE42 sibling call with no operands needs no outgoing parameter area.
+  // Reuse the incoming frame and LR unchanged. The generic PPC32 tail-call
+  // path aligns the caller's reserved area against the eight-byte linkage
+  // area, then moves the saved return address and adjusts SP unnecessarily.
+  const bool IsPPE42VoidSiblingCall =
+      Subtarget.isPPE42() && IsTailCall && Outs.empty() && Ins.empty() &&
+      CallConv == CallingConv::C;
+  if (IsPPE42VoidSiblingCall)
+    NumBytes = 0;
+
   // Calculate by how many bytes the stack has to be adjusted in case of tail
   // call optimization.
-  int SPDiff = CalculateTailCallSPDiff(DAG, IsTailCall, NumBytes);
+  int SPDiff = IsPPE42VoidSiblingCall
+                   ? 0
+                   : CalculateTailCallSPDiff(DAG, IsTailCall, NumBytes);
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
-  Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
+  if (!IsPPE42VoidSiblingCall)
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
   SDValue CallSeqStart = Chain;
 
   // Load the return address and frame pointer so it can be moved somewhere else
@@ -6274,7 +6298,7 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
     InGlue = Chain.getValue(1);
   }
 
-  if (IsTailCall)
+  if (IsTailCall && !IsPPE42VoidSiblingCall)
     PrepareTailCall(DAG, InGlue, Chain, dl, SPDiff, NumBytes, LROp, FPOp,
                     TailCallArguments);
 
