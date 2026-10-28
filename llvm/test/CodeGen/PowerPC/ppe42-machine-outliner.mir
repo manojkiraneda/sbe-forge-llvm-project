@@ -126,7 +126,7 @@ body: |
     BLR implicit $lr, implicit undef $rm
 ...
 
-# TAIL-LABEL: name: OUTLINED_FUNCTION_[[N]]
+# TAIL: name: OUTLINED_FUNCTION_[[N]]
 # TAIL-NOT: STSKU
 # TAIL: $r4 = LI 0
 # TAIL: $r5 = LI 0
@@ -134,7 +134,7 @@ body: |
 # TAIL: B @trace
 # TAIL-NOT: BLR
 # TAIL: ...
-# PLAIN-LABEL: name: OUTLINED_FUNCTION_[[N]]
+# PLAIN: name: OUTLINED_FUNCTION_[[N]]
 # PLAIN-NOT: STSKU
 # PLAIN: LIS 256
 # PLAIN: STW
