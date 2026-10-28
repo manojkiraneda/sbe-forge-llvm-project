@@ -180,10 +180,15 @@ public:
                                         SecondStore.getOperand(1).getImm()
                                     ? FirstStore
                                     : SecondStore;
-        MachineInstr &LoStore = &HiStore == &FirstStore ? SecondStore
-                                                      : FirstStore;
+        MachineInstr &LoStore =
+            &HiStore == &FirstStore ? SecondStore : FirstStore;
         Register Hi = HiStore.getOperand(0).getReg();
         Register Lo = LoStore.getOperand(0).getReg();
+        bool ExistingPair =
+            Hi == Lo && Hi.isVirtual() &&
+            PPC::VDRCRegClass.hasSubClassEq(MRI.getRegClass(Hi)) &&
+            HiStore.getOperand(0).getSubReg() == PPC::sub_gpr_hi &&
+            LoStore.getOperand(0).getSubReg() == PPC::sub_gpr_lo;
         int64_t Offset = HiStore.getOperand(1).getImm();
         const MachineOperand &Base = HiStore.getOperand(2);
         auto SameBaseOperands = [&](const MachineOperand &A,
@@ -192,8 +197,11 @@ public:
                  (A.isFI() && B.isFI() && A.getIndex() == B.getIndex());
         };
         if (!Hi.isVirtual() || !Lo.isVirtual() ||
-            (Hi != Lo && (!MRI.hasOneNonDBGUse(Hi) ||
-                          !MRI.hasOneNonDBGUse(Lo))) ||
+            ((HiStore.getOperand(0).getSubReg() ||
+              LoStore.getOperand(0).getSubReg()) &&
+             !ExistingPair) ||
+            (!ExistingPair && Hi != Lo &&
+             (!MRI.hasOneNonDBGUse(Hi) || !MRI.hasOneNonDBGUse(Lo))) ||
             !isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
             LoStore.getOperand(1).getImm() != Offset + 4 ||
             !SameBaseOperands(Base, LoStore.getOperand(2)))
@@ -208,11 +216,30 @@ public:
 
         MachineMemOperand *HiMem = *HiStore.memoperands_begin();
         MachineMemOperand *LoMem = *LoStore.memoperands_begin();
-        if (!HiMem->isStore() || !LoMem->isStore() ||
-            HiMem->isVolatile() || LoMem->isVolatile() ||
-            HiMem->isAtomic() || LoMem->isAtomic() ||
+        if (!HiMem->isStore() || !LoMem->isStore() || HiMem->isVolatile() ||
+            LoMem->isVolatile() || HiMem->isAtomic() || LoMem->isAtomic() ||
             HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
           continue;
+
+        if (ExistingPair) {
+          // Both words already come from the two halves of one VDR. Reuse it
+          // directly, even when other instructions also use either half.
+          MachineInstrBuilder Store =
+              BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(),
+                      TII.get(PPC::STVD))
+                  .addReg(Hi)
+                  .addImm(Offset);
+          if (Base.isFI())
+            Store.addFrameIndex(Base.getIndex());
+          else
+            Store.addReg(Base.getReg());
+          Store.addMemOperand(HiMem).addMemOperand(LoMem);
+          I = std::next(Next);
+          FirstStore.eraseFromParent();
+          SecondStore.eraseFromParent();
+          Changed = true;
+          continue;
+        }
 
         if (Hi == Lo) {
           // A pair of stores of one value needs a copy into the other half
