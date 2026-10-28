@@ -222,9 +222,16 @@ jobs:
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/CodeGen/PowerPC/ppe42-size-helper-clone.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-size-helper-pipeline.ll \
             llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll \
             llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-wide.ll \
             llvm/test/Transforms/Inline/PowerPC/ppe42-size-retained-helper.ll
+
+      - name: Test PPE42 machine outlining
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.ll
 
       - name: Test PPE42 inline assembly register pairs
         run: |
