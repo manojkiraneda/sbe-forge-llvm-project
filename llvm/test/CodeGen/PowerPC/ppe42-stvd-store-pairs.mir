@@ -7,6 +7,7 @@
   define void @offset_global(ptr %p) { ret void }
   define void @same_reg(ptr %p) { ret void }
   define void @unaligned_stack_pair(ptr %p) { ret void }
+  define void @aligned_stack_words(ptr %p) { ret void }
   define void @misaligned(ptr %p) { ret void }
   define void @volatile_store(ptr %p) { ret void }
   define void @reverse_pair(ptr %p) { ret void }
@@ -84,6 +85,21 @@ body: |
     ; CHECK: STW $r4, 40, $r1
     STW $r3, 36, $r1 :: (store (s32) into %ir.p + 36, align 4)
     STW $r4, 40, $r1 :: (store (s32) into %ir.p + 40, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: aligned_stack_words
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4
+    ; The stack pointer and 8-byte offset establish alignment even though
+    ; each scalar store's MMO records only 4-byte alignment.
+    ; CHECK-LABEL: name: aligned_stack_words
+    ; CHECK: STVD ${{[^,]+}}, 8, $r1
+    ; CHECK-NOT: STW
+    STW $r3, 8, $r1 :: (store (s32) into %ir.p + 8, align 4)
+    STW $r4, 12, $r1 :: (store (s32) into %ir.p + 12, align 4)
     BLR implicit $lr, implicit undef $rm
 ...
 ---

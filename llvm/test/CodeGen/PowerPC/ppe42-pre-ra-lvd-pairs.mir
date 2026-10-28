@@ -11,6 +11,7 @@
     %slot = alloca i64, align 8
     ret void
   }
+  define void @load_store_pair(ptr %p) #0 { ret void }
   attributes #0 = { optsize }
 ...
 ---
@@ -132,5 +133,25 @@ body: |
     %1:gprc = LWZ 4, %stack.0.slot :: (load (s32) from %ir.slot + 4, align 4)
     $r3 = COPY %0
     $r4 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: load_store_pair
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6
+    ; CHECK-LABEL: name: load_store_pair
+    ; CHECK: %[[PAIR:[0-9]+]]:vdrc = LVD 8,
+    ; CHECK: STVD %[[PAIR]], 16,
+    ; CHECK: $r3 = COPY %[[PAIR]].sub_gpr_hi
+    ; CHECK-NOT: LWZ
+    ; CHECK-NOT: STW
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc = LWZ 8, %0 :: (load (s32) from %ir.p + 8, align 8)
+    %2:gprc = LWZ 12, %0 :: (load (s32) from %ir.p + 12, align 4)
+    STW %1, 16, %0 :: (store (s32) into %ir.p + 16, align 8)
+    STW %2, 20, %0 :: (store (s32) into %ir.p + 20, align 4)
+    $r3 = COPY %1
     BLR implicit $lr, implicit undef $rm
 ...
