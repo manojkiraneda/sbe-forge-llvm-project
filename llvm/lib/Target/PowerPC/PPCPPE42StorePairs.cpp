@@ -61,6 +61,24 @@ public:
             !Next->getOperand(0).getReg().isVirtual() ||
             Next->getOperand(1).getReg() != PPC::R4)
           continue;
+        bool IsCallResult = false;
+        auto Prev = HiCopy.getIterator();
+        for (unsigned Steps = 0; Prev != MBB.begin() && Steps < 4; ++Steps) {
+          --Prev;
+          if (Prev->isDebugInstr())
+            continue;
+          if (Prev->isCall()) {
+            IsCallResult = Prev->definesRegister(PPC::R3, &TRI) &&
+                           Prev->definesRegister(PPC::R4, &TRI);
+            break;
+          }
+          if (Prev->modifiesRegister(PPC::R3, &TRI) ||
+              Prev->modifiesRegister(PPC::R4, &TRI) || Prev->isTerminator() ||
+              Prev->isInlineAsm())
+            break;
+        }
+        if (!IsCallResult)
+          continue;
         Register Hi = HiCopy.getOperand(0).getReg();
         Register Lo = Next->getOperand(0).getReg();
         if (Hi == Lo || !MRI.hasOneDef(Hi) || !MRI.hasOneDef(Lo))
