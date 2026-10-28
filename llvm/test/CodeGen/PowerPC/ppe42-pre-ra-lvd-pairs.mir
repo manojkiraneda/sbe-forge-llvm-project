@@ -15,6 +15,8 @@
   declare i64 @get()
   declare void @use(i64)
   define void @call_result_pair() #0 { ret void }
+  declare i32 @check()
+  define void @call_result_copy_chain() #0 { ret void }
   attributes #0 = { optsize }
 ...
 ---
@@ -175,6 +177,38 @@ body: |
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
     $r3 = COPY killed %0
     $r4 = COPY killed %1
+    BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
+    BLR implicit $lr, implicit $rm
+...
+---
+name: call_result_copy_chain
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.2(0x30000000), %bb.1(0x50000000)
+    ; CHECK-LABEL: name: call_result_copy_chain
+    ; CHECK: %[[PAIR:[0-9]+]]:vdrc = REG_SEQUENCE $r3, %subreg.sub_gpr_hi, $r4, %subreg.sub_gpr_lo
+    ; CHECK-NOT: COPY %
+    BL @get, csr_svr432, implicit-def dead $lr, implicit-def $r3, implicit-def $r4
+    %0:gprc = COPY killed $r3
+    %1:gprc = COPY killed $r4
+    %2:gprc = COPY killed %0
+    %3:gprc = COPY killed %1
+    BL @check, csr_svr432, implicit-def dead $lr, implicit-def $r3
+    %4:gprc = COPY killed $r3
+    %5:crrc = CMPLWI killed %4, 0
+    BCC 76, killed %5, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2(0x80000000)
+    ; CHECK: $r3 = COPY %[[PAIR]].sub_gpr_hi
+    ; CHECK: $r4 = COPY %[[PAIR]].sub_gpr_lo
+    $r3 = COPY %2
+    $r4 = COPY %3
+    BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
+  bb.2:
+    $r3 = COPY killed %2
+    $r4 = COPY killed %3
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
     BLR implicit $lr, implicit $rm
 ...
