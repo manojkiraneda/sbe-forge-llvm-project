@@ -17,6 +17,7 @@
   define void @call_result_pair() #0 { ret void }
   declare i32 @check()
   define void @call_result_copy_chain() #0 { ret void }
+  define void @unrelated_live_pair() #0 { ret void }
   attributes #0 = { optsize }
 ...
 ---
@@ -209,6 +210,24 @@ body: |
   bb.2:
     $r3 = COPY killed %2
     $r4 = COPY killed %3
+    BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
+    BLR implicit $lr, implicit $rm
+...
+---
+name: unrelated_live_pair
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: unrelated_live_pair
+    ; CHECK: %0:gprc = COPY $r3
+    ; CHECK: %1:gprc = COPY $r4
+    ; CHECK-NOT: REG_SEQUENCE
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    BL @check, csr_svr432, implicit-def dead $lr, implicit-def $r3
+    $r3 = COPY %0
+    $r4 = COPY %1
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
     BLR implicit $lr, implicit $rm
 ...
