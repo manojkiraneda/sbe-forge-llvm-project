@@ -21,6 +21,7 @@
 #include "PPCTargetTransformInfo.h"
 #include "TargetInfo/PowerPCTargetInfo.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -61,8 +62,8 @@ using namespace llvm;
 
 namespace {
 
-// Keep the externally visible body, but let local calls use a private copy
-// whose unused arguments can be removed by DeadArgumentElimination. This is
+// Keep the externally visible body, but let local calls use a copy whose
+// unused arguments can be removed by DeadArgumentElimination. This is
 // particularly useful for small C++ template helpers that otherwise keep a
 // by-reference Target argument alive across many PPE42 call sites.
 class PPE42SizeCloneHelpersPass
@@ -72,12 +73,19 @@ public:
     SmallVector<Function *, 16> Candidates;
     for (Function &F : M) {
       if (F.isDeclaration() || F.hasLocalLinkage() || !F.isDSOLocal() ||
-          !F.hasOptSize() || F.hasSection() ||
-          F.isVarArg() || F.arg_size() > 4 || F.getInstructionCount() > 40 ||
+          !F.hasOptSize() || F.hasSection() || F.isVarArg() ||
+          F.arg_size() > 4 || F.getInstructionCount() > 40 ||
+          (!F.getReturnType()->isVoidTy() &&
+           !F.getReturnType()->isIntegerTy()) ||
           F.hasFnAttribute(Attribute::Naked) ||
           F.hasFnAttribute(Attribute::AlwaysInline) ||
           F.hasFnAttribute(Attribute::NoInline) ||
           !(F.hasLinkOnceODRLinkage() || F.hasWeakODRLinkage()))
+        continue;
+
+      if (llvm::any_of(F.args(), [](const Argument &A) {
+            return !A.getType()->isPointerTy() && !A.getType()->isIntegerTy();
+          }))
         continue;
 
       bool HasUnusedPointer = false;
@@ -108,6 +116,14 @@ public:
       Clone->setVisibility(GlobalValue::DefaultVisibility);
       Clone->setDSOLocal(true);
       Clone->setSubprogram(nullptr);
+      Clone->addFnAttr("ppe42-size-original", F->getName());
+      // DeadArgumentElimination preserves the attributes of surviving
+      // parameters. Record their original positions so different signatures
+      // cannot accidentally share a symbol across translation units.
+      for (Argument &A : Clone->args())
+        Clone->addParamAttr(A.getArgNo(),
+                            Attribute::get(M.getContext(), "ppe42-size-arg",
+                                           std::to_string(A.getArgNo())));
       for (CallBase *CB : Calls)
         CB->setCalledFunction(Clone);
       Changed = true;
@@ -116,6 +132,39 @@ public:
   }
 };
 
+// Private copies of an ODR helper would duplicate its body in every object
+// file. Restore ODR linkage after removing dead arguments, using a name that
+// describes the surviving signature. Keep the original ABI under its old name.
+class PPE42SizeFinalizeHelpersPass
+    : public PassInfoMixin<PPE42SizeFinalizeHelpersPass> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    bool Changed = false;
+    for (Function &F : M) {
+      Attribute Original = F.getFnAttribute("ppe42-size-original");
+      if (!Original.isValid())
+        continue;
+      std::string Name = Original.getValueAsString().str() + ".ppe42.size";
+      for (Argument &A : F.args()) {
+        Attribute Index =
+            F.getAttributes().getParamAttr(A.getArgNo(), "ppe42-size-arg");
+        assert(Index.isValid() && "Missing original helper argument index");
+        Name += ".a" + Index.getValueAsString().str();
+        F.removeParamAttr(A.getArgNo(), "ppe42-size-arg");
+      }
+      Name +=
+          F.getReturnType()->isVoidTy()
+              ? ".rv"
+              : ".r" + std::to_string(F.getReturnType()->getIntegerBitWidth());
+      F.removeFnAttr("ppe42-size-original");
+      F.setName(Name);
+      F.setLinkage(GlobalValue::LinkOnceODRLinkage);
+      F.setComdat(M.getOrInsertComdat(Name));
+      Changed = true;
+    }
+    return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  }
+};
 } // namespace
 
 
@@ -438,6 +487,9 @@ PPCTargetMachine::PPCTargetMachine(const Target &T, const Triple &TT,
       TargetABI(computeTargetABI(TT, Options)),
       Endianness(isLittleEndianTriple(TT) ? Endian::LITTLE : Endian::BIG) {
   initAsmInfo();
+  // The instruction-info hooks restrict outlining to PPE42 functions.
+  setMachineOutliner(true);
+  setSupportsDefaultOutlining(true);
 }
 
 PPCTargetMachine::~PPCTargetMachine() = default;
@@ -545,13 +597,20 @@ void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,
          ArrayRef<PassBuilder::PipelineElement>) {
+        if (Name == "ppe42-size-finalize-helpers") {
+          MPM.addPass(PPE42SizeFinalizeHelpersPass());
+          return true;
+        }
         if (Name != "ppe42-size-clone-helpers")
           return false;
         MPM.addPass(PPE42SizeCloneHelpersPass());
         return true;
       });
 
-  PB.registerPipelineEarlySimplificationEPCallback(
+  // Run after the inliner and function simplification. Template checking
+  // helpers can use an otherwise dead 'this' pointer until they are inlined;
+  // the early-simplification extension point cannot see that opportunity.
+  PB.registerOptimizerEarlyEPCallback(
       [](ModulePassManager &MPM, OptimizationLevel Level,
          ThinOrFullLTOPhase Phase) {
         if (!EnablePPE42SizeIPA || !Level.isOptimizingForSize() ||
@@ -559,6 +618,7 @@ void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
           return;
         MPM.addPass(PPE42SizeCloneHelpersPass());
         MPM.addPass(DeadArgumentEliminationPass());
+        MPM.addPass(PPE42SizeFinalizeHelpersPass());
       });
   PB.registerCGSCCOptimizerLateEPCallback(
       [](CGSCCPassManager &CGPM, OptimizationLevel Level) {

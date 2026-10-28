@@ -40,6 +40,7 @@ add_llvm_target(PowerPCCodeGen
   PPCLoopInstrFormPrep.cpp
   PPCMCInstLower.cpp
   PPCMachineFunctionInfo.cpp
+  PPCMachineOutliner.cpp
   PPCMachineScheduler.cpp
   PPCMacroFusion.cpp
   PPCMIPeephole.cpp
