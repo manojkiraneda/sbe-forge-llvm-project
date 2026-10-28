@@ -87,10 +87,12 @@ public:
         for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Hi))) {
           Use.setReg(Pair);
           Use.setSubReg(PPC::sub_gpr_hi);
+          Use.setIsKill(false);
         }
         for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Lo))) {
           Use.setReg(Pair);
           Use.setSubReg(PPC::sub_gpr_lo);
+          Use.setIsKill(false);
         }
         I = std::next(Next);
         HiCopy.eraseFromParent();
