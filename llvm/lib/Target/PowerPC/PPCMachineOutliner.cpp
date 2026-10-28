@@ -42,15 +42,25 @@ PPCInstrInfo::getOutliningTypeImpl(const MachineModuleInfo &,
   const MachineInstr &MI = *MIT;
   const TargetRegisterInfo &TRI = getRegisterInfo();
   if (MI.isCFIInstruction() || MI.getFlag(MachineInstr::FrameSetup) ||
-      MI.getFlag(MachineInstr::FrameDestroy) ||
-      MI.modifiesRegister(PPC::R1, &TRI))
+      MI.getFlag(MachineInstr::FrameDestroy))
     return outliner::Illegal;
 
   // A direct call can end a sequence: the outlined copy tail-branches to
   // the original callee, which returns directly to the original caller.
   if (MI.getOpcode() == PPC::BL &&
-      (MI.getOperand(0).isGlobal() || MI.getOperand(0).isSymbol()))
+      (MI.getOperand(0).isGlobal() || MI.getOperand(0).isSymbol())) {
+    // The SVR4 call mask does not describe reserved R1 as a callee-saved
+    // register. It is nevertheless unchanged by an ordinary ABI call; only
+    // reject actual register definitions here, not the mask's reserved bits.
+    for (const MachineOperand &MO : MI.operands())
+      if (MO.isReg() && MO.isDef() && MO.getReg() &&
+          TRI.regsOverlap(MO.getReg(), PPC::R1))
+        return outliner::Illegal;
     return outliner::LegalTerminator;
+  }
+
+  if (MI.modifiesRegister(PPC::R1, &TRI))
+    return outliner::Illegal;
 
   // Only straight-line integer operations and ordinary memory accesses are
   // admitted. In particular, leave stack updates, inline assembly, branches,
