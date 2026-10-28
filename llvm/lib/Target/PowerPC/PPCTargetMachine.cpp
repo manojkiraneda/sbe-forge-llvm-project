@@ -20,7 +20,9 @@
 #include "PPCTargetObjectFile.h"
 #include "PPCTargetTransformInfo.h"
 #include "TargetInfo/PowerPCTargetInfo.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
@@ -33,16 +35,23 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Pass.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/IPO/ArgumentPromotion.h"
+#include "llvm/Transforms/IPO/DeadArgumentElimination.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 #include <cassert>
 #include <memory>
 #include <optional>
@@ -50,6 +59,69 @@
 
 using namespace llvm;
 
+namespace {
+
+// Keep the externally visible body, but let local calls use a private copy
+// whose unused arguments can be removed by DeadArgumentElimination. This is
+// particularly useful for small C++ template helpers that otherwise keep a
+// by-reference Target argument alive across many PPE42 call sites.
+class PPE42SizeCloneHelpersPass
+    : public PassInfoMixin<PPE42SizeCloneHelpersPass> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    SmallVector<Function *, 16> Candidates;
+    for (Function &F : M) {
+      if (F.isDeclaration() || F.hasLocalLinkage() || !F.isDSOLocal() ||
+          !F.hasOptSize() || F.hasSection() ||
+          F.isVarArg() || F.arg_size() > 4 || F.getInstructionCount() > 40 ||
+          F.hasFnAttribute(Attribute::Naked) ||
+          F.hasFnAttribute(Attribute::AlwaysInline) ||
+          F.hasFnAttribute(Attribute::NoInline) ||
+          !(F.hasLinkOnceODRLinkage() || F.hasWeakODRLinkage()))
+        continue;
+
+      bool HasUnusedPointer = false;
+      for (Argument &A : F.args())
+        HasUnusedPointer |= A.getType()->isPointerTy() && A.use_empty();
+      if (HasUnusedPointer)
+        Candidates.push_back(&F);
+    }
+
+    bool Changed = false;
+    for (Function *F : Candidates) {
+      SmallVector<CallBase *, 8> Calls;
+      for (Use &U : F->uses()) {
+        auto *CB = dyn_cast<CallBase>(U.getUser());
+        if (!CB || !CB->isCallee(&U) || CB->getCalledFunction() != F ||
+            CB->getFunction() == F || CB->isMustTailCall())
+          continue;
+        Calls.push_back(CB);
+      }
+      if (Calls.size() < 3)
+        continue;
+
+      ValueToValueMapTy VMap;
+      Function *Clone = CloneFunction(F, VMap);
+      Clone->setName(Twine(F->getName()) + ".ppe42.size");
+      Clone->setLinkage(GlobalValue::InternalLinkage);
+      Clone->setComdat(nullptr);
+      Clone->setVisibility(GlobalValue::DefaultVisibility);
+      Clone->setDSOLocal(true);
+      Clone->setSubprogram(nullptr);
+      for (CallBase *CB : Calls)
+        CB->setCalledFunction(Clone);
+      Changed = true;
+    }
+    return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  }
+};
+
+} // namespace
+
+
+static cl::opt<bool>
+    EnablePPE42SizeIPA("ppe42-size-ipa", cl::Hidden, cl::init(true),
+                       cl::desc("Enable PPE42 size-oriented argument promotion"));
 
 static cl::opt<bool>
     EnableBranchCoalescing("enable-ppc-branch-coalesce", cl::Hidden,
@@ -464,6 +536,37 @@ public:
 
 TargetPassConfig *PPCTargetMachine::createPassConfig(PassManagerBase &PM) {
   return new PPCPassConfig(*this, PM);
+}
+
+void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
+  if (getTargetCPU() != "ppe42")
+    return;
+
+  PB.registerPipelineParsingCallback(
+      [](StringRef Name, ModulePassManager &MPM,
+         ArrayRef<PassBuilder::PipelineElement>) {
+        if (Name != "ppe42-size-clone-helpers")
+          return false;
+        MPM.addPass(PPE42SizeCloneHelpersPass());
+        return true;
+      });
+
+  PB.registerPipelineEarlySimplificationEPCallback(
+      [](ModulePassManager &MPM, OptimizationLevel Level,
+         ThinOrFullLTOPhase Phase) {
+        if (!EnablePPE42SizeIPA ||
+            (Level != OptimizationLevel::Os && Level != OptimizationLevel::Oz) ||
+            Phase != ThinOrFullLTOPhase::None)
+          return;
+        MPM.addPass(PPE42SizeCloneHelpersPass());
+        MPM.addPass(DeadArgumentEliminationPass());
+      });
+  PB.registerCGSCCOptimizerLateEPCallback(
+      [](CGSCCPassManager &CGPM, OptimizationLevel Level) {
+        if (EnablePPE42SizeIPA &&
+            (Level == OptimizationLevel::Os || Level == OptimizationLevel::Oz))
+          CGPM.addPass(ArgumentPromotionPass());
+      });
 }
 
 void PPCPassConfig::addIRPasses() {
