@@ -1,5 +1,6 @@
 ; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -passes='default<Os>' -S %s | FileCheck %s
 ; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -ppe42-size-ipa=false -passes='default<Os>' -S %s | FileCheck %s --check-prefix=DISABLED
+; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -passes='debugify,default<Os>,verify' -disable-output %s
 
 ; A template checking helper initially keeps 'this' live. Only after inlining
 ; that check can the size pass remove the unused pointer and group arguments.

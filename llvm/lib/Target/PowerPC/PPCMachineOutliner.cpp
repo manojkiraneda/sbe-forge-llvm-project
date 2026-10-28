@@ -22,7 +22,8 @@ enum PPE42OutlineKind { ReturnViaLR, TailCall };
 bool PPCInstrInfo::isFunctionSafeToOutlineFrom(
     MachineFunction &MF, bool OutlineFromLinkOnceODRs) const {
   const Function &F = MF.getFunction();
-  return MF.getSubtarget<PPCSubtarget>().isPPE42() &&
+  const auto &ST = MF.getSubtarget<PPCSubtarget>();
+  return ST.isPPE42() && !ST.isPPC64() &&
          MF.getRegInfo().tracksLiveness() && !F.hasSection() &&
          !F.hasPersonalityFn() && !F.hasFnAttribute(Attribute::Naked) &&
          !F.hasFnAttribute("interrupt") &&
