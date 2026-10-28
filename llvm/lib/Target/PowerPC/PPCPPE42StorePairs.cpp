@@ -65,6 +65,24 @@ public:
         Register Lo = Next->getOperand(0).getReg();
         if (Hi == Lo || !MRI.hasOneDef(Hi) || !MRI.hasOneDef(Lo))
           continue;
+        SmallVector<MachineInstr *, 4> RedundantCopies;
+        auto FollowCopyChain = [&](Register &Reg) {
+          while (MRI.hasOneNonDBGUse(Reg)) {
+            MachineInstr *Use = &*MRI.use_nodbg_instructions(Reg).begin();
+            if (Use->getParent() != &MBB ||
+                Use->getOpcode() != TargetOpcode::COPY ||
+                Use->getNumOperands() != 2 ||
+                !Use->getOperand(0).getReg().isVirtual() ||
+                Use->getOperand(1).getReg() != Reg ||
+                Use->getOperand(0).getSubReg() ||
+                Use->getOperand(1).getSubReg())
+              break;
+            Reg = Use->getOperand(0).getReg();
+            RedundantCopies.push_back(Use);
+          }
+        };
+        FollowCopyChain(Hi);
+        FollowCopyChain(Lo);
         bool SawCall = false, HiUsedAfterCall = false, LoUsedAfterCall = false;
         for (auto Scan = std::next(Next); Scan != MBB.end(); ++Scan) {
           if (Scan->isCall())
@@ -73,6 +91,12 @@ public:
             continue;
           HiUsedAfterCall |= Scan->readsRegister(Hi, &TRI);
           LoUsedAfterCall |= Scan->readsRegister(Lo, &TRI);
+        }
+        if (SawCall) {
+          for (const MachineInstr &Use : MRI.use_nodbg_instructions(Hi))
+            HiUsedAfterCall |= Use.getParent() != &MBB;
+          for (const MachineInstr &Use : MRI.use_nodbg_instructions(Lo))
+            LoUsedAfterCall |= Use.getParent() != &MBB;
         }
         if (!HiUsedAfterCall || !LoUsedAfterCall)
           continue;
@@ -94,9 +118,11 @@ public:
           Use.setSubReg(PPC::sub_gpr_lo);
           Use.setIsKill(false);
         }
-        I = std::next(Next);
+        for (MachineInstr *Copy : RedundantCopies)
+          Copy->eraseFromParent();
         HiCopy.eraseFromParent();
         Next->eraseFromParent();
+        I = MBB.begin();
         Changed = true;
       }
     }
