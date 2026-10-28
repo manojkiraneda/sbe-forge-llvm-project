@@ -229,7 +229,7 @@ jobs:
 
       - name: Test PPE42 machine outlining
         run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
+          "$BUILD_DIR/bin/llvm-lit" -v --show-all \
             llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.mir \
             llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.ll
 
