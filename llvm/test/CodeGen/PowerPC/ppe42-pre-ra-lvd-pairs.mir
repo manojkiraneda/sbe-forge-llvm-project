@@ -164,7 +164,7 @@ tracksRegLiveness: true
 body: |
   bb.0:
     ; CHECK-LABEL: name: call_result_pair
-    ; CHECK: %[[PAIR:[0-9]+]]:vdrc = REG_SEQUENCE $r3, %sub_gpr_hi, $r4, %sub_gpr_lo
+    ; CHECK: %[[PAIR:[0-9]+]]:vdrc = REG_SEQUENCE $r3, %subreg.sub_gpr_hi, $r4, %subreg.sub_gpr_lo
     ; CHECK: $r3 = COPY %[[PAIR]].sub_gpr_hi
     ; CHECK: $r4 = COPY %[[PAIR]].sub_gpr_lo
     BL @get, csr_svr432, implicit-def dead $lr, implicit-def $r3, implicit-def $r4
