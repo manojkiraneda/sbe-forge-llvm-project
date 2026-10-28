@@ -18,6 +18,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
@@ -57,6 +58,21 @@ DSCRValue("ppc-set-dscr", cl::Hidden,
           cl::desc("Set the Data Stream Control Register."));
 
 namespace {
+
+// Word memory operands can retain align 4 after frame-index elimination even
+// when their final r1-relative address is doubleword-aligned. The stack
+// pointer is ABI-aligned at entry, and the fixed frame size preserves that
+// alignment. Do not make this inference for dynamically adjusted frames.
+static bool isAlignedPPE42Pair(MachineBasicBlock &MBB, Register Base,
+                               int64_t Offset, MachineMemOperand *HighMem) {
+  if (HighMem->getAlign() >= Align(8))
+    return true;
+  const MachineFunction &MF = *MBB.getParent();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  return Base == PPC::R1 && Offset % 8 == 0 &&
+         MF.getSubtarget<PPCSubtarget>().getStackAlignment() >= Align(8) &&
+         !MFI.hasVarSizedObjects() && MFI.getStackSize() % 8 == 0;
+}
 
 static bool hasPCRelativeForm(MachineInstr &Use) {
   switch (Use.getOpcode()) {
@@ -269,10 +285,12 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         // The core accepts unaligned virtual doubleword addresses, but the
         // memory interface may reject them. Only combine stores when the
         // effective address is known to be doubleword-aligned.
-        if (!HiMem->isStore() || !LoMem->isStore() ||
-            HiMem->isVolatile() || LoMem->isVolatile() ||
-            HiMem->isAtomic() || LoMem->isAtomic() ||
-            HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
+        if (!HiMem->isStore() || !LoMem->isStore() || HiMem->isVolatile() ||
+            LoMem->isVolatile() || HiMem->isAtomic() || LoMem->isAtomic() ||
+            (HiDisp.isImm()
+                 ? !isAlignedPPE42Pair(MBB, Base, HiDisp.getImm(), HiMem)
+                 : HiMem->getAlign() < Align(8)) ||
+            LoMem->getAlign() < Align(4))
           continue;
 
         BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
@@ -349,7 +367,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         if (!HiMem->isLoad() || !LoMem->isLoad() ||
             HiMem->isVolatile() || LoMem->isVolatile() ||
             HiMem->isAtomic() || LoMem->isAtomic() ||
-            HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
+            !isAlignedPPE42Pair(MBB, Base, Offset, HiMem) ||
+            LoMem->getAlign() < Align(4))
           continue;
 
         Register Pair = TRI.getMatchingSuperReg(
