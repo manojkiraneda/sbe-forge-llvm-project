@@ -554,8 +554,7 @@ void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   PB.registerPipelineEarlySimplificationEPCallback(
       [](ModulePassManager &MPM, OptimizationLevel Level,
          ThinOrFullLTOPhase Phase) {
-        if (!EnablePPE42SizeIPA ||
-            (Level != OptimizationLevel::Os && Level != OptimizationLevel::Oz) ||
+        if (!EnablePPE42SizeIPA || !Level.isOptimizingForSize() ||
             Phase != ThinOrFullLTOPhase::None)
           return;
         MPM.addPass(PPE42SizeCloneHelpersPass());
@@ -563,8 +562,7 @@ void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
       });
   PB.registerCGSCCOptimizerLateEPCallback(
       [](CGSCCPassManager &CGPM, OptimizationLevel Level) {
-        if (EnablePPE42SizeIPA &&
-            (Level == OptimizationLevel::Os || Level == OptimizationLevel::Oz))
+        if (EnablePPE42SizeIPA && Level.isOptimizingForSize())
           CGPM.addPass(ArgumentPromotionPass());
       });
 }
