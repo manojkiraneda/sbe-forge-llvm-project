@@ -73,6 +73,7 @@ add_llvm_target(PowerPCCodeGen
   CodeGenTypes
   Core
   GlobalISel
+  IPO
   MC
   PowerPCDesc
   PowerPCInfo
