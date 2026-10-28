@@ -115,7 +115,6 @@ public:
       Clone->setComdat(nullptr);
       Clone->setVisibility(GlobalValue::DefaultVisibility);
       Clone->setDSOLocal(true);
-      Clone->setSubprogram(nullptr);
       Clone->addFnAttr("ppe42-size-original", F->getName());
       // DeadArgumentElimination preserves the attributes of surviving
       // parameters. Record their original positions so different signatures
