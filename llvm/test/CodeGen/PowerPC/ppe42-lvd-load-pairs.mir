@@ -10,6 +10,8 @@
   define void @separated(ptr %p) { ret void }
   define void @intervening_use(ptr %p) { ret void }
   define void @reverse_memory_order(ptr %p) { ret void }
+  define void @aligned_stack_words(ptr %p) { ret void }
+  define void @misaligned_stack_words(ptr %p) { ret void }
 ...
 ---
 name: aligned
@@ -118,4 +120,33 @@ body: |
     $r10 = LWZ 12, $r6 :: (load (s32) from %ir.p + 12, align 4)
     $r9 = LWZ 8, $r6 :: (load (s32) from %ir.p + 8, align 8)
     BLR implicit $lr, implicit undef $rm, implicit killed $r9, implicit killed $r10
+...
+---
+name: aligned_stack_words
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1
+    ; A fixed r1-relative offset is aligned even if the word MMOs only
+    ; record their scalar type's alignment.
+    ; CHECK-LABEL: name: aligned_stack_words
+    ; CHECK: $r6_r7 = LVD 8, $r1
+    ; CHECK-NOT: LWZ
+    $r6 = LWZ 8, $r1 :: (load (s32) from %ir.p + 8, align 4)
+    $r7 = LWZ 12, $r1 :: (load (s32) from %ir.p + 12, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r6, implicit killed $r7
+...
+---
+name: misaligned_stack_words
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1
+    ; CHECK-LABEL: name: misaligned_stack_words
+    ; CHECK: $r6 = LWZ 4, $r1
+    ; CHECK: $r7 = LWZ 8, $r1
+    ; CHECK-NOT: LVD
+    $r6 = LWZ 4, $r1 :: (load (s32) from %ir.p + 4, align 4)
+    $r7 = LWZ 8, $r1 :: (load (s32) from %ir.p + 8, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit killed $r6, implicit killed $r7
 ...
