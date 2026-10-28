@@ -12,6 +12,7 @@
 #include "llvm/Analysis/CodeMetrics.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/BasicTTIImpl.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetSchedule.h"
@@ -202,8 +203,18 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   unsigned AsmInstructions = 0;
   unsigned BodyInstructions = 0;
   unsigned DuplicatedInstructions = 0;
+  bool StoresThroughResult = false;
+  bool UpdatesBits = false;
   for (const BasicBlock &BB : Callee)
     for (const Instruction &I : BB) {
+      if (const auto *Store = dyn_cast<StoreInst>(&I))
+        if (Callee.arg_size() && Callee.getArg(0)->getType()->isPointerTy() &&
+            getUnderlyingObject(Store->getPointerOperand()) == Callee.getArg(0))
+          StoresThroughResult = true;
+      UpdatesBits |= I.getOpcode() == Instruction::And ||
+                     I.getOpcode() == Instruction::Or ||
+                     I.getOpcode() == Instruction::Shl ||
+                     I.getOpcode() == Instruction::LShr;
       if (!isa<PHINode>(I) && !isa<DbgInfoIntrinsic>(I) &&
           !I.isLifetimeStartOrEnd())
         ++BodyInstructions;
@@ -267,6 +278,18 @@ bool PPCTTIImpl::preferCallForCodeSize(const CallBase &Call,
   if (LocalCallSites >= 4 && BodyInstructions >= 5 &&
       uint64_t(LocalCallSites - 1) * BodyInstructions >
           4 * uint64_t(LocalCallSites) + 2)
+    return true;
+
+  // Constructors and similar bitfield updaters write through their result
+  // pointer. Inlining one at every use duplicates the load, mask, and store
+  // and makes each caller form the address of a separate stack temporary.
+  // The generic IR count misses that address-formation cost on 32-bit PPE42.
+  // Only share a small updater when it is reused within an already non-leaf
+  // caller, so retaining the call adds no LR-save prologue there.
+  if (Callee.getReturnType()->isVoidTy() && StoresThroughResult &&
+      UpdatesBits && LocalCallSites >= 3 && BodyInstructions >= 5 &&
+      uint64_t(LocalCallSites - 1) * DuplicatedInstructions >=
+          2 * uint64_t(LocalCallSites) + 2)
     return true;
 
   // A call in an optnone/noinline caller keeps the out-of-line body alive.
