@@ -40,6 +40,64 @@ public:
     const auto &TII = *ST.getInstrInfo();
     const auto &TRI = *ST.getRegisterInfo();
     bool Changed = false;
+    // A 64-bit call result is returned in r3:r4. Keeping its two COPY
+    // results as unrelated GPRs lets allocation spill them into independent
+    // four-byte slots, often in reverse address order. Keep the value in a
+    // VDR when both halves survive another call; this gives allocation an
+    // aligned doubleword spill slot and permits LVD/STVD reloads.
+    for (MachineBasicBlock &MBB : MF) {
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &HiCopy = *I++;
+        if (HiCopy.getOpcode() != TargetOpcode::COPY ||
+            HiCopy.getNumOperands() != 2 ||
+            !HiCopy.getOperand(0).getReg().isVirtual() ||
+            HiCopy.getOperand(1).getReg() != PPC::R3)
+          continue;
+        auto Next = I;
+        while (Next != MBB.end() && Next->isDebugInstr())
+          ++Next;
+        if (Next == MBB.end() || Next->getOpcode() != TargetOpcode::COPY ||
+            Next->getNumOperands() != 2 ||
+            !Next->getOperand(0).getReg().isVirtual() ||
+            Next->getOperand(1).getReg() != PPC::R4)
+          continue;
+        Register Hi = HiCopy.getOperand(0).getReg();
+        Register Lo = Next->getOperand(0).getReg();
+        if (Hi == Lo || !MRI.hasOneDef(Hi) || !MRI.hasOneDef(Lo))
+          continue;
+        bool SawCall = false, HiUsedAfterCall = false, LoUsedAfterCall = false;
+        for (auto Scan = std::next(Next); Scan != MBB.end(); ++Scan) {
+          if (Scan->isCall())
+            SawCall = true;
+          if (!SawCall)
+            continue;
+          HiUsedAfterCall |= Scan->readsRegister(Hi, &TRI);
+          LoUsedAfterCall |= Scan->readsRegister(Lo, &TRI);
+        }
+        if (!HiUsedAfterCall || !LoUsedAfterCall)
+          continue;
+
+        Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
+        BuildMI(MBB, HiCopy, HiCopy.getDebugLoc(),
+                TII.get(TargetOpcode::REG_SEQUENCE), Pair)
+            .addReg(PPC::R3)
+            .addImm(PPC::sub_gpr_hi)
+            .addReg(PPC::R4)
+            .addImm(PPC::sub_gpr_lo);
+        for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Hi))) {
+          Use.setReg(Pair);
+          Use.setSubReg(PPC::sub_gpr_hi);
+        }
+        for (MachineOperand &Use : make_early_inc_range(MRI.use_operands(Lo))) {
+          Use.setReg(Pair);
+          Use.setSubReg(PPC::sub_gpr_lo);
+        }
+        I = std::next(Next);
+        HiCopy.eraseFromParent();
+        Next->eraseFromParent();
+        Changed = true;
+      }
+    }
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &First = *I++;

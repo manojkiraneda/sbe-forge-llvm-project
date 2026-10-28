@@ -101,5 +101,28 @@ exit:
   ret void
 }
 
+; A reused bitfield constructor writes an address-taken result. Its IR body
+; looks small, but inlining it four times duplicates address formation and
+; stores in an already non-leaf PPE42 caller.
+define dso_local void @target_constructor(ptr %result, ptr %source) #0 {
+  %old = load i32, ptr %source, align 4
+  %masked = and i32 %old, -16711713
+  %updated = or i32 %masked, 2048
+  store i32 %updated, ptr %result, align 4
+  ret void
+}
+
+define void @target_constructor_user(ptr %a, ptr %b, ptr %c, ptr %d,
+                                     ptr %source) #0 {
+; SIZE-LABEL: define{{.*}}@target_constructor_user(
+; SIZE-COUNT-4: call void @target_constructor(
+  call void @target_constructor(ptr %a, ptr %source)
+  call void @target_constructor(ptr %b, ptr %source)
+  call void @target_constructor(ptr %c, ptr %source)
+  call void @target_constructor(ptr %d, ptr %source)
+  call void @sink(i64 0)
+  ret void
+}
+
 attributes #0 = { inlinehint optsize "target-cpu"="ppe42" }
 attributes #1 = { noinline }
