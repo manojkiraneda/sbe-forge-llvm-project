@@ -20,6 +20,7 @@
 #include "PPCSubtarget.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/Support/MathExtras.h"
@@ -457,6 +458,18 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   };
   if (Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
     const TargetRegisterInfo *TRI = Fn.getSubtarget().getRegisterInfo();
+    // Kill flags can be absent after late physical-register transforms. Check
+    // the actual register units instead, including other bits of a CR field.
+    auto IsDeadAfter = [&](const MachineInstr &MI, MCRegister Reg) {
+      if (!Fn.getRegInfo().tracksLiveness())
+        return false;
+      LiveRegUnits Live(*TRI);
+      Live.addLiveOuts(*MI.getParent());
+      for (auto It = MI.getParent()->rbegin(); &*It != &MI; ++It)
+        if (!It->isDebugInstr())
+          Live.stepBackward(*It);
+      return Live.available(Reg);
+    };
     // Scheduling can put independent instructions between a compare and its
     // branch. Move the comparison to the branch only when its inputs are not
     // changed and CR0 is neither observed nor changed in between.
@@ -501,41 +514,90 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         MachineInstr &Br = *I++;
         unsigned BrOffset = Offset;
         Offset += TII->getInstSizeInBytes(Br);
-        if (Br.getOpcode() != PPC::BCC || !Br.getOperand(2).isMBB() ||
-            (Br.getOperand(0).getImm() != PPC::PRED_EQ &&
-             Br.getOperand(0).getImm() != PPC::PRED_NE) ||
-            !Br.getOperand(1).isKill() || Br.getIterator() == MBB.begin())
+        bool IsBitBranch =
+            Br.getOpcode() == PPC::BC || Br.getOpcode() == PPC::BCn;
+        if (Br.getOpcode() != PPC::BCC && !IsBitBranch)
+          continue;
+        unsigned DestOp = IsBitBranch ? 1 : 2;
+        if (!Br.getOperand(DestOp).isMBB() ||
+            (IsBitBranch
+                 ? Br.getOperand(0).getReg() != PPC::CR0EQ
+                 : Br.getOperand(1).getReg() != PPC::CR0 ||
+                       (Br.getOperand(0).getImm() != PPC::PRED_EQ &&
+                        Br.getOperand(0).getImm() != PPC::PRED_NE)))
           continue;
 
-        auto CmpIt = std::prev(Br.getIterator());
-        MachineInstr &Cmp = *CmpIt;
-        if (Cmp.getOpcode() != PPC::CMPLWI ||
-            Cmp.getOperand(0).getReg() != Br.getOperand(1).getReg() ||
-            Cmp.getOperand(2).getImm() != 0 ||
-            !Cmp.getOperand(1).isKill() || CmpIt == MBB.begin())
+        MachineInstr *CmpPtr = FindMovableCompare(Br);
+        if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
+          continue;
+        MachineInstr &Cmp = *CmpPtr;
+        if ((Cmp.getOpcode() != PPC::CMPLWI &&
+             Cmp.getOpcode() != PPC::CMPWI) ||
+            Cmp.getOperand(2).getImm() != 0)
           continue;
 
-        MachineInstr &Mask = *std::prev(CmpIt);
-        if (Mask.getOpcode() != PPC::RLWINM ||
-            Mask.getOperand(0).getReg() != Cmp.getOperand(1).getReg() ||
-            Mask.getOperand(2).getImm() != 0 ||
-            Mask.getOperand(3).getImm() != Mask.getOperand(4).getImm())
+        Register MaskReg = Cmp.getOperand(1).getReg();
+        if (!IsDeadAfter(Cmp, MaskReg))
+          continue;
+        // Look through debug locations and a few independent instructions.
+        // Never cross another use/definition of the masked value or a barrier.
+        MachineInstr *MaskPtr = nullptr;
+        auto MaskIt = Cmp.getIterator();
+        unsigned Seen = 0;
+        while (MaskIt != MBB.begin() && Seen < 4) {
+          MachineInstr &MI = *--MaskIt;
+          if (MI.isDebugInstr())
+            continue;
+          if (MI.getOpcode() == PPC::RLWINM &&
+              MI.getOperand(0).getReg() == MaskReg) {
+            MaskPtr = &MI;
+            break;
+          }
+          if (MI.isCall() || MI.isTerminator() || MI.isInlineAsm() ||
+              MI.hasUnmodeledSideEffects() || MI.readsRegister(MaskReg, TRI) ||
+              MI.modifiesRegister(MaskReg, TRI))
+            break;
+          ++Seen;
+        }
+        if (!MaskPtr)
+          continue;
+        MachineInstr &Mask = *MaskPtr;
+        if (Mask.getOperand(3).getImm() != Mask.getOperand(4).getImm())
+          continue;
+        Register SrcReg = Mask.getOperand(1).getReg();
+        // The bit test executes at the branch. Its original source must still
+        // be available there, and no instruction may observe the removed mask.
+        bool Safe = true;
+        for (auto It = std::next(Mask.getIterator());
+             It != Br.getIterator(); ++It) {
+          if (&*It == &Cmp || It->isDebugInstr())
+            continue;
+          if (It->readsRegister(MaskReg, TRI) ||
+              It->readsRegister(SrcReg, TRI) ||
+              It->modifiesRegister(SrcReg, TRI)) {
+            Safe = false;
+            break;
+          }
+        }
+        if (!Safe)
           continue;
 
         int Distance = computeBranchSize(Fn, &MBB,
-                                         Br.getOperand(2).getMBB(), BrOffset);
-        if (HasImpreciseBranchSpan(Br, *Br.getOperand(2).getMBB()) ||
+                                         Br.getOperand(DestOp).getMBB(), BrOffset);
+        if (HasImpreciseBranchSpan(Br, *Br.getOperand(DestOp).getMBB()) ||
             Distance < -2036 || Distance > 2036)
           continue;
 
-        unsigned Bit = Mask.getOperand(3).getImm();
-        unsigned PX = Br.getOperand(0).getImm() == PPC::PRED_EQ ? 1 : 0;
-        BuildMI(MBB, Mask.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
+        unsigned Bit = (Mask.getOperand(3).getImm() +
+                        Mask.getOperand(2).getImm()) % 32;
+        unsigned PX = IsBitBranch
+                          ? Br.getOpcode() == PPC::BC
+                          : Br.getOperand(0).getImm() == PPC::PRED_EQ;
+        BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
             .addImm(PX)
-            .addReg(Mask.getOperand(1).getReg(),
-                    Mask.getOperand(1).isKill() ? RegState::Kill : 0)
+            .addReg(SrcReg, IsDeadAfter(Br, SrcReg) ? RegState::Kill : 0)
             .addImm(Bit)
-            .addMBB(Br.getOperand(2).getMBB());
+            .addMBB(Br.getOperand(DestOp).getMBB());
         Mask.eraseFromParent();
         Cmp.eraseFromParent();
         Br.eraseFromParent();
@@ -565,7 +627,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
 
         MachineInstr *CmpPtr = FindMovableCompare(Br);
-        if (!CmpPtr)
+        if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
           continue;
         MachineInstr &Cmp = *CmpPtr;
         bool IsUnsigned = Cmp.getOpcode() == PPC::CMPLW;
@@ -651,7 +713,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
 
         MachineInstr *CmpPtr = FindMovableCompare(Br);
-        if (!CmpPtr)
+        if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
           continue;
         MachineInstr &Cmp = *CmpPtr;
         if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
