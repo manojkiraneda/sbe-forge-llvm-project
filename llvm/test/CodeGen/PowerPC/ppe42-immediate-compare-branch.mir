@@ -23,6 +23,9 @@
   define void @interleaved_store(ptr %p) { ret void }
   define void @changed_compare_input(ptr %p) { ret void }
   define void @interleaved_input_store(ptr %p) { ret void }
+  define void @context_asm_in_range() { ret void }
+  define void @multiple_instructions_in_range() { ret void }
+  define void @sync_asm_in_range() { ret void }
 ...
 ---
 name: signed_eq
@@ -333,5 +336,63 @@ body: |
     BC killed $cr0eq, %bb.1
     BLR implicit $lr, implicit $rm
   bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: context_asm_in_range
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: context_asm_in_range
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.2
+    ; CHECK-NOT: CMPLWI
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.2
+  bb.1:
+    INLINEASM &"mfmsr $0", 25, 131082, def $r4
+    INLINEASM &"wrteei $0", 25, 13, 0
+    INLINEASM &"mfspr $0, $1", 25, 131082, def $r4, 13, 272
+    INLINEASM &"mtspr $0, $1", 25, 13, 272, 131081, $r4
+    INLINEASM &"mtmsr $0", 25, 131081, killed $r4
+    INLINEASM &"tw 0, $0, $1", 9, 13, 2, 13, 0
+    BLR implicit $lr, implicit $rm
+  bb.2:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: multiple_instructions_in_range
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: multiple_instructions_in_range
+    ; CHECK: CMPLWI killed $r3, 0
+    ; CHECK: BCC
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.2
+  bb.1:
+    INLINEASM &"mfmsr $0; nop", 25, 131082, def dead $r4
+    BLR implicit $lr, implicit $rm
+  bb.2:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: sync_asm_in_range
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: sync_asm_in_range
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.2
+    ; CHECK-NOT: CMPLWI
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 76, killed $cr0, %bb.2
+  bb.1:
+    INLINEASM &"sync", 25
+    INLINEASM &"isync", 25
+    INLINEASM &"eieio", 25
+    BLR implicit $lr, implicit $rm
+  bb.2:
     BLR implicit $lr, implicit $rm
 ...
