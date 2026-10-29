@@ -23,9 +23,9 @@ body: |
   bb.0:
     liveins: $r1, $lr
     ; TAIL-LABEL: name: tail_calls
-    ; TAIL: BL @OUTLINED_FUNCTION_[[N:[0-9]+]], csr_svr432
-    ; TAIL: BL @OUTLINED_FUNCTION_[[N]], csr_svr432
-    ; TAIL: BL @OUTLINED_FUNCTION_[[N]], csr_svr432
+    ; TAIL: BL @OUTLINED_FUNCTION_[[N:[0-9]+]], csr_svr432{{.*}}implicit-def $r1
+    ; TAIL: BL @OUTLINED_FUNCTION_[[N]], csr_svr432{{.*}}implicit-def $r1
+    ; TAIL: BL @OUTLINED_FUNCTION_[[N]], csr_svr432{{.*}}implicit-def $r1
     ; TAIL: LSKU
     ; TAIL: BLR
     $r1 = frame-setup STSKU $r1, -32, $r1, implicit $lr
@@ -33,17 +33,17 @@ body: |
     $r4 = LI 0
     $r5 = LI 0
     $r6 = LI 0
-    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6
+    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit-def $r1
     $r3 = LI 2
     $r4 = LI 0
     $r5 = LI 0
     $r6 = LI 0
-    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6
+    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit-def $r1
     $r3 = LI 3
     $r4 = LI 0
     $r5 = LI 0
     $r6 = LI 0
-    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6
+    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit-def $r1
     $r1 = frame-destroy LSKU 32, $r1, implicit-def $lr
     BLR implicit $lr, implicit undef $rm
 ...
@@ -126,17 +126,17 @@ body: |
     $r4 = LI 0
     $r5 = LI 0
     $r6 = LI 0
-    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6
+    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit-def $r1
     $r3 = LI 2
     $r4 = LI 0
     $r5 = LI 0
     $r6 = LI 0
-    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6
+    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit-def $r1
     $r3 = LI 3
     $r4 = LI 0
     $r5 = LI 0
     $r6 = LI 0
-    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6
+    BL @trace, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit $r3, implicit $r4, implicit $r5, implicit $r6, implicit-def $r1
     $r1 = frame-destroy LSKU 32, $r1, implicit-def $lr
     BLR implicit $lr, implicit undef $rm
 ...
