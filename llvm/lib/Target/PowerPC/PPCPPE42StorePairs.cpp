@@ -9,8 +9,8 @@
 #include "PPC.h"
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -144,13 +144,18 @@ public:
         Changed = true;
       }
     }
+    auto IsLoadDisplacement = [](const MachineOperand &MO) {
+      return MO.isImm() ||
+             (MO.isGlobal() && (MO.getTargetFlags() == PPCII::MO_LO ||
+                                MO.getTargetFlags() == PPCII::MO_SDA21));
+    };
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &First = *I++;
         if (First.getOpcode() != PPC::LWZ || First.getNumOperands() != 3 ||
             !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
             !First.getOperand(0).getReg().isVirtual() ||
-            !First.getOperand(1).isImm() ||
+            !IsLoadDisplacement(First.getOperand(1)) ||
             (!First.getOperand(2).isReg() && !First.getOperand(2).isFI()))
           continue;
 
@@ -174,16 +179,21 @@ public:
         if (Second.getOpcode() != PPC::LWZ || Second.getNumOperands() != 3 ||
             !Second.hasOneMemOperand() || !Second.getOperand(0).isReg() ||
             !Second.getOperand(0).getReg().isVirtual() ||
-            !Second.getOperand(1).isImm() ||
+            !IsLoadDisplacement(Second.getOperand(1)) ||
             (!Second.getOperand(2).isReg() && !Second.getOperand(2).isFI()))
           continue;
 
+        const MachineOperand &FirstDisp = First.getOperand(1);
+        const MachineOperand &SecondDisp = Second.getOperand(1);
+        bool Numeric = FirstDisp.isImm() && SecondDisp.isImm();
         MachineInstr &HiLoad =
-            First.getOperand(1).getImm() <= Second.getOperand(1).getImm()
+            (Numeric ? FirstDisp.getImm() <= SecondDisp.getImm()
+                     : FirstDisp.isGlobal())
                 ? First
                 : Second;
         MachineInstr &LoLoad = &HiLoad == &First ? Second : First;
-        int64_t Offset = HiLoad.getOperand(1).getImm();
+        const MachineOperand &HiDisp = HiLoad.getOperand(1);
+        const MachineOperand &LoDisp = LoLoad.getOperand(1);
         Register Hi = HiLoad.getOperand(0).getReg();
         Register Lo = LoLoad.getOperand(0).getReg();
         const MachineOperand &Base = HiLoad.getOperand(2);
@@ -191,11 +201,49 @@ public:
           return (A.isReg() && B.isReg() && A.getReg() == B.getReg()) ||
                  (A.isFI() && B.isFI() && A.getIndex() == B.getIndex());
         };
-        if (Hi == Lo || !isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
-            LoLoad.getOperand(1).getImm() != Offset + 4 ||
-            !SameBase(Base, LoLoad.getOperand(2)) ||
+        if (Hi == Lo ||
             (Base.isReg() && (Base.getReg() == Hi || Base.getReg() == Lo)))
           continue;
+
+        MachineInstr *Address = nullptr;
+        if (Numeric) {
+          int64_t Offset = HiDisp.getImm();
+          if (!isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
+              LoDisp.getImm() != Offset + 4 ||
+              !SameBase(Base, LoLoad.getOperand(2)))
+            continue;
+        } else {
+          // A split global load often has a symbolic high word and an
+          // address materialization for the low word:
+          //   hi = LWZ @g@lo, base
+          //   addr = LA base, @g@lo
+          //   lo = LWZ 4, addr
+          // Match the exact relocation and root register, including SDA21.
+          // Pair before allocation so a return can use r3:r4 directly.
+          const MachineOperand &LoBase = LoLoad.getOperand(2);
+          if (!HiDisp.isGlobal() || !LoDisp.isImm() || LoDisp.getImm() != 4 ||
+              !Base.isReg() || Base.getReg() == PPC::R0 || !LoBase.isReg() ||
+              !LoBase.getReg().isVirtual())
+            continue;
+          Address = MRI.getVRegDef(LoBase.getReg());
+          if (!Address || Address->getParent() != &MBB ||
+              Address->getOpcode() != PPC::LA ||
+              Address->getNumOperands() != 3 ||
+              !SameBase(Base, Address->getOperand(1)) ||
+              !HiDisp.isIdenticalTo(Address->getOperand(2)))
+            continue;
+          // A virtual root is SSA. Also check physical roots for changes
+          // between the address computation and its low-word load.
+          bool RootChanged = false;
+          for (auto It = std::next(Address->getIterator());
+               It != LoLoad.getIterator(); ++It)
+            if (It->modifiesRegister(Base.getReg(), &TRI)) {
+              RootChanged = true;
+              break;
+            }
+          if (RootChanged)
+            continue;
+        }
 
         MachineMemOperand *HiMem = *HiLoad.memoperands_begin();
         MachineMemOperand *LoMem = *LoLoad.memoperands_begin();
@@ -217,7 +265,7 @@ public:
         Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
         MachineInstrBuilder Load =
             BuildMI(MBB, First, First.getDebugLoc(), TII.get(PPC::LVD), Pair)
-                .addImm(Offset);
+                .add(HiDisp);
         if (Base.isFI())
           Load.addFrameIndex(Base.getIndex());
         else
@@ -237,6 +285,10 @@ public:
         I = std::next(Next);
         First.eraseFromParent();
         Second.eraseFromParent();
+        if (Address && MRI.use_nodbg_empty(Address->getOperand(0).getReg())) {
+          MRI.markUsesInDebugValueAsUndef(Address->getOperand(0).getReg());
+          Address->eraseFromParent();
+        }
         Changed = true;
       }
     }
@@ -365,17 +417,15 @@ public:
             while (Other != MBB.end() && Other->isDebugInstr())
               ++Other;
             if (Other == MBB.end() || After->getOpcode() != PPC::STW ||
-                Other->getOpcode() != PPC::STW ||
-                !After->hasOneMemOperand() || !Other->hasOneMemOperand() ||
-                After->getNumOperands() != 3 || Other->getNumOperands() != 3 ||
-                !After->getOperand(0).isReg() ||
+                Other->getOpcode() != PPC::STW || !After->hasOneMemOperand() ||
+                !Other->hasOneMemOperand() || After->getNumOperands() != 3 ||
+                Other->getNumOperands() != 3 || !After->getOperand(0).isReg() ||
                 !Other->getOperand(0).isReg() ||
                 !After->getOperand(1).isImm() ||
                 !Other->getOperand(1).isImm() ||
                 (!After->getOperand(2).isReg() &&
                  !After->getOperand(2).isFI()) ||
-                (!Other->getOperand(2).isReg() &&
-                 !Other->getOperand(2).isFI()))
+                (!Other->getOperand(2).isReg() && !Other->getOperand(2).isFI()))
               break;
             MachineInstr *High = &*After;
             MachineInstr *Low = &*Other;
@@ -386,15 +436,13 @@ public:
             MachineMemOperand *LowMem = *Low->memoperands_begin();
             if (High->getOperand(0).getReg() != Hi ||
                 Low->getOperand(0).getReg() != Hi ||
-                !SameBaseOperands(High->getOperand(2),
-                                  Low->getOperand(2)) ||
+                !SameBaseOperands(High->getOperand(2), Low->getOperand(2)) ||
                 !isInt<16>(PairOffset) || !isInt<16>(PairOffset + 4) ||
                 Low->getOperand(1).getImm() != PairOffset + 4 ||
                 !HighMem->isStore() || !LowMem->isStore() ||
                 HighMem->isVolatile() || LowMem->isVolatile() ||
                 HighMem->isAtomic() || LowMem->isAtomic() ||
-                HighMem->getAlign() < Align(8) ||
-                LowMem->getAlign() < Align(4))
+                HighMem->getAlign() < Align(8) || LowMem->getAlign() < Align(4))
               break;
             Pairs.emplace_back(High, Low);
             After = std::next(Other);
@@ -412,8 +460,9 @@ public:
           for (auto [High, Low] : Pairs) {
             MachineInstrBuilder Store =
                 BuildMI(MBB, *High, High->getDebugLoc(), TII.get(PPC::STVD))
-                .addReg(Pair, High == Pairs.back().first ? RegState::Kill : 0)
-                .addImm(High->getOperand(1).getImm());
+                    .addReg(Pair,
+                            High == Pairs.back().first ? RegState::Kill : 0)
+                    .addImm(High->getOperand(1).getImm());
             const MachineOperand &PairBase = High->getOperand(2);
             if (PairBase.isFI())
               Store.addFrameIndex(PairBase.getIndex());
@@ -440,15 +489,15 @@ public:
             .addReg(Lo)
             .addImm(PPC::sub_gpr_lo);
         MachineInstrBuilder Store =
-            BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(), TII.get(PPC::STVD))
-            .addReg(Pair, RegState::Kill)
-            .addImm(Offset);
+            BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(),
+                    TII.get(PPC::STVD))
+                .addReg(Pair, RegState::Kill)
+                .addImm(Offset);
         if (Base.isFI())
           Store.addFrameIndex(Base.getIndex());
         else
-          Store.addReg(Base.getReg(), SecondStore.getOperand(2).isKill()
-                                          ? RegState::Kill
-                                          : 0);
+          Store.addReg(Base.getReg(),
+                       SecondStore.getOperand(2).isKill() ? RegState::Kill : 0);
         Store.addMemOperand(HiMem).addMemOperand(LoMem);
         I = std::next(Next);
         HiStore.eraseFromParent();
