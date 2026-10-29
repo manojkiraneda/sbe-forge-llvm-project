@@ -13,7 +13,6 @@
   define void @unsigned_gt() { ret void }
   define void @negative_immediate() { ret void }
   define void @live_condition() { ret void }
-  define void @live_unsigned_condition() { ret void }
   define void @inline_asm_elsewhere() { ret void }
   define void @inline_asm_in_range() { ret void }
   define void @fixed_asm_in_range() { ret void }
@@ -27,6 +26,7 @@
   define void @context_asm_in_range() { ret void }
   define void @multiple_instructions_in_range() { ret void }
   define void @sync_asm_in_range() { ret void }
+  define void @live_unsigned_condition() { ret void }
 ...
 ---
 name: signed_eq
