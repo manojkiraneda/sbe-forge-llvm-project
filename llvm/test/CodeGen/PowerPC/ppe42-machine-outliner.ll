@@ -40,3 +40,36 @@ define void @speed_probe() {
   call void asm sideeffect "", ""()
   ret void
 }
+
+; Model the sign/absolute-value sequences in ppe42_math.c's __divsi3 and
+; __modsi3. Debugify places variable locations between these instructions,
+; exercising debug operands inside a range selected by the real pipeline.
+declare i32 @unsigned_div(i32, i32)
+declare i32 @unsigned_mod(i32, i32)
+
+define i32 @signed_div(i32 %a, i32 %b) optsize {
+  %as = ashr i32 %a, 31
+  %bs = ashr i32 %b, 31
+  %ax = xor i32 %a, %as
+  %aa = sub i32 %ax, %as
+  %bx = xor i32 %b, %bs
+  %ba = sub i32 %bx, %bs
+  %sign = xor i32 %as, %bs
+  %quotient = call i32 @unsigned_div(i32 %aa, i32 %ba)
+  %qx = xor i32 %quotient, %sign
+  %result = sub i32 %qx, %sign
+  ret i32 %result
+}
+
+define i32 @signed_mod(i32 %a, i32 %b) optsize {
+  %as = ashr i32 %a, 31
+  %bs = ashr i32 %b, 31
+  %ax = xor i32 %a, %as
+  %aa = sub i32 %ax, %as
+  %bx = xor i32 %b, %bs
+  %ba = sub i32 %bx, %bs
+  %remainder = call i32 @unsigned_mod(i32 %aa, i32 %ba)
+  %rx = xor i32 %remainder, %as
+  %result = sub i32 %rx, %as
+  ret i32 %result
+}
