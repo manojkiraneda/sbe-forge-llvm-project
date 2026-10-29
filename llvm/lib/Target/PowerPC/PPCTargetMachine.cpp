@@ -252,6 +252,7 @@ LLVMInitializePowerPCTarget() {
   initializePPCPPE42InlineAsmPass(PR);
   initializePPCPPE42StorePairsPass(PR);
   initializePPCPPE42CRSpillPass(PR);
+  initializePPCPPE42ConstSpillPass(PR);
   initializePPCVSXCopyPass(PR);
   initializePPCVSXFMAMutatePass(PR);
   initializePPCVSXSwapRemovalPass(PR);
@@ -575,6 +576,7 @@ public:
   bool addInstSelector() override;
   void addMachineSSAOptimization() override;
   void addPreRegAlloc() override;
+  bool addRegAssignAndRewriteOptimized() override;
   void addPreSched2() override;
   void addPreEmitPass() override;
   void addPreEmitPass2() override;
@@ -763,6 +765,15 @@ void PPCPassConfig::addPreRegAlloc() {
 
   if (getOptLevel() != CodeGenOptLevel::None)
     addPass(&MachinePipelinerID);
+}
+
+bool PPCPassConfig::addRegAssignAndRewriteOptimized() {
+  if (!TargetPassConfig::addRegAssignAndRewriteOptimized())
+    return false;
+  // Inspect actual spills before stack-slot coloring can reuse a constant's
+  // slot for an unrelated value. This pass does not change allocation policy.
+  addPass(createPPCPPE42ConstSpillPass());
+  return true;
 }
 
 void PPCPassConfig::addPreSched2() {

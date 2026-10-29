@@ -24,6 +24,7 @@ add_llvm_target(PowerPCCodeGen
   PPCPPE42WideCompare.cpp
   PPCPPE42StackAlign.cpp
   PPCPPE42CRSpill.cpp
+  PPCPPE42ConstSpill.cpp
   PPCAsmPrinter.cpp
   PPCBranchSelector.cpp
   PPCBranchCoalescing.cpp
