@@ -28,5 +28,6 @@ define void @call_setup() optsize {
 ; CHECK: li 4, 0
 ; CHECK-NEXT: li 5, 0
 ; CHECK-NEXT: li 6, 0
-; CHECK-NEXT: b trace
+; A debug location directive can precede the tail branch.
+; CHECK: b trace
 ; CHECK-NOT: blr
