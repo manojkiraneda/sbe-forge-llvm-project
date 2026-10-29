@@ -243,6 +243,9 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-pre-ra-lvd-pairs.mir \
             llvm/test/CodeGen/PowerPC/ppe42-symbolic-load-pairs.mir \
             llvm/test/CodeGen/PowerPC/ppe42-symbolic-load-pairs.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-vdr-update.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-vdr-update.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-i64-load-preinc.ll \
             llvm/test/CodeGen/PowerPC/ppe42-call-result-spills.ll \
             llvm/test/CodeGen/PowerPC/ppe42-lvd-load-pairs.mir
 
