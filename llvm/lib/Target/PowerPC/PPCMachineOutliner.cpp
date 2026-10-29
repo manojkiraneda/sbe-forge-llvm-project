@@ -49,12 +49,15 @@ PPCInstrInfo::getOutliningTypeImpl(const MachineModuleInfo &,
   // the original callee, which returns directly to the original caller.
   if (MI.getOpcode() == PPC::BL &&
       (MI.getOperand(0).isGlobal() || MI.getOperand(0).isSymbol())) {
-    // The SVR4 call mask does not describe reserved R1 as a callee-saved
-    // register. It is nevertheless unchanged by an ordinary ABI call; only
-    // reject actual register definitions here, not the mask's reserved bits.
+    // PPC call lowering models R1 as an implicit definition, even for an
+    // ordinary ABI call. A frameless helper tail-branches to the same callee
+    // with exactly the original stack pointer, so retain that definition on
+    // the replacement call rather than treating it as a stack adjustment.
+    // Explicit stack updates and overlapping tuple definitions remain illegal.
     for (const MachineOperand &MO : MI.operands())
       if (MO.isReg() && MO.isDef() && MO.getReg() &&
-          TRI.regsOverlap(MO.getReg(), PPC::R1))
+          TRI.regsOverlap(MO.getReg(), PPC::R1) &&
+          !(MO.isImplicit() && MO.getReg() == PPC::R1))
         return outliner::Illegal;
     return outliner::LegalTerminator;
   }
