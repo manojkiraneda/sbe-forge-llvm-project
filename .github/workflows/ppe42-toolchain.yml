@@ -230,7 +230,8 @@ jobs:
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v --show-all \
             llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.ll
+            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner-calls.ll
 
       - name: Test PPE42 inline assembly register pairs
         run: |
