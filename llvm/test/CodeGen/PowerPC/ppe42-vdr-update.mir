@@ -1,0 +1,173 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @load_update(ptr %p) optsize { ret void }
+  define void @store_update(ptr %p) optsize { ret void }
+  define void @zero_offset(ptr %p) optsize { ret void }
+  define void @old_pointer_live(ptr %p) optsize { ret void }
+  define void @address_used_before(ptr %p) optsize { ret void }
+  define void @different_offset(ptr %p) optsize { ret void }
+  define void @volatile_memory(ptr %p) optsize { ret void }
+  define void @add_after_memory(ptr %p) optsize { ret void }
+  define void @loop_update(ptr %p) optsize { ret void }
+...
+---
+name: load_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: load_update
+  ; CHECK-NOT: ADDI
+  ; CHECK: early-clobber %{{[0-9]+}}:vdrc, %{{[0-9]+}}:{{[^ ]+}} = LVDU 8,
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc_and_gprc_nor0 = ADDI %0, 8
+    %2:vdrc = LVD 8, %0 :: (load (s64) from %ir.p, align 8)
+    STVD %2, 0, %1 :: (store (s64) into %ir.p, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: store_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store_update
+  ; CHECK-NOT: ADDI
+  ; CHECK: STVDU %{{[0-9]+}}, -8,
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:vdrc = COPY $r3_r4
+    %2:gprc_and_gprc_nor0 = ADDI %0, -8
+    STVD %1, -8, %0 :: (store (s64) into %ir.p, align 8)
+    $r3 = COPY %2
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: zero_offset
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: zero_offset
+  ; CHECK-NOT: ADDI
+  ; CHECK: early-clobber %{{[0-9]+}}:vdrc, %{{[0-9]+}}:{{[^ ]+}} = LVDU 8,
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc_and_gprc_nor0 = ADDI %0, 8
+    %2:vdrc = LVD 0, %1 :: (load (s64) from %ir.p, align 8)
+    $r6 = COPY %1
+    $r3_r4 = COPY %2
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: old_pointer_live
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: old_pointer_live
+  ; CHECK: ADDI
+  ; CHECK-NOT: LVDU
+  ; CHECK: LVD 8,
+  ; CHECK-NOT: LVDU
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc_and_gprc_nor0 = ADDI %0, 8
+    %2:vdrc = LVD 8, %0 :: (load (s64) from %ir.p, align 8)
+    $r6 = COPY %1
+    $r7 = COPY %0
+    $r3_r4 = COPY %2
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: address_used_before
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: address_used_before
+  ; CHECK: ADDI
+  ; CHECK-NOT: LVDU
+  ; CHECK: LVD 8,
+  ; CHECK-NOT: LVDU
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc_and_gprc_nor0 = ADDI %0, 8
+    $r7 = COPY %1
+    %2:vdrc = LVD 8, %0 :: (load (s64) from %ir.p, align 8)
+    $r3_r4 = COPY %2
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_offset
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: different_offset
+  ; CHECK: ADDI
+  ; CHECK-NOT: LVDU
+  ; CHECK: LVD 8,
+  ; CHECK-NOT: LVDU
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc_and_gprc_nor0 = ADDI %0, 16
+    %2:vdrc = LVD 8, %0 :: (load (s64) from %ir.p, align 8)
+    $r6 = COPY %1
+    $r3_r4 = COPY %2
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: volatile_memory
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: volatile_memory
+  ; CHECK: ADDI
+  ; CHECK-NOT: LVDU
+  ; CHECK: LVD 8,
+  ; CHECK-NOT: LVDU
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:gprc_and_gprc_nor0 = ADDI %0, 8
+    %2:vdrc = LVD 8, %0 :: (volatile load (s64) from %ir.p, align 8)
+    $r6 = COPY %1
+    $r3_r4 = COPY %2
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: add_after_memory
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: add_after_memory
+  ; CHECK-NOT: ADDI
+  ; CHECK: early-clobber %{{[0-9]+}}:vdrc, %{{[0-9]+}}:{{[^ ]+}} = LVDU 8,
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r6, $r3_r4
+    %0:gprc_nor0 = COPY $r6
+    %1:vdrc = LVD 8, %0 :: (load (s64) from %ir.p, align 8)
+    %2:gprc_and_gprc_nor0 = ADDI %0, 8
+    $r6 = COPY %2
+    $r3_r4 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: loop_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: loop_update
+  ; CHECK-NOT: ADDI
+  ; CHECK: early-clobber %{{[0-9]+}}:vdrc, %{{[0-9]+}}:{{[^ ]+}} = LVDU 8,
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r6
+    %0:gprc_nor0 = COPY $r6
+    B %bb.1
+  bb.1:
+    successors: %bb.1
+    %1:gprc_nor0 = PHI %0, %bb.0, %2, %bb.1
+    %2:gprc_and_gprc_nor0 = ADDI %1, 8
+    %3:vdrc = LVD 8, %1 :: (load (s64) from %ir.p, align 8)
+    $r3_r4 = COPY %3
+    B %bb.1
+...
