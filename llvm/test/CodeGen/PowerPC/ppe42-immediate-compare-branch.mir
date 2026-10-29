@@ -13,6 +13,7 @@
   define void @unsigned_gt() { ret void }
   define void @negative_immediate() { ret void }
   define void @live_condition() { ret void }
+  define void @live_unsigned_condition() { ret void }
   define void @inline_asm_elsewhere() { ret void }
   define void @inline_asm_in_range() { ret void }
   define void @fixed_asm_in_range() { ret void }
@@ -395,4 +396,21 @@ body: |
     BLR implicit $lr, implicit $rm
   bb.2:
     BLR implicit $lr, implicit $rm
+...
+---
+name: live_unsigned_condition
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: live_unsigned_condition
+    ; Signed CMPWIBC can change unsigned LT/GT when R3 has its sign bit set.
+    ; CHECK: $cr0 = CMPLWI killed $r3, 4
+    ; CHECK-NEXT: BCC 76, $cr0, %bb.1
+    $cr0 = CMPLWI killed $r3, 4
+    BCC 76, $cr0, %bb.1
+    BLR implicit $lr, implicit $rm, implicit killed $cr0lt
+  bb.1:
+    liveins: $cr0lt
+    BLR implicit $lr, implicit $rm, implicit killed $cr0lt
 ...
