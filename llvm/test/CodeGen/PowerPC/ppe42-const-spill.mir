@@ -1,0 +1,287 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-const-spill -verify-machineinstrs %s -o %t
+# RUN: FileCheck %s < %t
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=virtregrewriter -verify-machineinstrs -filetype=obj %t -o %t.o
+
+--- |
+  define void @or_wide() optsize { ret void }
+  define void @xor_wide() optsize { ret void }
+  define void @add_wide() optsize { ret void }
+  define void @and_two_holes() optsize { ret void }
+  define void @multiply_nibble() optsize { ret void }
+  define void @multiply_unknown() optsize { ret void }
+  define void @add_destination_r0() optsize { ret void }
+  define void @add_r0() optsize { ret void }
+  define void @live_reload() optsize { ret void }
+  define void @unknown_store() optsize { ret void }
+  define void @local_object() optsize { ret void }
+  define void @changed_slot() optsize { ret void }
+  define void @unfoldable_user() optsize { ret void }
+...
+---
+name: or_wide
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: or_wide
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: $r5 = ORIS $r4, 2048
+  ; CHECK: $r5 = ORI $r5, 32
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: BLR
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 2048
+    $r3 = ORI $r3, 32
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = OR $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: xor_wide
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: xor_wide
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: $r5 = XORIS $r4, 32768
+  ; CHECK: $r5 = XORI $r5, 64
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: BLR
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 32768
+    $r3 = ORI $r3, 64
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = XOR $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: add_wide
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: add_wide
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: $r5 = ADDIS $r4, -32768
+  ; CHECK: $r5 = ADDI $r5, 64
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: BLR
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 32768
+    $r3 = ORI $r3, 64
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = ADD4 $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: and_two_holes
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: and_two_holes
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: $r5 = RLWINM $r4, 0,
+  ; CHECK: $r5 = RLWINM $r5, 0,
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: BLR
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 61695
+    $r3 = ORI $r3, 65503
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = AND $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: multiply_nibble
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: multiply_nibble
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: $r5 = RLWINM $r4, 12, 0, 19
+  ; CHECK: $r5 = RLWIMI $r5, $r5, 4, 0, 15
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: LWZ
+  ; CHECK: BLR
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 1
+    $r3 = ORI $r3, 4096
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r4 = RLWINM $r4, 0, 28, 31
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = MULLW $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: multiply_unknown
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: multiply_unknown
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = MULLW $r4, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 1
+    $r3 = ORI $r3, 4096
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = MULLW $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: add_destination_r0
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: add_destination_r0
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r0 = ADD4 $r4, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 32768
+    $r3 = ORI $r3, 64
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r0 = ADD4 $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r0
+...
+---
+name: add_r0
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: add_r0
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = ADD4 $r0, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 32768
+    $r3 = ORI $r3, 64
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = ADD4 $r0, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: live_reload
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: live_reload
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = OR $r4, $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 2048
+    $r3 = ORI $r3, 32
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = OR $r4, $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5, implicit $r3
+...
+---
+name: unknown_store
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: unknown_store
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = OR $r4, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = COPY $r4
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = OR $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: local_object
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: default, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: local_object
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = OR $r4, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 2048
+    $r3 = ORI $r3, 32
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = OR $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: changed_slot
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: changed_slot
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = OR $r4, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 2048
+    $r3 = ORI $r3, 32
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    STW $r4, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = OR $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: unfoldable_user
+tracksRegLiveness: true
+stack:
+  - { id: 0, type: spill-slot, size: 4, alignment: 4 }
+body: |
+  ; CHECK-LABEL: name: unfoldable_user
+  ; CHECK: STW
+  ; CHECK: LWZ
+  ; CHECK: $r5 = MULLW $r4, killed $r3
+  bb.0:
+    liveins: $r0, $r4
+    $r3 = LIS 2048
+    $r3 = ORI $r3, 32
+    STW $r3, 0, %stack.0 :: (store (s32) into %stack.0)
+    $r3 = LWZ 0, %stack.0 :: (load (s32) from %stack.0)
+    $r5 = MULLW $r4, killed $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...

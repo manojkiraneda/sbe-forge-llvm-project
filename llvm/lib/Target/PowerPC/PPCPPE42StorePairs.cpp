@@ -507,6 +507,70 @@ public:
         Changed = true;
       }
     }
+    // Do not let tuple coalescing turn a shared, rematerializable scalar
+    // constant into a partial VDR definition that lives across calls. Keep a
+    // tuple-only copy of the materializer so its unrelated scalar uses remain
+    // ordinary GPR values. This matters for zero-initialized buffers followed
+    // by calls that need the same scalar zero.
+    for (MachineBasicBlock &MBB : MF) {
+      for (MachineInstr &MI : MBB) {
+        if (MI.getOpcode() != TargetOpcode::REG_SEQUENCE ||
+            MI.getNumOperands() != 5 ||
+            !MI.getOperand(0).getReg().isVirtual() ||
+            !PPC::VDRCRegClass.hasSubClassEq(
+                MRI.getRegClass(MI.getOperand(0).getReg())))
+          continue;
+        SmallVector<std::pair<Register, Register>, 2> Cloned;
+        for (unsigned Op : {1u, 3u}) {
+          MachineOperand &Use = MI.getOperand(Op);
+          if (!Use.isReg() || !Use.getReg().isVirtual() || Use.getSubReg())
+            continue;
+          Register Src = Use.getReg();
+          auto It = llvm::find_if(Cloned, [&](auto P) { return P.first == Src; });
+          if (It != Cloned.end()) {
+            Use.setReg(It->second);
+            Use.setIsKill(false);
+            continue;
+          }
+          if (!MRI.hasOneDef(Src))
+            continue;
+          MachineInstr *Def = MRI.getVRegDef(Src);
+          if ((Def->getOpcode() != PPC::LI && Def->getOpcode() != PPC::LIS) ||
+              Def->getNumOperands() != 2 || !Def->getOperand(1).isImm() ||
+              Def->getOperand(0).getSubReg() ||
+              Def->getFlag(MachineInstr::FrameSetup) ||
+              Def->getFlag(MachineInstr::FrameDestroy))
+            continue;
+          bool SawCall = false, AcrossCall = false;
+          for (auto I = std::next(Def->getIterator());
+               I != Def->getParent()->end(); ++I) {
+            SawCall |= I->isCall();
+            if (SawCall && !I->isDebugInstr() &&
+                I->getOpcode() != TargetOpcode::REG_SEQUENCE &&
+                I->readsVirtualRegister(Src))
+              AcrossCall = true;
+          }
+          if (SawCall)
+            for (const MachineInstr &Other : MRI.use_nodbg_instructions(Src))
+              if (Other.getParent() != Def->getParent() &&
+                  Other.getOpcode() != TargetOpcode::REG_SEQUENCE)
+                AcrossCall = true;
+          if (!AcrossCall)
+            continue;
+          Register Fresh = MRI.createVirtualRegister(MRI.getRegClass(Src));
+          MachineInstr *Copy = MF.CloneMachineInstr(Def);
+          Copy->getOperand(0).setReg(Fresh);
+          Copy->getOperand(0).setIsDead(false);
+          Copy->setDebugLoc(MI.getDebugLoc());
+          MBB.insert(MI.getIterator(), Copy);
+          Use.setReg(Fresh);
+          Use.setIsKill(false);
+          MRI.clearKillFlags(Src);
+          Cloned.emplace_back(Src, Fresh);
+          Changed = true;
+        }
+      }
+    }
     // i64 is split before selection on PPE42, so DAG pre-indexing cannot form
     // VDR updates. Once the scalar halves have been paired, fold a shared
     // address increment into the existing memory instruction instead. Do not

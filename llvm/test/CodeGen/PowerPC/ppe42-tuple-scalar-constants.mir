@@ -1,0 +1,67 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o %t
+# RUN: FileCheck %s < %t
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs -filetype=obj %t -o %t.o
+
+--- |
+  declare void @clobber()
+  define void @across_call(ptr %p) optsize { ret void }
+  define void @without_call(ptr %p) optsize { ret void }
+  define void @tuple_only(ptr %p) optsize { ret void }
+...
+---
+name: across_call
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r13
+    ; CHECK-LABEL: name: across_call
+    ; CHECK: %0:gprc = LI 0
+    ; CHECK: %[[LOCAL:[0-9]+]]:gprc = LI 0
+    ; CHECK-NEXT: %1:vdrc = REG_SEQUENCE %[[LOCAL]], %subreg.sub_gpr_hi, %[[LOCAL]], %subreg.sub_gpr_lo
+    ; CHECK: BL @clobber
+    ; CHECK: STW %0, 0, $r13
+    %0:gprc = LI 0
+    %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    STVD killed %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
+    ADJCALLSTACKDOWN 8, 0, implicit-def dead $r1, implicit $r1
+    BL @clobber, csr_svr432, implicit-def dead $lr, implicit $rm, implicit-def $r1
+    ADJCALLSTACKUP 8, 0, implicit-def dead $r1, implicit $r1
+    STW %0, 0, $r13 :: (store (s32) into %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: without_call
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5
+    ; CHECK-LABEL: name: without_call
+    ; CHECK: %0:gprc = LI 0
+    ; CHECK-NEXT: %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    ; CHECK-NOT: = LI 0
+    ; CHECK: BLR
+    %0:gprc = LI 0
+    %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    STVD killed %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
+    STW %0, 8, $r5 :: (store (s32) into %ir.p + 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: tuple_only
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5
+    ; CHECK-LABEL: name: tuple_only
+    ; CHECK: %0:gprc = LI 0
+    ; CHECK-NEXT: %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    ; CHECK-NOT: = LI 0
+    ; CHECK: BLR
+    %0:gprc = LI 0
+    %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
+    STVD killed %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
+    ADJCALLSTACKDOWN 8, 0, implicit-def dead $r1, implicit $r1
+    BL @clobber, csr_svr432, implicit-def dead $lr, implicit $rm, implicit-def $r1
+    ADJCALLSTACKUP 8, 0, implicit-def dead $r1, implicit $r1
+    BLR implicit $lr, implicit undef $rm
+...
