@@ -507,6 +507,115 @@ public:
         Changed = true;
       }
     }
+    // i64 is split before selection on PPE42, so DAG pre-indexing cannot form
+    // VDR updates. Once the scalar halves have been paired, fold a shared
+    // address increment into the existing memory instruction instead. Do not
+    // move the memory access, or extend the lifetime of the original pointer:
+    // a two-address update would otherwise need a compensating copy.
+    for (MachineBasicBlock &MBB : MF) {
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Mem = *I++;
+        bool IsLoad = Mem.getOpcode() == PPC::LVD;
+        if ((!IsLoad && Mem.getOpcode() != PPC::STVD) ||
+            Mem.getNumOperands() != 3 || !Mem.getOperand(1).isImm() ||
+            !Mem.getOperand(2).isReg() || Mem.getOperand(2).getSubReg() ||
+            Mem.hasOrderedMemoryRef() ||
+            Mem.getFlag(MachineInstr::FrameSetup) ||
+            Mem.getFlag(MachineInstr::FrameDestroy))
+          continue;
+        Register MemBase = Mem.getOperand(2).getReg();
+        if (!MemBase.isVirtual())
+          continue;
+        int64_t Offset = Mem.getOperand(1).getImm();
+        MachineInstr *Add = nullptr;
+        if (!Offset) {
+          // LVD/STVD 0, (base + displacement).
+          Add = MRI.getVRegDef(MemBase);
+        } else {
+          // LVD/STVD displacement, base; next = base + displacement.
+          for (MachineInstr &Use : MRI.use_nodbg_instructions(MemBase))
+            if (Use.getOpcode() == PPC::ADDI &&
+                Use.getOperand(2).isImm() &&
+                Use.getOperand(2).getImm() == Offset) {
+              Add = &Use;
+              break;
+            }
+        }
+        if (!Add || Add->getParent() != &MBB ||
+            Add->getOpcode() != PPC::ADDI || Add->getNumOperands() != 3 ||
+            !Add->getOperand(0).isReg() ||
+            !Add->getOperand(1).isReg() || Add->getOperand(1).getSubReg() ||
+            !Add->getOperand(2).isImm() ||
+            Add->getFlag(MachineInstr::FrameSetup) ||
+            Add->getFlag(MachineInstr::FrameDestroy))
+          continue;
+        Register Address = Add->getOperand(0).getReg();
+        Register Base = Add->getOperand(1).getReg();
+        int64_t Increment = Add->getOperand(2).getImm();
+        if (!Address.isVirtual() || !Base.isVirtual() || Address == Base ||
+            !MRI.hasOneDef(Address) || !isInt<16>(Increment) || !Increment ||
+            (Offset ? (Offset != Increment || MemBase != Base)
+                    : MemBase != Address))
+          continue;
+        // The old pointer must die here. Debug uses do not require a copy.
+        if (llvm::any_of(MRI.use_nodbg_instructions(Base),
+                         [&](MachineInstr &Use) {
+                           return &Use != Add && &Use != &Mem;
+                         }))
+          continue;
+        // Moving the address definition to Mem must not move it past a use.
+        // Also reject a store of the address itself: that would be a cycle.
+        bool BeforeMem = true, Safe = true;
+        for (MachineInstr &MI : MBB) {
+          if (&MI == &Mem) {
+            BeforeMem = false;
+            if (!IsLoad && MI.getOperand(0).getReg() == Address)
+              Safe = false;
+            continue;
+          }
+          if (BeforeMem && !MI.isDebugInstr() && !MI.isPHI() &&
+              MI.readsVirtualRegister(Address)) {
+            Safe = false;
+            break;
+          }
+        }
+        if (!Safe ||
+            llvm::none_of(MRI.use_nodbg_instructions(Address),
+                          [&](MachineInstr &Use) { return &Use != &Mem; }) ||
+            !MRI.constrainRegClass(Address, &PPC::GPRC_NOR0RegClass) ||
+            !MRI.constrainRegClass(Base, &PPC::GPRC_NOR0RegClass))
+          continue;
+
+        MachineInstrBuilder Update =
+            BuildMI(MBB, Mem, Mem.getDebugLoc(),
+                    TII.get(IsLoad ? PPC::LVDU : PPC::STVDU));
+        if (IsLoad)
+          Update.addReg(Mem.getOperand(0).getReg(),
+                        RegState::Define | RegState::EarlyClobber);
+        Update.addReg(Address, RegState::Define);
+        if (!IsLoad)
+          Update.add(Mem.getOperand(0));
+        Update.addImm(Increment).addReg(Base).cloneMemRefs(Mem);
+        Update.setMIFlags(Mem.getFlags());
+        MRI.clearKillFlags(Base);
+        MRI.clearKillFlags(Address);
+        // Debug references between the old ADDI and Mem no longer have a
+        // value at that point. Preserve debug uses after the new definition.
+        for (MachineInstr &MI : MBB) {
+          if (&MI == &Mem)
+            break;
+          if (MI.isDebugValue())
+            for (MachineOperand &MO : MI.operands())
+              if (MO.isReg() && MO.getReg() == Address)
+                MO.setReg(0);
+        }
+        if (I != MBB.end() && &*I == Add)
+          ++I;
+        Add->eraseFromParent();
+        Mem.eraseFromParent();
+        Changed = true;
+      }
+    }
     return Changed;
   }
 };

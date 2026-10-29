@@ -44,9 +44,13 @@ def STVD : DForm_1<6, (outs), (ins vdrc:$RST, (memri $D, $RA):$dst),
 def LVDU : DForm_1<9, (outs vdrc:$RST, ptr_rc_nor0:$ea_result),
                     (ins (memri $D, $RA):$addr),
                     "lvdu $RST, $addr", IIC_LdStLoadUpd, []>,
-                    RegConstraint<"$addr.reg = $ea_result">,
+                    RegConstraint<"@earlyclobber $RST, $addr.reg = $ea_result">,
                     NoEncode<"$ea_result"> {
   let DecoderNamespace = "PPE42";
+  // RA must differ from both GPRs in DT (ISA 9.4.47).
+  let mayLoad = 1;
+  let mayStore = 0;
+  let hasSideEffects = 0;
 }
 
 def STVDU : DForm_1<22, (outs ptr_rc_nor0:$ea_result),
@@ -55,6 +59,9 @@ def STVDU : DForm_1<22, (outs ptr_rc_nor0:$ea_result),
                      RegConstraint<"$addr.reg = $ea_result">,
                      NoEncode<"$ea_result"> {
   let DecoderNamespace = "PPE42";
+  let mayLoad = 0;
+  let mayStore = 1;
+  let hasSideEffects = 0;
 }
 } // Predicates = [IsPPE42]
 
