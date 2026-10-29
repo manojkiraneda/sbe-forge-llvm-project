@@ -259,6 +259,7 @@ LLVMInitializePowerPCTarget() {
   initializePPCBranchCoalescingPass(PR);
   initializePPCBoolRetToIntPass(PR);
   initializePPCPPE42WideComparePass(PR);
+  initializePPCPPE42StackAlignPass(PR);
   initializePPCPreEmitPeepholePass(PR);
   initializePPCTLSDynamicCallPass(PR);
   initializePPCMIPeepholePass(PR);
@@ -627,6 +628,8 @@ void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 }
 
 void PPCPassConfig::addIRPasses() {
+  if (TM->getOptLevel() != CodeGenOptLevel::None)
+    addPass(createPPCPPE42StackAlignPass(getPPCTargetMachine()));
   // CodeGenPrepare may materialize the 32-bit boundary constants into IR
   // instructions. Rewrite PPE42 comparisons while those constants are still
   // visible to the target pass.
