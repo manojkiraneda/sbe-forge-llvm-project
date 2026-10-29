@@ -544,6 +544,7 @@ public:
         if (!Add || Add->getParent() != &MBB ||
             Add->getOpcode() != PPC::ADDI || Add->getNumOperands() != 3 ||
             !Add->getOperand(0).isReg() ||
+            Add->getOperand(0).getSubReg() ||
             !Add->getOperand(1).isReg() || Add->getOperand(1).getSubReg() ||
             !Add->getOperand(2).isImm() ||
             Add->getFlag(MachineInstr::FrameSetup) ||
