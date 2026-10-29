@@ -220,6 +220,7 @@ jobs:
       - name: Test PPE42 size-aware inlining
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/CodeGen/PowerPC/ppe42-packed-stack-align.ll \
             llvm/test/CodeGen/PowerPC/ppe42-size-helper-clone.ll \
             llvm/test/CodeGen/PowerPC/ppe42-size-helper-pipeline.ll \
             llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll \
