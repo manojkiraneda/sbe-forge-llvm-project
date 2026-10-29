@@ -1,0 +1,103 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o - | FileCheck %s
+--- |
+  @g = external global i64, align 8
+  @other = external global i64, align 8
+  define void @symbolic(ptr %out) optsize { ret void }
+  define void @sda_reverse(ptr %out) optsize { ret void }
+  define void @different_symbol(ptr %out) optsize { ret void }
+  define void @changed_root(ptr %out) optsize { ret void }
+  define void @address_still_used(ptr %out) optsize { ret void }
+...
+---
+name: symbolic
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5
+    ; CHECK-LABEL: name: symbolic
+    ; CHECK: %[[PAIR:[0-9]+]]:vdrc = LVD target-flags(ppc-lo) @g,
+    ; CHECK-NOT: LA
+    ; CHECK-NOT: LWZ
+    ; CHECK: STW %[[PAIR]].sub_gpr_hi, 0, $r5
+    ; CHECK: STW %[[PAIR]].sub_gpr_lo, 4, $r5
+    %0:gprc_nor0 = LIS target-flags(ppc-ha) @g
+    %1:gprc = LWZ target-flags(ppc-lo) @g, %0 :: (load (s32) from @g, align 8)
+    %2:gprc_nor0 = LA %0, target-flags(ppc-lo) @g
+    %3:gprc = LWZ 4, %2 :: (load (s32) from @g + 4, align 4)
+    STW %1, 0, $r5 :: (store (s32) into %ir.out, align 4)
+    STW %3, 4, $r5 :: (store (s32) into %ir.out + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sda_reverse
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r13
+    ; CHECK-LABEL: name: sda_reverse
+    ; CHECK: LVD target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: LA
+    ; CHECK-NOT: LWZ
+    %0:gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    %1:gprc = LWZ 4, %0 :: (load (s32) from @g + 4, align 4)
+    %2:gprc = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
+    STW %2, 0, $r5 :: (store (s32) into %ir.out, align 4)
+    STW %1, 4, $r5 :: (store (s32) into %ir.out + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_symbol
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r13
+    ; CHECK-LABEL: name: different_symbol
+    ; CHECK-NOT: LVD
+    ; CHECK: LWZ target-flags(ppc-sda21) @g
+    ; CHECK: LA $r13, target-flags(ppc-sda21) @other
+    ; CHECK: LWZ 4,
+    %0:gprc = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
+    %1:gprc_nor0 = LA $r13, target-flags(ppc-sda21) @other
+    %2:gprc = LWZ 4, %1 :: (load (s32) from @other + 4, align 4)
+    STW %0, 0, $r5 :: (store (s32) into %ir.out, align 4)
+    STW %2, 4, $r5 :: (store (s32) into %ir.out + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: changed_root
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6
+    ; CHECK-LABEL: name: changed_root
+    ; CHECK-NOT: LVD
+    ; CHECK: LA $r6, target-flags(ppc-lo) @g
+    ; CHECK: $r6 = LI 0
+    ; CHECK: LWZ 4,
+    ; CHECK: LWZ target-flags(ppc-lo) @g, $r6
+    %0:gprc_nor0 = LA $r6, target-flags(ppc-lo) @g
+    $r6 = LI 0
+    %1:gprc = LWZ 4, %0 :: (load (s32) from @g + 4, align 4)
+    %2:gprc = LWZ target-flags(ppc-lo) @g, $r6 :: (load (s32) from @g, align 8)
+    STW %2, 0, $r5 :: (store (s32) into %ir.out, align 4)
+    STW %1, 4, $r5 :: (store (s32) into %ir.out + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: address_still_used
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r13
+    ; CHECK-LABEL: name: address_still_used
+    ; CHECK: LVD target-flags(ppc-sda21) @g, $r13
+    ; CHECK: %[[ADDR:[0-9]+]]:gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    ; CHECK: STW %[[ADDR]], 8, $r5
+    %0:gprc = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
+    %1:gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    %2:gprc = LWZ 4, %1 :: (load (s32) from @g + 4, align 4)
+    STW %0, 0, $r5 :: (store (s32) into %ir.out, align 4)
+    STW %2, 4, $r5 :: (store (s32) into %ir.out + 4, align 4)
+    STW %1, 8, $r5 :: (store (s32) into %ir.out + 8, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
