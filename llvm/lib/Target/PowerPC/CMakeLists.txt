@@ -23,6 +23,7 @@ add_llvm_target(PowerPCCodeGen
   GISel/PPCInstructionSelector.cpp
   PPCBoolRetToInt.cpp
   PPCPPE42WideCompare.cpp
+  PPCPPE42StackAlign.cpp
   PPCAsmPrinter.cpp
   PPCBranchSelector.cpp
   PPCBranchCoalescing.cpp
