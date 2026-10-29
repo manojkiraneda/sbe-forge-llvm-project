@@ -118,13 +118,14 @@ jobs:
             "$BUILD_DIR/bin/FileCheck" \
               llvm/test/CodeGen/PowerPC/ppe42-tailcall-void.ll
 
-      - name: Test PPE42 fused branches across fixed inline assembly
+      - name: Test PPE42 branch fusion and safety regressions
         run: |
-          "$BUILD_DIR/bin/llc" -mtriple=powerpc-unknown-elf -mcpu=ppe42 \
-            -run-pass=ppc-branch-select -verify-machineinstrs \
+          "$BUILD_DIR/bin/llvm-lit" -v --show-all \
+            llvm/test/CodeGen/PowerPC/ppe42-bit-branch.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-bit-test-context.ll \
             llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir \
-            -o - | "$BUILD_DIR/bin/FileCheck" \
-              llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir
+            llvm/test/CodeGen/PowerPC/ppe42-register-compare-branch.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-wide-boundary-compare.ll
 
       - name: Test PPE42 PIBMEM core support
         run: |
@@ -214,9 +215,7 @@ jobs:
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
-            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s \
-            llvm/test/CodeGen/PowerPC/ppe42-bit-branch.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir
+            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
 
       - name: Test PPE42 size-aware inlining
         run: |
