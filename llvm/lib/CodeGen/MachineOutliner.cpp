@@ -1380,10 +1380,13 @@ bool MachineOutliner::outline(
                  Last = std::next(CallInst.getReverse());
              Iter != Last; Iter++) {
           MachineInstr *MI = &*Iter;
+          // Debug operands describe variable locations, not executable register
+          // uses. In particular, DBG_VALUE can contain the $noreg sentinel.
           if (MI->isDebugInstr())
             continue;
           LiveUnits.stepBackward(*MI);
           for (MachineOperand &MOP : MI->operands()) {
+            // No-register operands do not contribute to call liveness.
             if (!MOP.isReg() || !MOP.getReg())
               continue;
 

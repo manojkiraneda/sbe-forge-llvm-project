@@ -4,6 +4,9 @@
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -filetype=obj %s -o %t.on.o
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -enable-machine-outliner=never -filetype=obj %s -o %t.off.o
 ; RUN: %python %S/Inputs/ppe42-outliner-size.py %t.off.o %t.on.o
+; RUN: opt -passes=debugify %s -o %t.debug.bc
+; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs %t.debug.bc -o - | FileCheck %s
+; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -filetype=obj %t.debug.bc -o %t.debug.o
 
 ; Size functions share repeated call setup without adding a stack frame to
 ; the outlined helper. Other PowerPC CPUs and non-size functions are excluded.
