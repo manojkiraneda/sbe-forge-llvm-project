@@ -20,8 +20,8 @@
 #include "PPCSubtarget.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/LiveRegUnits.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/Support/MathExtras.h"
@@ -427,8 +427,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
                   .Cases("tw 31, $0, $1", "tw 0, $0, $1", "tw 0, 0, 0", true)
                   .Cases("mfmsr $0", "mtmsr $0", "wrteei $0", true)
                   .Cases("mfspr $0, $1", "mtspr $0, $1", true)
-                  .Cases("lvd $0, 0($1)", "stvd $0, 0($1)",
-                         "stvd $0, 0($2)", true)
+                  .Cases("lvd $0, 0($1)", "stvd $0, 0($1)", "stvd $0, 0($2)",
+                         true)
                   .Default(false);
     });
   };
@@ -505,8 +505,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           return &MI;
         }
         if (MI.isCall() || MI.isTerminator() || MI.isInlineAsm() ||
-            MI.hasUnmodeledSideEffects() ||
-            MI.readsRegister(PPC::CR0, TRI) ||
+            MI.hasUnmodeledSideEffects() || MI.readsRegister(PPC::CR0, TRI) ||
             MI.modifiesRegister(PPC::CR0, TRI))
           return nullptr;
         ++Seen;
@@ -525,19 +524,17 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
         unsigned DestOp = IsBitBranch ? 1 : 2;
         if (!Br.getOperand(DestOp).isMBB() ||
-            (IsBitBranch
-                 ? Br.getOperand(0).getReg() != PPC::CR0EQ
-                 : Br.getOperand(1).getReg() != PPC::CR0 ||
-                       (Br.getOperand(0).getImm() != PPC::PRED_EQ &&
-                        Br.getOperand(0).getImm() != PPC::PRED_NE)))
+            (IsBitBranch ? Br.getOperand(0).getReg() != PPC::CR0EQ
+                         : Br.getOperand(1).getReg() != PPC::CR0 ||
+                               (Br.getOperand(0).getImm() != PPC::PRED_EQ &&
+                                Br.getOperand(0).getImm() != PPC::PRED_NE)))
           continue;
 
         MachineInstr *CmpPtr = FindMovableCompare(Br);
         if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
           continue;
         MachineInstr &Cmp = *CmpPtr;
-        if ((Cmp.getOpcode() != PPC::CMPLWI &&
-             Cmp.getOpcode() != PPC::CMPWI) ||
+        if ((Cmp.getOpcode() != PPC::CMPLWI && Cmp.getOpcode() != PPC::CMPWI) ||
             Cmp.getOperand(2).getImm() != 0)
           continue;
 
@@ -573,8 +570,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         // The bit test executes at the branch. Its original source must still
         // be available there, and no instruction may observe the removed mask.
         bool Safe = true;
-        for (auto It = std::next(Mask.getIterator());
-             It != Br.getIterator(); ++It) {
+        for (auto It = std::next(Mask.getIterator()); It != Br.getIterator();
+             ++It) {
           if (&*It == &Cmp || It->isDebugInstr())
             continue;
           if (It->readsRegister(MaskReg, TRI) ||
@@ -587,17 +584,16 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         if (!Safe)
           continue;
 
-        int Distance = computeBranchSize(Fn, &MBB,
-                                         Br.getOperand(DestOp).getMBB(), BrOffset);
+        int Distance = computeBranchSize(
+            Fn, &MBB, Br.getOperand(DestOp).getMBB(), BrOffset);
         if (HasImpreciseBranchSpan(Br, *Br.getOperand(DestOp).getMBB()) ||
             Distance < -2036 || Distance > 2036)
           continue;
 
-        unsigned Bit = (Mask.getOperand(3).getImm() +
-                        Mask.getOperand(2).getImm()) % 32;
-        unsigned PX = IsBitBranch
-                          ? Br.getOpcode() == PPC::BC
-                          : Br.getOperand(0).getImm() == PPC::PRED_EQ;
+        unsigned Bit =
+            (Mask.getOperand(3).getImm() + Mask.getOperand(2).getImm()) % 32;
+        unsigned PX = IsBitBranch ? Br.getOpcode() == PPC::BC
+                                  : Br.getOperand(0).getImm() == PPC::PRED_EQ;
         BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
             .addImm(PX)
             .addReg(SrcReg, IsDeadAfter(Br, SrcReg) ? RegState::Kill : 0)
@@ -632,7 +628,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
 
         MachineInstr *CmpPtr = FindMovableCompare(Br);
-        if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
+        if (!CmpPtr)
           continue;
         MachineInstr &Cmp = *CmpPtr;
         bool IsUnsigned = Cmp.getOpcode() == PPC::CMPLW;
@@ -718,7 +714,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
 
         MachineInstr *CmpPtr = FindMovableCompare(Br);
-        if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
+        if (!CmpPtr)
           continue;
         MachineInstr &Cmp = *CmpPtr;
         if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
@@ -760,7 +756,10 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             continue;
           }
         }
-        if (Cmp.getOpcode() == PPC::CMPLWI && BIX != 2)
+        // CMPWIBC preserves CMPWI's CR0 result. Replacing an unsigned
+        // compare is equivalent for EQ/NE, but can change the LT/GT bits.
+        if (Cmp.getOpcode() == PPC::CMPLWI &&
+            (BIX != 2 || !IsDeadAfter(Br, PPC::CR0)))
           continue;
 
         int Distance = computeBranchSize(
@@ -769,8 +768,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             Distance < -2036 || Distance > 2036)
           continue;
 
-        BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(),
-                TII->get(PPC::CMPWIBC))
+        BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::CMPWIBC))
             .addImm(PX)
             .addImm(BIX)
             .addReg(Cmp.getOperand(1).getReg(),
