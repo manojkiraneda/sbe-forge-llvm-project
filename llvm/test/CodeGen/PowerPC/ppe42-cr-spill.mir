@@ -1,0 +1,264 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-cr-spill -verify-machineinstrs %s -o %t
+# RUN: FileCheck %s < %t
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs -filetype=obj %t -o %t.o
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=440 -run-pass=ppc-ppe42-cr-spill -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=OTHER
+
+--- |
+  define void @unsigned_range() optsize { ret void }
+  define void @signed_range() optsize { ret void }
+  define void @no_interference() optsize { ret void }
+  define void @summary_overflow() optsize { ret void }
+  define void @register_compare() optsize { ret void }
+  define void @physical_input() optsize { ret void }
+  define void @non_branch_user() optsize { ret void }
+  define void @not_size_optimized() { ret void }
+...
+---
+name: unsigned_range
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: unsigned_range
+  ; CHECK: %2:crrc = CMPLWI %0, 0
+  ; CHECK: bb.2:
+  ; CHECK-NEXT: successors:
+  ; CHECK: %[[NEW:[0-9]+]]:crrc = CMPLWI %0, 0
+  ; CHECK-NEXT: BCC 76, killed %[[NEW]], %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLWI killed %0, 0
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 76, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: signed_range
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: signed_range
+  ; CHECK: %2:crrc = CMPWI %0, -1
+  ; CHECK: bb.2:
+  ; CHECK-NEXT: successors:
+  ; CHECK: %[[NEW:[0-9]+]]:crrc = CMPWI %0, -1
+  ; CHECK-NEXT: BCC 76, killed %[[NEW]], %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPWI killed %0, -1
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 76, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: no_interference
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: no_interference
+  ; CHECK: bb.2:
+  ; CHECK-NOT: = CMPLWI
+  ; CHECK: BCC 76, killed %2, %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLWI killed %0, 0
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 76, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: summary_overflow
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: summary_overflow
+  ; CHECK: bb.2:
+  ; CHECK-NOT: = CMPLWI
+  ; CHECK: BCC 108, killed %2, %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLWI killed %0, 0
+    BCC 108, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 108, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: register_compare
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: register_compare
+  ; CHECK: bb.2:
+  ; CHECK-NOT: = CMPLWI
+  ; CHECK: BCC 76, killed %2, %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLW %0, %1
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 76, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: physical_input
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: physical_input
+  ; CHECK: bb.2:
+  ; CHECK-NOT: = CMPLWI
+  ; CHECK: BCC 76, killed %2, %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLWI $r3, 0
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 76, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: non_branch_user
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: non_branch_user
+  ; CHECK: bb.2:
+  ; CHECK-NOT: = CMPLWI
+  ; CHECK: $cr0 = COPY %2
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLWI killed %0, 0
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    $cr0 = COPY %2
+    BCC 76, $cr0, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: not_size_optimized
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: not_size_optimized
+  ; CHECK: bb.2:
+  ; CHECK-NOT: = CMPLWI
+  ; CHECK: BCC 76, killed %2, %bb.3
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4
+    %0:gprc = COPY $r3
+    %1:gprc = COPY $r4
+    %2:crrc = CMPLWI killed %0, 0
+    BCC 76, %2, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.2, %bb.3
+    %3:crrc = CMPLWI %1, 2
+    BCC 44, killed %3, %bb.3
+    B %bb.2
+  bb.2:
+    successors: %bb.3, %bb.4
+    BCC 76, killed %2, %bb.3
+    B %bb.4
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+
+# OTHER-LABEL: name: unsigned_range
+# OTHER: %2:crrc = CMPLWI killed %0, 0
+# OTHER: bb.2:
+# OTHER-NOT: = CMPLWI
+# OTHER: BCC 76, killed %2, %bb.3
