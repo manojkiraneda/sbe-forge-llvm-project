@@ -19,6 +19,7 @@
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -410,12 +411,10 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
   // Do this after long-branch expansion, when block positions are final. Only
   // fold a single-bit mask whose result and comparison are killed by the
   // branch. A small margin covers the change in branch position and padding.
-  // An inline asm can expand to an unknown number of bytes. The PPE42 nop,
-  // trap, PK_PANIC's exact "tw 31, $0, $1", and the QME wait instruction
-  // "tw 0, 0, 0" are single fixed-width instructions, so they do not make a
-  // displacement imprecise. Check
-  // only the instructions between the branch and its target: asm before a
-  // forward branch or after its target cannot affect the displacement.
+  // Unknown inline asm may contain directives or multiple instructions. Exact
+  // templates for ordinary PPE42 instructions have a fixed four-byte size,
+  // including the kernel's interrupt/context accesses and MARK_TAG trap form.
+  // Check only the branch span: asm outside it cannot affect displacement.
   auto HasImpreciseAsm = [](MachineBasicBlock::const_iterator Begin,
                             MachineBasicBlock::const_iterator End) {
     return std::any_of(Begin, End, [](const MachineInstr &MI) {
@@ -423,8 +422,14 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         return false;
       StringRef Asm = MI.getOperand(0).getSymbolName();
       Asm = Asm.trim();
-      return Asm != "nop" && Asm != "trap" && Asm != "tw 31, $0, $1" &&
-             Asm != "tw 0, 0, 0";
+      return !StringSwitch<bool>(Asm)
+                  .Cases("nop", "trap", "sync", "isync", "eieio", true)
+                  .Cases("tw 31, $0, $1", "tw 0, $0, $1", "tw 0, 0, 0", true)
+                  .Cases("mfmsr $0", "mtmsr $0", "wrteei $0", true)
+                  .Cases("mfspr $0, $1", "mtspr $0, $1", true)
+                  .Cases("lvd $0, 0($1)", "stvd $0, 0($1)",
+                         "stvd $0, 0($2)", true)
+                  .Default(false);
     });
   };
   auto HasImpreciseBranchSpan = [&](const MachineInstr &Br,
