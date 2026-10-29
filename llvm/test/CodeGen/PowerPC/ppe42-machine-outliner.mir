@@ -1,9 +1,9 @@
-# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=machine-outliner -verify-machineinstrs %s -o %t
-# RUN: FileCheck %s --check-prefix=TAIL < %t
-# RUN: FileCheck %s --check-prefix=PLAIN < %t
-# RUN: FileCheck %s --check-prefix=SAFE < %t
-# RUN: FileCheck %s --check-prefix=DEBUG < %t
-# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=machine-outliner -verify-machineinstrs -filetype=obj %t -o %t.o
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=machine-outliner -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s --check-prefix=TAIL < %t.mir
+# RUN: FileCheck %s --check-prefix=PLAIN < %t.mir
+# RUN: FileCheck %s --check-prefix=SAFE < %t.mir
+# RUN: FileCheck %s --check-prefix=DEBUG < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=machine-outliner -verify-machineinstrs -filetype=obj %t.mir -o %t.o
 
 # Debug-only operands must never become executable implicit register operands.
 # DEBUG-NOT: implicit{{(-def)?}} $noreg
