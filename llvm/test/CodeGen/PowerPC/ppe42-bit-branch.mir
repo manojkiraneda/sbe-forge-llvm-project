@@ -1,3 +1,6 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -verify-machineinstrs %S/ppe42-bit-test-context.ll -o - | FileCheck %S/ppe42-bit-test-context.ll
+# RUN: opt -passes=debugify %S/ppe42-bit-test-context.ll -o %t.bc
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -verify-machineinstrs %t.bc -o - | FileCheck %S/ppe42-bit-test-context.ll
 # RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o - | FileCheck %s
 # PPE42 can replace a single-bit mask, zero comparison, and branch with one
 # fused instruction. Keep the mask when its result is live; the remaining
