@@ -3040,6 +3040,7 @@ PPCInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
       {MO_GOT_TLSLD_PCREL_FLAG, "ppc-got-tlsld-pcrel"},
       {MO_GOT_TPREL_PCREL_FLAG, "ppc-got-tprel-pcrel"},
       {MO_LO, "ppc-lo"},
+      {MO_SDA21, "ppc-sda21"},
       {MO_HA, "ppc-ha"},
       {MO_TPREL_LO, "ppc-tprel-lo"},
       {MO_TPREL_HA, "ppc-tprel-ha"},
