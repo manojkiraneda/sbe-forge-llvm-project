@@ -133,6 +133,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
     bool combinePPE42WordStores(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
                                 const TargetRegisterInfo &TRI) {
       bool Changed = false;
+      bool RecomputeLiveness = false;
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &First = *I++;
         if (First.getOpcode() != PPC::STW || First.getNumOperands() != 3 ||
@@ -164,7 +165,79 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
 
         // A store of the low word can precede the high word. Choose the
         // actual high-word address as the STVD address in either case.
+        // Allocation can leave both stores naming one scalar even when its
+        // neighbouring GPR already contains the same value. Prove equality
+        // locally; never create a copy merely to replace two stores by one.
+        auto EqualAtFirst = [&](Register A, Register B) {
+          struct Value {
+            Register Reg;
+            uint32_t Constant = 0;
+          };
+          Value Left{A}, Right{B};
+          auto Equal = [&]() {
+            return Left.Reg == Right.Reg &&
+                   (Left.Reg || Left.Constant == Right.Constant);
+          };
+          auto P = First.getIterator();
+          unsigned Budget = 32;
+          while (!Equal() && P != MBB.begin() && Budget) {
+            MachineInstr &MI = *--P;
+            if (MI.isDebugInstr())
+              continue;
+            --Budget;
+            if (MI.isCall() || MI.isTerminator() || MI.isInlineAsm() ||
+                MI.hasUnmodeledSideEffects())
+              return false;
+            auto Transfer = [&](Value &V) {
+              if (!V.Reg || !MI.modifiesRegister(V.Reg, &TRI))
+                return true;
+              if (MI.getNumOperands() < 2 || !MI.getOperand(0).isReg() ||
+                  MI.getOperand(0).getReg() != V.Reg ||
+                  MI.getOperand(0).getSubReg())
+                return false;
+              if ((MI.getOpcode() == PPC::LI || MI.getOpcode() == PPC::LIS) &&
+                  MI.getOperand(1).isImm()) {
+                V.Reg = Register();
+                V.Constant = uint32_t(MI.getOperand(1).getImm());
+                if (MI.getOpcode() == PPC::LIS)
+                  V.Constant <<= 16;
+                return true;
+              }
+              if (!MI.isCopy() &&
+                  !(MI.getOpcode() == PPC::OR && MI.getNumOperands() >= 3 &&
+                    !MI.getOperand(2).isUndef() &&
+                    MI.getOperand(1).isIdenticalTo(MI.getOperand(2))))
+                return false;
+              const MachineOperand &Source = MI.getOperand(1);
+              if (!Source.isReg() || Source.getSubReg() || Source.isUndef() ||
+                  !PPC::GPRCRegClass.contains(Source.getReg()))
+                return false;
+              V.Reg = Source.getReg();
+              return true;
+            };
+            // Both substitutions refer to the values before this instruction.
+            if (!Transfer(Left) || !Transfer(Right))
+              return false;
+          }
+          return Equal();
+        };
         auto TryPair = [&](MachineInstr &Hi, MachineInstr &Lo) -> Register {
+          Register Source = Hi.getOperand(0).getReg();
+          if (Source == Lo.getOperand(0).getReg()) {
+            if (Hi.getOperand(0).isUndef() || Lo.getOperand(0).isUndef() ||
+                Hi.getOperand(0).getSubReg() || Lo.getOperand(0).getSubReg())
+              return Register();
+            for (unsigned Sub : {PPC::sub_gpr_hi, PPC::sub_gpr_lo}) {
+              Register Pair =
+                  TRI.getMatchingSuperReg(Source, Sub, &PPC::VDRCRegClass);
+              if (Pair && EqualAtFirst(
+                              Source, TRI.getSubReg(Pair, Sub == PPC::sub_gpr_hi
+                                                              ? PPC::sub_gpr_lo
+                                                              : PPC::sub_gpr_hi)))
+                return Pair;
+            }
+            return Register();
+          }
           Register Pair = TRI.getMatchingSuperReg(
               Hi.getOperand(0).getReg(), PPC::sub_gpr_hi, &PPC::VDRCRegClass);
           if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
@@ -172,12 +245,27 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             return Register();
           return Pair;
         };
-        Register Pair = TryPair(First, Second);
         MachineInstr *Hi = &First, *Lo = &Second;
+        if (First.getOperand(0).getReg() == Second.getOperand(0).getReg()) {
+          // Scalar frame MMOs can both retain align 4. Use the actual offsets
+          // for a common base, rather than guessing their order from alignment.
+          const MachineOperand &A = First.getOperand(1);
+          const MachineOperand &B = Second.getOperand(1);
+          bool Swap;
+          if (A.isImm() && B.isImm() && First.getOperand(2).getReg() ==
+                                          Second.getOperand(2).getReg())
+            Swap = A.getImm() > B.getImm();
+          else
+            Swap = (A.isImm() && B.isGlobal()) ||
+                   ((*First.memoperands_begin())->getAlign() < Align(8) &&
+                    (*Second.memoperands_begin())->getAlign() >= Align(8));
+          if (Swap)
+            std::swap(Hi, Lo);
+        }
+        Register Pair = TryPair(*Hi, *Lo);
         if (!Pair) {
-          Pair = TryPair(Second, First);
-          Hi = &Second;
-          Lo = &First;
+          std::swap(Hi, Lo);
+          Pair = TryPair(*Hi, *Lo);
         }
         if (!Pair)
           continue;
@@ -384,11 +472,18 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             .addMemOperand(HiMem)
             .addMemOperand(LoMem);
         I = std::next(Next);
+        RecomputeLiveness |=
+            First.getOperand(0).getReg() == Second.getOperand(0).getReg();
         First.eraseFromParent();
         Second.eraseFromParent();
         Changed = true;
         ++NumPPE42VDStores;
       }
+      // The equal neighbour may have been killed between its definition and
+      // these stores. Its definition is in this block (or equality was proved
+      // through local copies), so no predecessor live-in changes are needed.
+      if (RecomputeLiveness)
+        recomputeLivenessFlags(MBB);
       return Changed;
     }
 
