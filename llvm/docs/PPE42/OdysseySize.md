@@ -1,6 +1,6 @@
 # Odyssey SPPE size investigation
 
-This change addresses two confirmed backend gaps found in an Odyssey image
+This change addresses three confirmed backend gaps found in an Odyssey image
 comparison. It also records a negative inlining experiment so that a smaller
 wrapper is not mistaken for a smaller program. No firmware names or addresses
 are encoded in the optimization rules.
@@ -41,6 +41,42 @@ The image scan found 1,532 syntactically matching stores already using r3:r4,
 which represents a gross 6,128-byte instruction budget. This is not a measured
 whole-image reduction: individual sites must pass the complete proof and
 memory checks, and final layout may change.
+
+## Repeated scalar values in an existing physical pair
+
+An isolated pair of stores of one scalar does not normally justify creating a
+VDR: one extra copy plus one STVD costs as much as two STWs. The pre-allocation
+pass already amortizes that copy over contiguous runs of multiple pairs.
+
+There is a separate, copy-free missed case after allocation:
+
+```
+LI r4, 0
+LI r5, 0
+STW r4, 220(r1)
+STW r4, 216(r1)
+```
+
+The supplied `poz_putRingUtils` disassembly contains this case at 0xfff904b0.
+The stores can use `STVD d4,216(r1)` because r4:r5 already hold equal values.
+The original late matcher only recognized stores explicitly using different
+registers for the two words, so it missed this available physical pair.
+
+For equal-source stores, try the existing VDR containing that source in either
+half. Prove that the other half equals it using at most 32 ordinary instructions
+in the same block. Follow full-register COPY/nonrecording OR copies and compare
+32-bit LI/LIS constants. Unknown definitions, undef copies, calls, inline
+assembly and control-flow boundaries reject the proof. Register aliases are
+checked through the target register information. All existing address and
+memory-safety checks still apply, including effective stack alignment when
+scalar frame MMOs retain align 4. Recompute the block's dead/kill flags when
+the fold extends a neighbour's use; the local proof needs no new live-ins.
+
+Each accepted pair saves exactly one instruction (four bytes), with no extra
+copies, materializers, scratch registers or allocation changes. This does not
+make all 332 global repeated-value candidates profitable: if no provably equal
+neighbour already exists, leave those stores unchanged. No additional
+whole-image saving is claimed before testing the rebuilt firmware.
 
 ## Larger shared comparison ranges
 
@@ -92,6 +128,14 @@ CI runs positive/negative cached-address MIR cases and complete object emission,
 plus comparison tests with ten users, an eighty-block range, and a seventeen-
 user negative bound. Existing SO, physical-input and noninterference cases
 remain in the suite.
+
+Equal-value store tests cover positive constant/copy cases, reversed stores,
+either source half, dead-neighbour liveness, stack MMOs and SDA addressing.
+Negative cases cover unequal/unknown values, alias clobbers, undef copies,
+call/search boundaries, nonconsecutive addresses, volatile/atomic stores and
+insufficient alignment. The existing local llc verifies their input forms and
+emits manually constructed expected outputs; it cannot execute the new C++
+equality proof. The added CI test exercises that implementation.
 
 The existing older local llc lacks the SDA21 MIR flag; the cached-address test
 inputs and manually constructed expected outputs were verified and emitted
