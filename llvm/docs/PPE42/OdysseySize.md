@@ -133,7 +133,8 @@ an immutable pointer. Normalize the SSA address before it can spill instead:
 
 * Follow up to eight full-register COPY/constant-ADDI definitions to an
   R13-rooted LA with an exact SDA21 global relocation.
-* Fold the displacement into the global addend, checking signed overflow.
+* Fold the displacement into the global addend, checking signed overflow,
+  signed displacement range and declared object bounds.
   Rewrite LWZ/STW/LVD/STVD addresses directly; the access and its MMOs stay
   at the same program point, including ordered accesses.
 * Reject the invariant if any instruction explicitly changes R13. Calls
