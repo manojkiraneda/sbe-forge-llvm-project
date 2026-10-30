@@ -1,0 +1,578 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  @g = external global [4 x i32], align 8
+  declare void @callee()
+  define void @equal_zero() { ret void }
+  define void @equal_nonzero() { ret void }
+  define void @equal_lis() { ret void }
+  define void @mixed_zero() { ret void }
+  define void @copy_neighbour() { ret void }
+  define void @copy_livein() { ret void }
+  define void @source_is_low() { ret void }
+  define void @reverse_stores() { ret void }
+  define void @dead_neighbour() { ret void }
+  define void @different_constants() { ret void }
+  define void @different_lis() { ret void }
+  define void @neighbour_clobbered() { ret void }
+  define void @unknown_neighbour() { ret void }
+  define void @unknown_definition() { ret void }
+  define void @call_barrier() { ret void }
+  define void @budget() { ret void }
+  define void @volatile() { ret void }
+  define void @word_aligned() { ret void }
+  define void @source_changed_between() { ret void }
+  define void @neighbour_changed_between() { ret void }
+  define void @cached_sda_zero() { ret void }
+  define void @stack_word_mmos() { ret void }
+  define void @undef_copy() { ret void }
+  define void @alias_clobber() { ret void }
+  define void @nonadjacent() { ret void }
+  define void @atomic() { ret void }
+...
+---
+name: equal_zero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: equal_zero
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: equal_nonzero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: equal_nonzero
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI -7
+    $r5 = LI -7
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: equal_lis
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: equal_lis
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LIS -1
+    $r5 = LIS -1
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: mixed_zero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: mixed_zero
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    $r5 = LIS 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: copy_neighbour
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: copy_neighbour
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 7
+    $r5 = OR $r4, $r4
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: copy_livein
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: copy_livein
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r5 = OR $r4, $r4
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: source_is_low
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: source_is_low
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 7
+    $r5 = LI 7
+    STW $r5, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r5, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: reverse_stores
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: reverse_stores
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: dead_neighbour
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: dead_neighbour
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    dead $r5 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_constants
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: different_constants
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 1
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_lis
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: different_lis
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI -1
+    $r5 = LIS -1
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: neighbour_clobbered
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: neighbour_clobbered
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    $r5 = LI 1
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: unknown_neighbour
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: unknown_neighbour
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: unknown_definition
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: unknown_definition
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LWZ 8, $r3 :: (load (s32) from @g + 8)
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: call_barrier
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: call_barrier
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    BL @callee, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit-def $r4, implicit-def $r3
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: budget
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: budget
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: volatile
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: volatile
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (volatile store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (volatile store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: word_aligned
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: word_aligned
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 4)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: source_changed_between
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: source_changed_between
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    $r4 = LI 1
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: neighbour_changed_between
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: neighbour_changed_between
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 0, $r3
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    $r5 = LI 1
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: cached_sda_zero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: cached_sda_zero
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    $r5 = LI 0
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r4, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stack_word_mmos
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: stack_word_mmos
+    ; CHECK-NOT: STW
+    ; CHECK: STVD {{(killed )?}}$r4_r5, 8, $r1
+    ; CHECK-NOT: STW
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 12, $r1 :: (store (s32), align 4)
+    STW $r4, 8, $r1 :: (store (s32), align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: undef_copy
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: undef_copy
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = OR undef $r4, $r4
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: alias_clobber
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: alias_clobber
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    $r4_r5 = LVD 8, $r3 :: (load (s64) from @g + 8, align 8)
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: nonadjacent
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: nonadjacent
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (store (s32) into @g, align 8)
+    STW $r4, 8, $r3 :: (store (s32) into @g + 8, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: atomic
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r1, $r3, $r4, $r13
+    ; CHECK-LABEL: name: atomic
+    ; CHECK-NOT: STVD
+    ; CHECK: STW
+    ; CHECK: STW
+    ; CHECK-NOT: STVD
+    $r4 = LI 0
+    $r5 = LI 0
+    STW $r4, 0, $r3 :: (store unordered (s32) into @g, align 8)
+    STW $r4, 4, $r3 :: (store unordered (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
