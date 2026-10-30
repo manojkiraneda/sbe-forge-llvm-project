@@ -1,0 +1,296 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  @g = external global i64, align 8
+  @other = external global i64, align 8
+  declare void @callee()
+  define void @far_definition() { ret void }
+  define void @across_blocks() { ret void }
+  define void @copied_across_call() { ret void }
+  define void @diamond_same() { ret void }
+  define void @diamond_conflict() { ret void }
+  define void @loop_same() { ret void }
+  define void @loop_conflict() { ret void }
+  define void @root_changed() { ret void }
+  define void @cached_changed() { ret void }
+  define void @volatile_pair() { ret void }
+  define void @word_aligned() { ret void }
+...
+---
+name: far_definition
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    ; CHECK-LABEL: name: far_definition
+    ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: STW
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: across_blocks
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    successors: %bb.1
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.1
+  bb.1:
+    liveins: $r3, $r4, $r13, $r31
+    ; CHECK-LABEL: name: across_blocks
+    ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: STW
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: copied_across_call
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    $r7 = LA $r13, target-flags(ppc-sda21) @g
+    $r31 = OR $r7, $r7
+    BL @callee, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit-def $r3, implicit-def $r4
+    ; CHECK-LABEL: name: copied_across_call
+    ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: STW
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: diamond_same
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4, $r13, $cr0
+    BCC 76, killed $cr0, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.3
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.3
+  bb.2:
+    successors: %bb.3
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.3
+  bb.3:
+    liveins: $r3, $r4, $r13, $r31
+    ; CHECK-LABEL: name: diamond_same
+    ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: STW
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: diamond_conflict
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4, $r13, $cr0
+    BCC 76, killed $cr0, %bb.2
+    B %bb.1
+  bb.1:
+    successors: %bb.3
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.3
+  bb.2:
+    successors: %bb.3
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @other
+    B %bb.3
+  bb.3:
+    liveins: $r3, $r4, $r13, $r31
+    ; CHECK-LABEL: name: diamond_conflict
+    ; CHECK: STW $r4, 4, $r31
+    ; CHECK: STW $r3, target-flags(ppc-sda21) @g, $r13
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: loop_same
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13, $cr0
+    successors: %bb.1
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4, $r13, $r31, $cr0
+    ; CHECK-LABEL: name: loop_same
+    ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+    ; CHECK-NOT: STW
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BCC 76, $cr0, %bb.1
+    B %bb.2
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: loop_conflict
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13, $cr0
+    successors: %bb.1
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r3, $r4, $r13, $r31, $cr0
+    ; CHECK-LABEL: name: loop_conflict
+    ; CHECK: STW $r4, 4, $r31
+    ; CHECK: STW $r3, target-flags(ppc-sda21) @g, $r13
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    $r31 = LA $r13, target-flags(ppc-sda21) @other
+    BCC 76, $cr0, %bb.1
+    B %bb.2
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: root_changed
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    $r13 = ADDI $r13, 8
+    ; CHECK-LABEL: name: root_changed
+    ; CHECK: STW $r4, 4, $r31
+    ; CHECK: STW $r3, target-flags(ppc-sda21) @g, $r13
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: cached_changed
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    $r31 = LI 42
+    ; CHECK-LABEL: name: cached_changed
+    ; CHECK: STW $r4, 4, $r31
+    ; CHECK: STW $r3, target-flags(ppc-sda21) @g, $r13
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: volatile_pair
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    ; CHECK-LABEL: name: volatile_pair
+    ; CHECK: STW $r4, 4, $r31
+    ; CHECK: STW $r3, target-flags(ppc-sda21) @g, $r13
+    STW $r4, 4, $r31 :: (volatile store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (volatile store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: word_aligned
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  bb.0:
+    liveins: $r3, $r4, $r13
+    $r31 = LA $r13, target-flags(ppc-sda21) @g
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    ; CHECK-LABEL: name: word_aligned
+    ; CHECK: STW $r4, 4, $r31
+    ; CHECK: STW $r3, target-flags(ppc-sda21) @g, $r13
+    STW $r4, 4, $r31 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
