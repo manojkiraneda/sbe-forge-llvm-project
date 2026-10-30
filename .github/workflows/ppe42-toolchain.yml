@@ -225,6 +225,7 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-small-zero-fill.ll \
             llvm/test/CodeGen/PowerPC/ppe42-late-size-patterns.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-cr-spill-large.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.ll \
             llvm/test/CodeGen/PowerPC/ppe42-const-spill.mir \
             llvm/test/CodeGen/PowerPC/ppe42-const-spill.ll \
@@ -251,6 +252,7 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-pre-ra-stvd-pairs.mir \
             llvm/test/CodeGen/PowerPC/ppe42-pre-ra-lvd-pairs.mir \
             llvm/test/CodeGen/PowerPC/ppe42-symbolic-load-pairs.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-cached-sda-stores.mir \
             llvm/test/CodeGen/PowerPC/ppe42-symbolic-load-pairs.ll \
             llvm/test/CodeGen/PowerPC/ppe42-vdr-update.ll \
             llvm/test/CodeGen/PowerPC/ppe42-vdr-update.mir \
