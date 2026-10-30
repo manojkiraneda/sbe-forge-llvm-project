@@ -35,6 +35,39 @@ public:
       return false;
     const DataLayout &DL = F.getDataLayout();
     DenseMap<AllocaInst *, Align> Alignments;
+    // PPC32 byval copies have word-aligned outgoing storage even when the
+    // source type only requires byte/halfword alignment. Align local sources
+    // as well, without changing the type layout or the call's ABI attributes.
+    for (Instruction &I : instructions(F)) {
+      auto *CB = dyn_cast<CallBase>(&I);
+      if (!CB)
+        continue;
+      for (unsigned A = 0; A != CB->arg_size(); ++A) {
+        Type *ByValTy = CB->getParamByValType(A);
+        if (!ByValTy || !ByValTy->isSized())
+          continue;
+        TypeSize CopySize = DL.getTypeAllocSize(ByValTy);
+        if (CopySize.isScalable() || CopySize.getFixedValue() < 4)
+          continue;
+        int64_t Offset = 0;
+        auto *AI = dyn_cast<AllocaInst>(GetPointerBaseWithConstantOffset(
+            CB->getArgOperand(A), Offset, DL));
+        if (!AI || !AI->isStaticAlloca() || AI->isUsedWithInAlloca() ||
+            AI->isSwiftError() ||
+            AI->getAddressSpace() != DL.getAllocaAddrSpace() || Offset < 0 ||
+            !isAligned(Align(4), Offset) || AI->getAlign() >= Align(4))
+          continue;
+        auto *ST = dyn_cast<StructType>(AI->getAllocatedType());
+        auto *Count = dyn_cast<ConstantInt>(AI->getArraySize());
+        if (!ST || !ST->isSized() || !Count || !Count->isOne())
+          continue;
+        TypeSize Size = DL.getTypeAllocSize(ST);
+        if (Size.isScalable() || uint64_t(Offset) > Size.getFixedValue() ||
+            CopySize.getFixedValue() > Size.getFixedValue() - uint64_t(Offset))
+          continue;
+        Alignments[AI] = Align(4);
+      }
+    }
     // A packed type specifies field offsets, not a requirement that its local
     // stack allocation have byte alignment. On strict-alignment PPE42, a word
     // load from such an object otherwise becomes four byte loads and shifts.
