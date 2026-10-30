@@ -222,6 +222,8 @@ jobs:
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/CodeGen/PowerPC/ppe42-packed-stack-align.ll \
             llvm/test/CodeGen/PowerPC/ppe42-byval-stack-align.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-small-zero-fill.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-late-size-patterns.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.ll \
             llvm/test/CodeGen/PowerPC/ppe42-const-spill.mir \
