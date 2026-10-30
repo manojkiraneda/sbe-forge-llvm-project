@@ -1,0 +1,214 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+--- |
+  @g = external global [4 x i32], align 8
+  declare void @callee()
+  define void @sda_store_across_call() optsize { ret void }
+  define void @sda_load_across_blocks() optsize { ret void }
+  define void @sda_copy_addend() optsize { ret void }
+  define void @sda_root_clobber() optsize { ret void }
+  define void @sda_volatile() optsize { ret void }
+  define void @non_sda_root() optsize { ret void }
+  define void @gapped_zero() optsize { ret void }
+  define void @two_gapped_zero() optsize { ret void }
+  define void @call_breaks_run() optsize { ret void }
+...
+---
+name: sda_store_across_call
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: sda_store_across_call
+  ; CHECK-NOT: LA
+  ; CHECK: BL @callee
+  ; CHECK: STW {{.*}}, target-flags(ppc-sda21) @g + 4, $r13
+  ; CHECK: STW {{.*}}, target-flags(ppc-sda21) @g, $r13
+  bb.0:
+    liveins: $r13
+    %0:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    BL @callee, csr_svr432, implicit-def dead $lr, implicit undef $rm, implicit-def $r3, implicit-def $r4
+    %1:gprc = COPY $r3
+    %2:gprc = COPY $r4
+    STW %2, 4, %0 :: (store (s32) into @g + 4, align 4)
+    STW %1, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sda_load_across_blocks
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: sda_load_across_blocks
+  ; CHECK-NOT: LA
+  ; CHECK: LVD target-flags(ppc-sda21) @g, $r13
+  ; CHECK-NOT: LWZ
+  bb.0:
+    liveins: $r13
+    successors: %bb.1
+    %0:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    B %bb.1
+  bb.1:
+    %1:gprc = LWZ 4, %0 :: (load (s32) from @g + 4, align 4)
+    %2:gprc = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
+    $r3 = COPY %2
+    $r4 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sda_copy_addend
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: sda_copy_addend
+  ; CHECK-NOT: LA
+  ; CHECK-NOT: ADDI
+  ; CHECK: STW {{.*}}, target-flags(ppc-sda21) @g + 8, $r13
+  bb.0:
+    liveins: $r13, $r3
+    %0:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    %1:gprc_and_gprc_nor0 = COPY %0
+    %2:gprc_and_gprc_nor0 = ADDI %1, 4
+    %3:gprc = COPY $r3
+    STW %3, 4, %2 :: (store (s32) into @g + 8, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sda_root_clobber
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: sda_root_clobber
+  ; CHECK: LA $r13, target-flags(ppc-sda21) @g
+  ; CHECK: $r13 = LI 0
+  ; CHECK: LWZ 4,
+  bb.0:
+    liveins: $r13
+    %0:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    $r13 = LI 0
+    %1:gprc = LWZ 4, %0 :: (load (s32) from @g + 4, align 4)
+    $r3 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sda_volatile
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: sda_volatile
+  ; CHECK-NOT: LA
+  ; CHECK-NOT: LVD
+  ; CHECK: LWZ target-flags(ppc-sda21) @g + 4, $r13
+  ; CHECK: LWZ target-flags(ppc-sda21) @g, $r13
+  bb.0:
+    liveins: $r13
+    %0:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
+    %1:gprc = LWZ 4, %0 :: (volatile load (s32) from @g + 4, align 4)
+    %2:gprc = LWZ target-flags(ppc-sda21) @g, $r13 :: (volatile load (s32) from @g, align 8)
+    $r3 = COPY %2
+    $r4 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: non_sda_root
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: non_sda_root
+  ; CHECK: LA $r3, target-flags(ppc-lo) @g
+  ; CHECK: LWZ 4,
+  bb.0:
+    liveins: $r13, $r3
+    %0:gprc_and_gprc_nor0 = LA $r3, target-flags(ppc-lo) @g
+    %1:gprc = LWZ 4, %0 :: (load (s32) from @g + 4, align 4)
+    $r3 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: gapped_zero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: gapped_zero
+  ; CHECK: REG_SEQUENCE
+  ; CHECK: STVD
+  ; CHECK: STB
+  ; CHECK: STVD
+  ; CHECK: STB
+  ; CHECK: STVD
+  ; CHECK-NOT: STW
+  bb.0:
+    liveins: $r3
+    %0:gprc_and_gprc_nor0 = COPY $r3
+    %1:gprc = LI 0
+    STW %1, 0, %0 :: (store (s32), align 8)
+    STW %1, 4, %0 :: (store (s32), align 4)
+    STB %1, 8, %0 :: (store (s8))
+    STW %1, 16, %0 :: (store (s32), align 8)
+    STW %1, 20, %0 :: (store (s32), align 4)
+    STB %1, 24, %0 :: (store (s8))
+    STW %1, 32, %0 :: (store (s32), align 8)
+    STW %1, 36, %0 :: (store (s32), align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: two_gapped_zero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: two_gapped_zero
+  ; CHECK-NOT: STVD
+  ; CHECK: STW
+  ; CHECK: STW
+  bb.0:
+    liveins: $r3
+    %0:gprc_and_gprc_nor0 = COPY $r3
+    %1:gprc = LI 0
+    STW %1, 0, %0 :: (store (s32), align 8)
+    STW %1, 4, %0 :: (store (s32), align 4)
+    STB %1, 8, %0 :: (store (s8))
+    STW %1, 16, %0 :: (store (s32), align 8)
+    STW %1, 20, %0 :: (store (s32), align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: call_breaks_run
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: call_breaks_run
+  ; CHECK-NOT: STVD
+  ; CHECK: STW
+  ; CHECK: STW
+  bb.0:
+    liveins: $r3
+    %0:gprc_and_gprc_nor0 = COPY $r3
+    %1:gprc = LI 0
+    STW %1, 0, %0 :: (store (s32), align 8)
+    STW %1, 4, %0 :: (store (s32), align 4)
+    BL @callee, csr_svr432, implicit-def dead $lr, implicit undef $rm
+    STW %1, 16, %0 :: (store (s32), align 8)
+    STW %1, 20, %0 :: (store (s32), align 4)
+    BL @callee, csr_svr432, implicit-def dead $lr, implicit undef $rm
+    STW %1, 32, %0 :: (store (s32), align 8)
+    STW %1, 36, %0 :: (store (s32), align 4)
+    BLR implicit $lr, implicit undef $rm
+...
