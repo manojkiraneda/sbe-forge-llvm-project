@@ -14,6 +14,8 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/Support/MathExtras.h"
 #include <iterator>
 
@@ -93,6 +95,22 @@ public:
           }
           if (!Root || AddOverflow(Offset, Root->getOperand(2).getOffset(),
                                    Offset))
+            continue;
+          const auto *GV = dyn_cast<GlobalVariable>(
+              Root->getOperand(2).getGlobal());
+          if (!GV || !GV->getValueType()->isSized() || Offset < 0 ||
+              !isInt<16>(Offset))
+            continue;
+          TypeSize Size = MF.getDataLayout().getTypeAllocSize(GV->getValueType());
+          unsigned Bytes = MI.getOpcode() == PPC::LVD ||
+                                   MI.getOpcode() == PPC::STVD
+                               ? 8
+                               : 4;
+          // Keep new SDA relocation addends inside the declared object. An
+          // arbitrary pointer offset can require materialized address arithmetic
+          // even though the symbol itself fits the small-data addressing range.
+          if (Size.isScalable() || uint64_t(Offset) > Size.getFixedValue() ||
+              Bytes > Size.getFixedValue() - uint64_t(Offset))
             continue;
           MI.getOperand(1).ChangeToGA(Root->getOperand(2).getGlobal(), Offset,
                                       PPCII::MO_SDA21);
