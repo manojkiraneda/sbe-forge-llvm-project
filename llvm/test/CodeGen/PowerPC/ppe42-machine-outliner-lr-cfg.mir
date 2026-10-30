@@ -1,0 +1,159 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=machine-outliner -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=machine-outliner -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+# Reserved LR is deliberately absent from successor live-in lists, as in the
+# real frameless memcpy/memmove loops. The return still reads the incoming LR.
+# Outlining either loop would overwrite that return address with the loop's
+# continuation, causing a return into the loop after its counter reaches zero.
+# A sibling with an actual LR restore remains eligible for outlining.
+--- |
+  define void @leaf_loop_a() optsize { ret void }
+  define void @leaf_loop_b() optsize { ret void }
+  define void @restored_loop_a() optsize { ret void }
+  define void @restored_loop_b() optsize { ret void }
+  define void @mixed_exit() optsize { ret void }
+...
+---
+name: leaf_loop_a
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r1, $lr, $r7, $r13, $ctr
+    ; CHECK-LABEL: name: leaf_loop_a
+    B %bb.1
+
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r1, $r7, $r13, $ctr
+    ; CHECK-NOT: BL @OUTLINED_FUNCTION_
+    ; CHECK: BLR
+    $r3 = LIS 256
+    $r3 = ORI $r3, 42
+    $r4 = RLWINM $r7, 10, 16, 21
+    $r3 = OR $r3, $r4
+    STW $r3, 0, $r13
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: leaf_loop_b
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r1, $lr, $r7, $r13, $ctr
+    ; CHECK-LABEL: name: leaf_loop_b
+    B %bb.1
+
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r1, $r7, $r13, $ctr
+    ; CHECK-NOT: BL @OUTLINED_FUNCTION_
+    ; CHECK: BLR
+    $r3 = LIS 256
+    $r3 = ORI $r3, 42
+    $r4 = RLWINM $r7, 10, 16, 21
+    $r3 = OR $r3, $r4
+    STW $r3, 0, $r13
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: restored_loop_a
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r1, $lr, $r7, $r13, $ctr
+    ; CHECK-LABEL: name: restored_loop_a
+    $r1 = frame-setup STSKU $r1, -32, $r1, implicit $lr
+    B %bb.1
+
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r1, $r7, $r13, $ctr
+    ; CHECK: BL @OUTLINED_FUNCTION_
+    ; CHECK: LSKU
+    $r3 = LIS 256
+    $r3 = ORI $r3, 42
+    $r4 = RLWINM $r7, 10, 16, 21
+    $r3 = OR $r3, $r4
+    STW $r3, 0, $r13
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+
+  bb.2:
+    liveins: $r1
+    $r1 = frame-destroy LSKU 32, $r1, implicit-def $lr
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: restored_loop_b
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r1, $lr, $r7, $r13, $ctr
+    ; CHECK-LABEL: name: restored_loop_b
+    $r1 = frame-setup STSKU $r1, -32, $r1, implicit $lr
+    B %bb.1
+
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r1, $r7, $r13, $ctr
+    ; CHECK: BL @OUTLINED_FUNCTION_
+    ; CHECK: LSKU
+    $r3 = LIS 256
+    $r3 = ORI $r3, 42
+    $r4 = RLWINM $r7, 10, 16, 21
+    $r3 = OR $r3, $r4
+    STW $r3, 0, $r13
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+
+  bb.2:
+    liveins: $r1
+    $r1 = frame-destroy LSKU 32, $r1, implicit-def $lr
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: mixed_exit
+tracksRegLiveness: true
+body: |
+  bb.0:
+    successors: %bb.1
+    liveins: $r1, $lr, $r7, $r13, $ctr
+    ; CHECK-LABEL: name: mixed_exit
+    $r1 = frame-setup STSKU $r1, -32, $r1, implicit $lr
+    B %bb.1
+
+  bb.1:
+    successors: %bb.1, %bb.2
+    liveins: $r1, $r7, $r13, $ctr
+    ; CHECK-NOT: BL @OUTLINED_FUNCTION_
+    ; CHECK: BLR
+    $r3 = LIS 256
+    $r3 = ORI $r3, 42
+    $r4 = RLWINM $r7, 10, 16, 21
+    $r3 = OR $r3, $r4
+    STW $r3, 0, $r13
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+
+  bb.2:
+    successors: %bb.3, %bb.4
+    liveins: $r1, $r7
+    $cr0 = CMPWI $r7, 0
+    BCC 76, $cr0, %bb.4
+
+  bb.3:
+    BLR implicit $lr, implicit undef $rm
+
+  bb.4:
+    liveins: $r1
+    $r1 = frame-destroy LSKU 32, $r1, implicit-def $lr
+    BLR implicit $lr, implicit undef $rm
+...
