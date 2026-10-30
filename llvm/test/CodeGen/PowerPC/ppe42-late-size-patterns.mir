@@ -1,0 +1,272 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-branch-select -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  define void @unsigned_gt_zero() { ret void }
+  define void @unsigned_le_zero() { ret void }
+  define void @gt_bit_zero() { ret void }
+  define void @not_gt_bit_zero() { ret void }
+  define void @unsigned_live_flags() { ret void }
+  define void @unsigned_nonzero() { ret void }
+  define void @recording_and() { ret void }
+  define void @recording_and_interference() { ret void }
+  define void @mask_nibble() { ret void }
+  define void @mask_two_bits() { ret void }
+  define void @rotated_mask() { ret void }
+  define void @mask_live_result() { ret void }
+  define void @mask_live_flags() { ret void }
+  define void @mask_outside_constant() { ret void }
+  define void @mask_unsigned_order() { ret void }
+  define void @mask_signed_immediate() { ret void }
+...
+---
+name: unsigned_gt_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_gt_zero
+    ; CHECK: CMPWIBC 0, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 44, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: unsigned_le_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_le_zero
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 36, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: gt_bit_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: gt_bit_zero
+    ; CHECK: CMPWIBC 0, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BC killed $cr0gt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: not_gt_bit_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: not_gt_bit_zero
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BCn killed $cr0gt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: unsigned_live_flags
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_live_flags
+    ; CHECK: CMPLWI killed $r3, 0
+    ; CHECK: BCC 44, $cr0, %bb.1
+    $cr0 = CMPLWI killed $r3, 0
+    BCC 44, $cr0, %bb.1
+    BLR implicit $lr, implicit $rm, implicit $cr0
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: unsigned_nonzero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_nonzero
+    ; CHECK: CMPLWI killed $r3, 9
+    ; CHECK: BCC 44
+    $cr0 = CMPLWI killed $r3, 9
+    BCC 44, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: recording_and
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: recording_and
+    ; CHECK: $r4 = ANDI_rec killed $r3, 80, implicit-def $cr0
+    ; CHECK: BC killed $cr0eq, %bb.1
+    $r4 = ANDI_rec killed $r3, 80, implicit-def dead $cr0
+    $cr0 = CMPLWI killed $r4, 0
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: recording_and_interference
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r6
+    ; CHECK-LABEL: name: recording_and_interference
+    ; CHECK: ANDI_rec killed $r3, 80
+    ; CHECK: ANDI_rec killed $r6, 1
+    ; CHECK: CMPWIBC 1, 2, killed $r4, 0
+    $r4 = ANDI_rec killed $r3, 80, implicit-def dead $cr0
+    $r5 = ANDI_rec killed $r6, 1, implicit-def dead $cr0
+    $cr0 = CMPLWI killed $r4, 0
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_nibble
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_nibble
+    ; CHECK: $r4 = RLWINM killed $r3, 28, 28, 31
+    ; CHECK: CMPWIBC 1, 2, killed $r4, 7, %bb.1
+    $r4 = RLWINM killed $r3, 0, 24, 27
+    $cr0 = CMPLWI killed $r4, 112
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_two_bits
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_two_bits
+    ; CHECK: $r4 = RLWINM killed $r3, 20, 30, 31
+    ; CHECK: CMPWIBC 1, 2, killed $r4, 3, %bb.1
+    $r4 = RLWINM killed $r3, 0, 18, 19
+    $cr0 = CMPLWI killed $r4, 12288
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: rotated_mask
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: rotated_mask
+    ; CHECK: $r4 = RLWINM killed $r3, 4, 28, 31
+    ; CHECK: CMPWIBC 1, 2, killed $r4, 7, %bb.1
+    $r4 = RLWINM killed $r3, 8, 24, 27
+    $cr0 = CMPLWI killed $r4, 112
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_live_result
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_live_result
+    ; CHECK: RLWINM killed $r3, 0, 24, 27
+    ; CHECK: CMPLWI $r4, 112
+    ; CHECK: BCC
+    $r4 = RLWINM killed $r3, 0, 24, 27
+    $cr0 = CMPLWI $r4, 112
+    $r5 = OR $r4, killed $r4
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_live_flags
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_live_flags
+    ; CHECK: RLWINM killed $r3, 0, 24, 27
+    ; CHECK: CMPLWI killed $r4, 112
+    $r4 = RLWINM killed $r3, 0, 24, 27
+    $cr0 = CMPLWI killed $r4, 112
+    BCC 76, $cr0, %bb.1
+    BLR implicit $lr, implicit $rm, implicit $cr0
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_outside_constant
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_outside_constant
+    ; CHECK: RLWINM killed $r3, 0, 24, 27
+    ; CHECK: CMPLWI killed $r4, 113
+    $r4 = RLWINM killed $r3, 0, 24, 27
+    $cr0 = CMPLWI killed $r4, 113
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_unsigned_order
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_unsigned_order
+    ; CHECK: RLWINM killed $r3, 0, 24, 27
+    ; CHECK: CMPLWI killed $r4, 112
+    $r4 = RLWINM killed $r3, 0, 24, 27
+    $cr0 = CMPLWI killed $r4, 112
+    BCC 44, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: mask_signed_immediate
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: mask_signed_immediate
+    ; CHECK: RLWINM killed $r3, 0, 16, 19
+    ; CHECK: CMPWI killed $r4, 32768
+    $r4 = RLWINM killed $r3, 0, 16, 19
+    $cr0 = CMPWI killed $r4, 32768
+    BCC 76, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
