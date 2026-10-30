@@ -8,6 +8,8 @@
 
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
@@ -17,6 +19,48 @@ using namespace llvm;
 
 namespace {
 enum PPE42OutlineKind { ReturnViaLR, TailCall };
+
+// LR is reserved, and PPC does not propagate it through block live-in lists.
+// Candidate's block-local availability query therefore cannot prove that a
+// call is safe: a frameless loop may return through LR in a successor block.
+// Follow every path until LR is overwritten, rejecting any intervening read.
+static bool isLRDeadOnAllPaths(outliner::Candidate &C,
+                              const TargetRegisterInfo &TRI) {
+  using Position = std::pair<MachineBasicBlock *,
+                             MachineBasicBlock::iterator>;
+  SmallVector<Position, 16> Worklist;
+  SmallPtrSet<MachineBasicBlock *, 32> Visited;
+  Worklist.emplace_back(C.getMBB(), C.begin());
+  unsigned Instructions = 0;
+  while (!Worklist.empty()) {
+    auto [MBB, It] = Worklist.pop_back_val();
+    bool Overwritten = false;
+    for (; It != MBB->end(); ++It) {
+      if (It->isDebugInstr())
+        continue;
+      if (++Instructions > 4096 || It->readsRegister(PPC::LR, &TRI))
+        return false;
+      if (It->modifiesRegister(PPC::LR, &TRI)) {
+        Overwritten = true;
+        break;
+      }
+    }
+    if (Overwritten)
+      continue;
+    // No known continuation cannot establish that LR is dead (e.g. an
+    // indirect branch). Ordinary returns are rejected as reads above.
+    if (MBB->succ_empty())
+      return false;
+    for (MachineBasicBlock *Succ : MBB->successors()) {
+      if (!Visited.insert(Succ).second)
+        continue;
+      if (Visited.size() > 256)
+        return false;
+      Worklist.emplace_back(Succ, Succ->begin());
+    }
+  }
+  return true;
+}
 }
 
 bool PPCInstrInfo::isFunctionSafeToOutlineFrom(
@@ -126,7 +170,8 @@ PPCInstrInfo::getOutliningCandidateInfo(
     // throughout the sequence and afterwards. A sequence ending in BL already
     // overwrites LR and needs no additional save/restore.
     return C.back().getOpcode() != PPC::BL &&
-           !C.isAvailableAcrossAndOutOfSeq(PPC::LR, TRI);
+           (!C.isAvailableAcrossAndOutOfSeq(PPC::LR, TRI) ||
+            !isLRDeadOnAllPaths(C, TRI));
   });
   if (Candidates.size() < MinRepeats)
     return std::nullopt;
