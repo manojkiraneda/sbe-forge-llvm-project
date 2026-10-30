@@ -53,7 +53,10 @@ public:
       Register Input = Cmp->getOperand(1).getReg();
       if (!MRI.hasOneDef(CR) || !MRI.hasOneDef(Input))
         continue;
-      SmallVector<MachineInstr *, 4> Users;
+      // Generated configuration code can reuse one comparison in 5-10
+      // conditional updates. Keep the analysis bounded without restricting
+      // it to small branch diamonds.
+      SmallVector<MachineInstr *, 16> Users;
       bool Safe = true;
       for (MachineInstr &Use : MRI.use_nodbg_instructions(CR)) {
         if (Use.getOpcode() != PPC::BCC ||
@@ -76,7 +79,7 @@ public:
           break;
         }
         Users.push_back(&Use);
-        if (Users.size() > 4) {
+        if (Users.size() > 16) {
           Safe = false;
           break;
         }
@@ -97,7 +100,7 @@ public:
           auto *BB = Worklist.pop_back_val();
           if (!Visited.insert(BB).second)
             continue;
-          if (Visited.size() > 64) {
+          if (Visited.size() > 256) {
             TooLarge = true;
             break;
           }
