@@ -1,6 +1,6 @@
 # Odyssey SPPE size investigation
 
-This change addresses three confirmed backend gaps found in an Odyssey image
+This change addresses several confirmed backend gaps found in an Odyssey image
 comparison. It also records a negative inlining experiment so that a smaller
 wrapper is not mistaken for a smaller program. No firmware names or addresses
 are encoded in the optimization rules.
@@ -123,6 +123,63 @@ The store and CR fixes reduce actual instruction overhead without imposing
 this measured 52-104-byte reachable-code regression.
 
 ## Validation
+
+### Follow-up after the first firmware rebuild
+
+The first PR63 image shrank by 4,312 bytes, but 511 of 640 remaining
+syntactic SDA store candidates reloaded their address from a stack slot.
+The late address proof deliberately cannot treat arbitrary stack memory as
+an immutable pointer. Normalize the SSA address before it can spill instead:
+
+* Follow up to eight full-register COPY/constant-ADDI definitions to an
+  R13-rooted LA with an exact SDA21 global relocation.
+* Fold the displacement into the global addend, checking signed overflow.
+  Rewrite LWZ/STW/LVD/STVD addresses directly; the access and its MMOs stay
+  at the same program point, including ordered accesses.
+* Reject the invariant if any instruction explicitly changes R13. Calls
+  preserve the reserved base by ABI, but explicit call definitions also reject.
+* Remove only unused pure address chains, and invalidate their debug uses.
+  Address uses that escape to other instructions remain intact.
+* Recognize normalized global/global+4 operands in both pre-RA load pairing
+  and late physical load/store pairing. Alignment and volatile/atomic guards
+  still control whether accesses can be widened.
+
+A controlled reproduction of the matching PHY function normalized 148 memory
+operands and removed its otherwise-spilled SDA pointer. Using the same older
+allocator, text went from 12,280 to 11,752 bytes after normalization, then to
+11,248 with 125 physical store folds and one load fold: 1,032 bytes saved.
+The older allocator emits different absolute code sizes from the installed
+firmware compiler; this comparison isolates the transformation, not final
+image size. The experiment models the new rewrite on saved MIR, not execution
+of newly compiled C++. To capture SDA lowering with stop-before, the saved
+frontend declaration was assigned its existing SBSS section explicitly: the
+shortened pipeline otherwise omits AsmPrinter's module-metadata initialization.
+
+Three smaller follow-ups address the other observed patterns without changing
+the inliner or general select cost policy:
+
+* Fold a strict conditional-OR diamond after allocation: hoist its common
+  base copy, invert the CR branch, and remove the copy block/unconditional
+  jump. Require single-entry copy/update arms, exact source/destination
+  agreement, no extra instructions, and no EH/address-taken arms. Update CFG
+  edges and liveness. This saves one branch in each accepted diamond; it is
+  not a claim that all materialized booleans are removable.
+* Fold an adjacent in-place ADDI and LVD/STVD into an update-form operation,
+  including pairs formed late with two MMOs. Reject ordered accesses, frame
+  operations, R0/R1/R13 updates, mismatched offsets and value/base overlap.
+  Do not introduce a compensating copy or scratch register.
+* Reuse a repeated scalar tuple across short gaps in struct zeroing, without
+  moving the stores past other memory accesses. Keep the range within one
+  block, stop at calls/terminators/asm/clobbers, and require three pairs when
+  gaps are used so two setup instructions can be amortized. Existing contiguous
+  two-pair cases retain their original eligibility.
+
+New MIR tests cover these rewrites and negative cases, with verified complete
+object emission in CI. Local compatibility runs checked inputs and constructed
+expected outputs. The older llc lacks SDA21 parsing and has obsolete LVDU/
+STVDU memory flags, so temporary compatibility outputs use LO spelling and
+omit update MMOs only for that older verifier; repository tests retain the
+actual SDA21 operands and all MMOs. No local LLVM build or download was used.
 
 CI runs positive/negative cached-address MIR cases and complete object emission,
 plus comparison tests with ten users, an eighty-block range, and a seventeen-
