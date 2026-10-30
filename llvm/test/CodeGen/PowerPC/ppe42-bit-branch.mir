@@ -234,8 +234,7 @@ body: |
     liveins: $r3
     ; CHECK-LABEL: name: other_condition_bit
     ; CHECK: RLWINM
-    ; CHECK: CMPLWI
-    ; CHECK: BC $cr0gt, %bb.1
+    ; CHECK: CMPWIBC 0, 2, $r4, 0, %bb.1
     $r4 = RLWINM $r3, 0, 11, 11
     $cr0 = CMPLWI $r4, 0
     BC $cr0gt, %bb.1

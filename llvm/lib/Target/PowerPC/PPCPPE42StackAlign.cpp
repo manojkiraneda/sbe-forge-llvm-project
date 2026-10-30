@@ -10,12 +10,16 @@
 #include "PPCSubtarget.h"
 #include "PPCTargetMachine.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace llvm;
 
@@ -50,8 +54,8 @@ public:
         if (CopySize.isScalable() || CopySize.getFixedValue() < 4)
           continue;
         int64_t Offset = 0;
-        auto *AI = dyn_cast<AllocaInst>(GetPointerBaseWithConstantOffset(
-            CB->getArgOperand(A), Offset, DL));
+        auto *AI = dyn_cast<AllocaInst>(
+            GetPointerBaseWithConstantOffset(CB->getArgOperand(A), Offset, DL));
         if (!AI || !AI->isStaticAlloca() || AI->isUsedWithInAlloca() ||
             AI->isSwiftError() ||
             AI->getAddressSpace() != DL.getAllocaAddrSpace() || Offset < 0 ||
@@ -101,7 +105,8 @@ public:
       auto *AI = dyn_cast<AllocaInst>(
           GetPointerBaseWithConstantOffset(Ptr, Offset, DL));
       if (!AI || !AI->isStaticAlloca() || AI->isUsedWithInAlloca() ||
-          AI->isSwiftError() || AI->getAddressSpace() != DL.getAllocaAddrSpace())
+          AI->isSwiftError() ||
+          AI->getAddressSpace() != DL.getAllocaAddrSpace())
         continue;
       auto *ST = dyn_cast<StructType>(AI->getAllocatedType());
       auto *Count = dyn_cast<ConstantInt>(AI->getArraySize());
@@ -119,13 +124,71 @@ public:
     }
     for (auto [AI, Alignment] : Alignments)
       AI->setAlignment(Alignment);
+    bool Changed = !Alignments.empty();
+    SmallVector<MemSetInst *, 8> ZeroFills;
+    for (Instruction &I : instructions(F))
+      if (auto *MS = dyn_cast<MemSetInst>(&I))
+        ZeroFills.push_back(MS);
+    for (MemSetInst *MS : ZeroFills) {
+      auto *ByteValue = dyn_cast<ConstantInt>(MS->getValue());
+      auto *Length = dyn_cast<ConstantInt>(MS->getLength());
+      if (MS->isVolatile() || !ByteValue || !ByteValue->isZero() || !Length ||
+          Length->getValue().ugt(16) || Length->getValue().ult(4))
+        continue;
+      uint64_t Bytes = Length->getZExtValue();
+      int64_t Offset = 0;
+      auto *AI = dyn_cast<AllocaInst>(
+          GetPointerBaseWithConstantOffset(MS->getDest(), Offset, DL));
+      if (!AI || !AI->isStaticAlloca() || AI->isUsedWithInAlloca() ||
+          AI->isSwiftError() ||
+          AI->getAddressSpace() != DL.getAllocaAddrSpace() || Offset < 0 ||
+          AI->getAlign() < Align(4) || !AI->getAllocatedType()->isSized())
+        continue;
+      auto *Count = dyn_cast<ConstantInt>(AI->getArraySize());
+      TypeSize Size = DL.getTypeAllocSize(AI->getAllocatedType());
+      if (!Count || !Count->isOne() || Size.isScalable() ||
+          uint64_t(Offset) > Size.getFixedValue() ||
+          Bytes > Size.getFixedValue() - uint64_t(Offset))
+        continue;
+      // An odd interior offset hides the word alignment of later bytes from
+      // generic memset expansion. Peel only within this small local object;
+      // never overstore padding outside the requested range.
+      Align StartAlign = std::max(commonAlignment(AI->getAlign(), Offset),
+                                  MS->getDestAlign().valueOrOne());
+      if (StartAlign >= Align(4))
+        continue;
+      SmallVector<unsigned, 16> Widths;
+      for (unsigned Written = 0; Written < Bytes;) {
+        unsigned Width = 4;
+        while (Width > Bytes - Written ||
+               commonAlignment(AI->getAlign(), uint64_t(Offset) + Written) < Align(Width))
+          Width /= 2;
+        Widths.push_back(Width);
+        Written += Width;
+      }
+      if (Widths.size() >= divideCeil(Bytes, StartAlign.value()))
+        continue;
+      IRBuilder<> B(MS);
+      unsigned Written = 0;
+      for (unsigned Width : Widths) {
+        Type *Ty = B.getIntNTy(Width * 8);
+        Value *Ptr =
+            B.CreateConstGEP1_32(B.getInt8Ty(), MS->getDest(), Written);
+        B.CreateAlignedStore(ConstantInt::get(Ty, 0), Ptr, Align(Width));
+        Written += Width;
+      }
+      MS->eraseFromParent();
+      Changed = true;
+    }
     // SelectionDAG's pointer-alignment inference propagates the stronger frame
     // alignment to loads/stores before legalization. External and genuinely
     // unaligned packed accesses keep their original alignment and lowering.
-    return !Alignments.empty();
+    return Changed;
   }
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override { AU.setPreservesCFG(); }
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
+  }
 };
 } // namespace
 
