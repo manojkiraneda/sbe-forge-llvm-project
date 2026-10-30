@@ -11,6 +11,9 @@
 ---
 name: across_call
 tracksRegLiveness: true
+frameInfo:
+  adjustsStack: true
+  hasCalls: true
 body: |
   bb.0:
     liveins: $r5, $r13
@@ -49,6 +52,9 @@ body: |
 ---
 name: tuple_only
 tracksRegLiveness: true
+frameInfo:
+  adjustsStack: true
+  hasCalls: true
 body: |
   bb.0:
     liveins: $r5
