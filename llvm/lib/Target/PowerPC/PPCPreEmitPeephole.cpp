@@ -128,6 +128,129 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       return MachineFunctionProperties().setNoVRegs();
     }
 
+    // Hoist the identical base copy out of a conditional OR update:
+    //   bcc update; copy dst,src; b join; update: ori dst,src,mask
+    // becomes copy; inverted-bcc join; ori. No speculative memory or CR
+    // computation is introduced, and both paths still define the same value.
+    bool simplifyPPE42ConditionalUpdates(MachineFunction &MF) {
+      bool Changed = false;
+      for (auto I = MF.begin(); I != MF.end(); ++I) {
+        MachineBasicBlock &Head = *I;
+        auto Branch = Head.getLastNonDebugInstr();
+        if (Branch == Head.end() || Branch->getOpcode() != PPC::BCC ||
+            !Branch->getOperand(2).isMBB() ||
+            Head.getFirstTerminator() != Branch || Head.succ_size() != 2)
+          continue;
+        MachineBasicBlock *CopyBB = Head.getNextNode();
+        MachineBasicBlock *UpdateBB = Branch->getOperand(2).getMBB();
+        if (!CopyBB || CopyBB == UpdateBB || !Head.isSuccessor(CopyBB) ||
+            !Head.isSuccessor(UpdateBB) ||
+            CopyBB->getNextNode() != UpdateBB ||
+            CopyBB->pred_size() != 1 || UpdateBB->pred_size() != 1 ||
+            CopyBB->isEHPad() || UpdateBB->isEHPad() ||
+            CopyBB->hasAddressTaken() || UpdateBB->hasAddressTaken() ||
+            CopyBB->succ_size() != 1 || UpdateBB->succ_size() != 1)
+          continue;
+        MachineBasicBlock *Join = UpdateBB->getNextNode();
+        if (!Join || Join == &Head || *CopyBB->succ_begin() != Join ||
+            *UpdateBB->succ_begin() != Join ||
+            (!Join->empty() && Join->front().isPHI()))
+          continue;
+        SmallVector<MachineInstr *, 2> Copies, Updates;
+        for (MachineInstr &MI : *CopyBB)
+          if (!MI.isDebugInstr())
+            Copies.push_back(&MI);
+        for (MachineInstr &MI : *UpdateBB)
+          if (!MI.isDebugInstr())
+            Updates.push_back(&MI);
+        if (Copies.size() != 2 || Updates.size() != 1 ||
+            Copies[1]->getOpcode() != PPC::B ||
+            Copies[1]->getOperand(0).getMBB() != Join)
+          continue;
+        MachineInstr &Copy = *Copies[0], &Update = *Updates[0];
+        bool IsCopy = Copy.isCopy() ||
+                      (Copy.getOpcode() == PPC::OR &&
+                       Copy.getOperand(1).isIdenticalTo(Copy.getOperand(2)) &&
+                       !Copy.getOperand(2).isUndef());
+        if (!IsCopy || (Update.getOpcode() != PPC::ORI &&
+                        Update.getOpcode() != PPC::ORIS) ||
+            Copy.getOperand(0).getReg() != Update.getOperand(0).getReg() ||
+            Copy.getOperand(1).getReg() != Update.getOperand(1).getReg() ||
+            Copy.getOperand(0).getSubReg() || Copy.getOperand(1).getSubReg() ||
+            Copy.getOperand(1).isUndef() || Update.getOperand(1).isUndef())
+          continue;
+        Head.splice(Branch, CopyBB, Copy.getIterator());
+        Branch->getOperand(0).setImm(PPC::InvertPredicate(
+            static_cast<PPC::Predicate>(Branch->getOperand(0).getImm())));
+        Branch->getOperand(2).setMBB(Join);
+        Head.replaceSuccessor(CopyBB, Join);
+        CopyBB->removeSuccessor(Join);
+        CopyBB->eraseFromParent();
+        recomputeLivenessFlags(Head);
+        recomputeLivenessFlags(*UpdateBB);
+        Changed = true;
+      }
+      return Changed;
+    }
+
+    // Pair formation can happen after allocation, too late for the pre-RA
+    // update-form fold. An adjacent in-place ADDI needs no compensating copy.
+    bool combinePPE42Updates(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
+                              const TargetRegisterInfo &TRI) {
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &First = *I++;
+        auto Next = I;
+        while (Next != MBB.end() && Next->isDebugInstr())
+          ++Next;
+        if (Next == MBB.end())
+          continue;
+        bool AddFirst = First.getOpcode() == PPC::ADDI;
+        MachineInstr &Add = AddFirst ? First : *Next;
+        MachineInstr &Mem = AddFirst ? *Next : First;
+        bool IsLoad = Mem.getOpcode() == PPC::LVD;
+        if (Add.getOpcode() != PPC::ADDI || Add.getNumOperands() != 3 ||
+            (!IsLoad && Mem.getOpcode() != PPC::STVD) ||
+            Mem.getNumOperands() != 3 || Mem.memoperands_empty() ||
+            !Add.getOperand(2).isImm() || !Mem.getOperand(1).isImm() ||
+            Add.getOperand(1).isUndef() || Mem.getOperand(2).isUndef() ||
+            (!IsLoad && Mem.getOperand(0).isUndef()) ||
+            Mem.hasOrderedMemoryRef() ||
+            Mem.getFlag(MachineInstr::FrameSetup) ||
+            Mem.getFlag(MachineInstr::FrameDestroy) ||
+            Add.getFlag(MachineInstr::FrameSetup) ||
+            Add.getFlag(MachineInstr::FrameDestroy))
+          continue;
+        Register Base = Mem.getOperand(2).getReg();
+        int64_t Offset = Add.getOperand(2).getImm();
+        if (Base == PPC::R0 || Base == PPC::R1 || Base == PPC::R13 ||
+            Add.getOperand(0).getReg() != Base ||
+            Add.getOperand(1).getReg() != Base || !Offset ||
+            !isInt<16>(Offset) ||
+            Mem.getOperand(1).getImm() != (AddFirst ? 0 : Offset) ||
+            TRI.regsOverlap(Base, Mem.getOperand(0).getReg()))
+          continue;
+        MachineInstrBuilder Update =
+            BuildMI(MBB, First, First.getDebugLoc(),
+                    TII.get(IsLoad ? PPC::LVDU : PPC::STVDU));
+        if (IsLoad)
+          Update.addReg(Mem.getOperand(0).getReg(),
+                        RegState::Define | RegState::EarlyClobber);
+        Update.addReg(Base, RegState::Define);
+        if (!IsLoad)
+          Update.addReg(Mem.getOperand(0).getReg());
+        Update.addImm(Offset).addReg(Base).cloneMemRefs(Mem);
+        Update.setMIFlags(Mem.getFlags());
+        I = std::next(Next);
+        First.eraseFromParent();
+        Next->eraseFromParent();
+        Changed = true;
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
     // STVD stores the two GPRs of a VDR tuple in one doubleword. The word
     // stores may be separated by register-only instructions after scheduling.
     bool combinePPE42WordStores(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
@@ -256,7 +379,9 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
                                           Second.getOperand(2).getReg())
             Swap = A.getImm() > B.getImm();
           else
-            Swap = (A.isImm() && B.isGlobal()) ||
+            Swap = (A.isGlobal() && B.isGlobal() &&
+                    A.getOffset() > B.getOffset()) ||
+                   (A.isImm() && B.isGlobal()) ||
                    ((*First.memoperands_begin())->getAlign() < Align(8) &&
                     (*Second.memoperands_begin())->getAlign() >= Align(8));
           if (Swap)
@@ -446,6 +571,14 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
                 !DerivedAddressMatches(Base, Offset, LoBase, LoOffset - 4))
               continue;
           }
+        } else if (HiDisp.isGlobal() && LoDisp.isGlobal() &&
+                   Base == PPC::R13 && LoBase == Base &&
+                   HiDisp.getTargetFlags() == PPCII::MO_SDA21 &&
+                   LoDisp.getTargetFlags() == PPCII::MO_SDA21 &&
+                   HiDisp.getGlobal() == LoDisp.getGlobal() &&
+                   HiDisp.getOffset() <= INT64_MAX - 4 &&
+                   LoDisp.getOffset() == HiDisp.getOffset() + 4) {
+          // Both operands were normalized before allocation.
         } else if (!SymbolicAddressMatches(LoBase, Base) &&
                    !CachedSDAAddressMatches()) {
           continue;
@@ -499,7 +632,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         MachineInstr &First = *I++;
         if (First.getOpcode() != PPC::LWZ || First.getNumOperands() != 3 ||
             !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
-            !First.getOperand(1).isImm() || !First.getOperand(2).isReg())
+            (!First.getOperand(1).isImm() &&
+             !First.getOperand(1).isGlobal()) || !First.getOperand(2).isReg())
           continue;
 
         auto Next = I;
@@ -522,19 +656,34 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         MachineInstr &Second = *Next;
         if (Second.getOpcode() != PPC::LWZ || Second.getNumOperands() != 3 ||
             !Second.hasOneMemOperand() || !Second.getOperand(0).isReg() ||
-            !Second.getOperand(1).isImm() || !Second.getOperand(2).isReg())
+            (!Second.getOperand(1).isImm() &&
+             !Second.getOperand(1).isGlobal()) || !Second.getOperand(2).isReg())
           continue;
 
-        MachineInstr &HiLoad = First.getOperand(1).getImm() <=
-                                       Second.getOperand(1).getImm()
+        const MachineOperand &A = First.getOperand(1);
+        const MachineOperand &B = Second.getOperand(1);
+        bool Numeric = A.isImm() && B.isImm();
+        if (!Numeric && (!A.isGlobal() || !B.isGlobal()))
+          continue;
+        MachineInstr &HiLoad = (Numeric ? A.getImm() <= B.getImm()
+                                       : A.getOffset() <= B.getOffset())
                                    ? First
                                    : Second;
         MachineInstr &LoLoad = &HiLoad == &First ? Second : First;
-        int64_t Offset = HiLoad.getOperand(1).getImm();
+        const MachineOperand &HiDisp = HiLoad.getOperand(1);
+        const MachineOperand &LoDisp = LoLoad.getOperand(1);
         Register Base = HiLoad.getOperand(2).getReg();
-        if (!isInt<16>(Offset) || !isInt<16>(Offset + 4) ||
-            LoLoad.getOperand(1).getImm() != Offset + 4 ||
-            Base != LoLoad.getOperand(2).getReg() ||
+        bool Adjacent = Numeric
+                            ? isInt<16>(HiDisp.getImm()) &&
+                                  isInt<16>(HiDisp.getImm() + 4) &&
+                                  LoDisp.getImm() == HiDisp.getImm() + 4
+                            : Base == PPC::R13 &&
+                                  HiDisp.getTargetFlags() == PPCII::MO_SDA21 &&
+                                  LoDisp.getTargetFlags() == PPCII::MO_SDA21 &&
+                                  HiDisp.getGlobal() == LoDisp.getGlobal() &&
+                                  HiDisp.getOffset() <= INT64_MAX - 4 &&
+                                  LoDisp.getOffset() == HiDisp.getOffset() + 4;
+        if (!Adjacent || Base != LoLoad.getOperand(2).getReg() ||
             Base == First.getOperand(0).getReg() ||
             Base == Second.getOperand(0).getReg())
           continue;
@@ -545,7 +694,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         if (!HiMem->isLoad() || !LoMem->isLoad() ||
             HiMem->isVolatile() || LoMem->isVolatile() ||
             HiMem->isAtomic() || LoMem->isAtomic() ||
-            !isAlignedPPE42Pair(MBB, Base, Offset, HiMem) ||
+            (Numeric ? !isAlignedPPE42Pair(MBB, Base, HiDisp.getImm(), HiMem)
+                     : HiMem->getAlign() < Align(8)) ||
             LoMem->getAlign() < Align(4))
           continue;
 
@@ -568,7 +718,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
 
         BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
                 TII.get(PPC::LVD), Pair)
-            .addImm(Offset)
+            .add(HiDisp)
             .addReg(Base, Second.getOperand(2).isKill() ? RegState::Kill : 0)
             .addMemOperand(HiMem)
             .addMemOperand(LoMem);
@@ -1068,11 +1218,14 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       }
       // Run after the other late folds, which can expose adjacent word ops.
       if (MF.getSubtarget<PPCSubtarget>().isPPE42() &&
-          !MF.getSubtarget<PPCSubtarget>().isLittleEndian())
+          !MF.getSubtarget<PPCSubtarget>().isLittleEndian()) {
+        Changed |= simplifyPPE42ConditionalUpdates(MF);
         for (MachineBasicBlock &MBB : MF) {
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
+          Changed |= combinePPE42Updates(MBB, *TII, *TRI);
         }
+      }
       return Changed;
     }
   };
