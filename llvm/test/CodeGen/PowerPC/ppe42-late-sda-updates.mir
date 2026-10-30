@@ -1,0 +1,276 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+--- |
+  @g = external global [4 x i32], align 8
+  define void @load() { ret void }
+  define void @load_reverse() { ret void }
+  define void @store() { ret void }
+  define void @store_reverse() { ret void }
+  define void @store_update_after() { ret void }
+  define void @store_update_before() { ret void }
+  define void @load_update_after() { ret void }
+  define void @load_update_before() { ret void }
+  define void @different_base() { ret void }
+  define void @volatile_update() { ret void }
+  define void @overlap_update() { ret void }
+  define void @stack_update() { ret void }
+  define void @different_offset() { ret void }
+  define void @late_pair_update() { ret void }
+  define void @conditional_or() { ret void }
+  define void @different_or_source() { ret void }
+...
+---
+name: load
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: load
+  ; CHECK: $r3_r4 = LVD target-flags(ppc-sda21) @g, $r13
+  ; CHECK-NOT: LWZ
+  bb.0:
+    liveins: $r13, $r3, $r4
+    $r3 = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
+    $r4 = LWZ target-flags(ppc-sda21) @g + 4, $r13 :: (load (s32) from @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: load_reverse
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: load_reverse
+  ; CHECK: $r3_r4 = LVD target-flags(ppc-sda21) @g, $r13
+  ; CHECK-NOT: LWZ
+  bb.0:
+    liveins: $r13, $r3, $r4
+    $r4 = LWZ target-flags(ppc-sda21) @g + 4, $r13 :: (load (s32) from @g + 4, align 4)
+    $r3 = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: store
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store
+  ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+  ; CHECK-NOT: STW
+  bb.0:
+    liveins: $r13, $r3, $r4
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    STW $r4, target-flags(ppc-sda21) @g + 4, $r13 :: (store (s32) into @g + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: store_reverse
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store_reverse
+  ; CHECK: STVD $r3_r4, target-flags(ppc-sda21) @g, $r13
+  ; CHECK-NOT: STW
+  bb.0:
+    liveins: $r13, $r3, $r4
+    STW $r4, target-flags(ppc-sda21) @g + 4, $r13 :: (store (s32) into @g + 4, align 4)
+    STW $r3, target-flags(ppc-sda21) @g, $r13 :: (store (s32) into @g, align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: store_update_after
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store_update_after
+  ; CHECK-NOT: ADDI
+  ; CHECK: STVDU
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    STVD $r3_r4, 8, $r6 :: (store (s64), align 8)
+    $r6 = ADDI $r6, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: store_update_before
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store_update_before
+  ; CHECK-NOT: ADDI
+  ; CHECK: STVDU
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    $r6 = ADDI $r6, 8
+    STVD $r3_r4, 0, $r6 :: (store (s64), align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: load_update_after
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: load_update_after
+  ; CHECK-NOT: ADDI
+  ; CHECK: LVDU
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    $r3_r4 = LVD 8, $r6 :: (load (s64), align 8)
+    $r6 = ADDI $r6, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: load_update_before
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: load_update_before
+  ; CHECK-NOT: ADDI
+  ; CHECK: LVDU
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    $r6 = ADDI $r6, -8
+    $r3_r4 = LVD 0, $r6 :: (load (s64), align 8)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_base
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: different_base
+  ; CHECK-NOT: STVDU
+  ; CHECK: STVD
+  ; CHECK: ADDI
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    STVD $r3_r4, 8, $r6 :: (store (s64), align 8)
+    $r7 = ADDI $r6, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: volatile_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: volatile_update
+  ; CHECK-NOT: STVDU
+  ; CHECK: STVD
+  ; CHECK: ADDI
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    STVD $r3_r4, 8, $r6 :: (volatile store (s64), align 8)
+    $r6 = ADDI $r6, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: overlap_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: overlap_update
+  ; CHECK-NOT: STVDU
+  ; CHECK: STVD
+  ; CHECK: ADDI
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    STVD $r3_r4, 8, $r3 :: (store (s64), align 8)
+    $r3 = ADDI $r3, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stack_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: stack_update
+  ; CHECK-NOT: STVDU
+  ; CHECK: STVD
+  ; CHECK: ADDI
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    STVD $r3_r4, 8, $r1 :: (store (s64), align 8)
+    $r1 = ADDI $r1, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_offset
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: different_offset
+  ; CHECK-NOT: STVDU
+  ; CHECK: STVD
+  ; CHECK: ADDI
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r1, $r3_r4, $r6
+    STVD $r3_r4, 16, $r6 :: (store (s64), align 8)
+    $r6 = ADDI $r6, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: late_pair_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: late_pair_update
+  ; CHECK: STVDU
+  ; CHECK-NOT: STW
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r3_r4, $r6
+    STW $r3, 8, $r6 :: (store (s32), align 8)
+    STW $r4, 12, $r6 :: (store (s32), align 4)
+    $r6 = ADDI $r6, 8
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: conditional_or
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: conditional_or
+  ; CHECK: $r6 = OR
+  ; CHECK: BCC 68,
+  ; CHECK-NOT: {{^ *B %bb}}
+  ; CHECK: ORI
+  bb.0:
+    liveins: $r3, $r4, $r5
+    successors: %bb.1, %bb.2
+    $cr0 = CMPWI $r3, 0
+    BCC 76, $cr0, %bb.2
+  bb.1:
+    liveins: $r4
+    successors: %bb.3
+    $r6 = OR $r4, $r4
+    B %bb.3
+  bb.2:
+    liveins: $r4, $r5
+    successors: %bb.3
+    $r6 = ORI $r4, 32
+  bb.3:
+    liveins: $r6
+    $r3 = OR $r6, $r6
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_or_source
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: different_or_source
+  ; CHECK: BCC 76,
+  ; CHECK: $r6 = OR
+  ; CHECK: B %bb
+  ; CHECK: ORI
+  bb.0:
+    liveins: $r3, $r4, $r5
+    successors: %bb.1, %bb.2
+    $cr0 = CMPWI $r3, 0
+    BCC 76, $cr0, %bb.2
+  bb.1:
+    liveins: $r4
+    successors: %bb.3
+    $r6 = OR $r4, $r4
+    B %bb.3
+  bb.2:
+    liveins: $r4, $r5
+    successors: %bb.3
+    $r6 = ORI $r5, 32
+  bb.3:
+    liveins: $r6
+    $r3 = OR $r6, $r6
+    BLR implicit $lr, implicit undef $rm
+...
