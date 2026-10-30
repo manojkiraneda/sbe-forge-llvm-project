@@ -54,8 +54,8 @@ body: |
     ; CHECK-LABEL: name: different_symbol
     ; CHECK-NOT: LVD
     ; CHECK: LWZ target-flags(ppc-sda21) @g
-    ; CHECK: LA $r13, target-flags(ppc-sda21) @other
-    ; CHECK: LWZ 4,
+    ; CHECK-NOT: LA
+    ; CHECK: LWZ target-flags(ppc-sda21) @other + 4, $r13
     %0:gprc = LWZ target-flags(ppc-sda21) @g, $r13 :: (load (s32) from @g, align 8)
     %1:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @other
     %2:gprc = LWZ 4, %1 :: (load (s32) from @other + 4, align 4)
