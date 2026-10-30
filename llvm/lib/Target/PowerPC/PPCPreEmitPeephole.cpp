@@ -14,6 +14,7 @@
 #include "PPC.h"
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
@@ -25,6 +26,7 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include <tuple>
 
 using namespace llvm;
 
@@ -268,6 +270,86 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           }
           return false;
         };
+        // A size-optimized caller often keeps an SDA address in a callee-
+        // saved register across many calls and blocks. Prove all reaching
+        // definitions, including copies, rather than relying on proximity.
+        // Only R13-based SDA relocations are admitted here; arbitrary roots
+        // may have changed since the cached address was formed.
+        auto CachedSDAAddressMatches = [&]() {
+          if (Base != PPC::R13 || !HiDisp.isGlobal() ||
+              HiDisp.getTargetFlags() != PPCII::MO_SDA21 || !LoDisp.isImm() ||
+              LoDisp.getImm() != 4 || LoBase == PPC::R0 || LoBase == PPC::R13)
+            return false;
+          struct Query {
+            MachineBasicBlock *BB;
+            MachineInstr *Before;
+            Register Reg;
+          };
+          SmallVector<Query, 16> Pending{{&MBB, &First, LoBase}};
+          SmallVector<std::tuple<MachineBasicBlock *, MachineInstr *, unsigned>,
+                      32>
+              Visited;
+          unsigned Budget = 1024;
+          bool FoundDefinition = false;
+          while (!Pending.empty()) {
+            Query Q = Pending.pop_back_val();
+            auto Key = std::make_tuple(Q.BB, Q.Before, unsigned(Q.Reg));
+            if (llvm::is_contained(Visited, Key))
+              continue;
+            if (Visited.size() == 64)
+              return false;
+            Visited.push_back(Key);
+            auto P = Q.Before ? Q.Before->getIterator() : Q.BB->end();
+            bool Resolved = false;
+            while (P != Q.BB->begin()) {
+              MachineInstr &MI = *--P;
+              if (MI.isDebugInstr())
+                continue;
+              if (!Budget--)
+                return false;
+              // R13 is reserved for the SDA base. Calls preserve that ABI
+              // invariant even if their regmask omits reserved registers.
+              // Explicit definitions and inline-asm clobbers still reject.
+              if (MI.modifiesRegister(PPC::R13, &TRI) &&
+                  (!MI.isCall() || MI.definesRegister(PPC::R13, &TRI)))
+                return false;
+              if (!MI.modifiesRegister(Q.Reg, &TRI))
+                continue;
+              if (MI.getOpcode() == PPC::LA &&
+                  MI.getOperand(0).getReg() == Q.Reg &&
+                  MI.getOperand(1).getReg() == PPC::R13 &&
+                  MI.getOperand(2).isIdenticalTo(HiDisp)) {
+                FoundDefinition = Resolved = true;
+                break;
+              }
+              Register Source;
+              if (MI.isCopy() && MI.getOperand(0).getReg() == Q.Reg &&
+                  !MI.getOperand(0).getSubReg() &&
+                  !MI.getOperand(1).getSubReg() && !MI.getOperand(1).isUndef())
+                Source = MI.getOperand(1).getReg();
+              else if (MI.getOpcode() == PPC::OR &&
+                       MI.getOperand(0).getReg() == Q.Reg &&
+                       MI.getOperand(1).getReg() == MI.getOperand(2).getReg() &&
+                       !MI.getOperand(1).isUndef() &&
+                       !MI.getOperand(2).isUndef())
+                Source = MI.getOperand(1).getReg();
+              if (!Source || !PPC::GPRCRegClass.contains(Source))
+                return false;
+              Pending.push_back({Q.BB, &MI, Source});
+              Resolved = true;
+              break;
+            }
+            if (!Resolved) {
+              if (Q.BB->pred_empty())
+                return false;
+              for (MachineBasicBlock *Pred : Q.BB->predecessors())
+                Pending.push_back({Pred, nullptr, Q.Reg});
+            }
+          }
+          // Revisiting a query closes an unchanged loop. At least one path
+          // must nevertheless reach a matching definition, not just a cycle.
+          return FoundDefinition;
+        };
         if (HiDisp.isImm() && LoDisp.isImm()) {
           int64_t Offset = HiDisp.getImm();
           int64_t LoOffset = LoDisp.getImm();
@@ -276,7 +358,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
                 !DerivedAddressMatches(Base, Offset, LoBase, LoOffset - 4))
               continue;
           }
-        } else if (!SymbolicAddressMatches(LoBase, Base)) {
+        } else if (!SymbolicAddressMatches(LoBase, Base) &&
+                   !CachedSDAAddressMatches()) {
           continue;
         }
 
