@@ -40,6 +40,83 @@ public:
     const auto &TII = *ST.getInstrInfo();
     const auto &TRI = *ST.getRegisterInfo();
     bool Changed = false;
+    // R13 is an ABI-invariant SDA base. Fold an SSA address into each memory
+    // operand before allocation can spill the cached pointer across calls.
+    // Do not infer this invariant for functions explicitly changing R13.
+    bool StableSDA = true;
+    for (MachineBasicBlock &MBB : MF)
+      for (MachineInstr &MI : MBB)
+        if (MI.modifiesRegister(PPC::R13, &TRI) &&
+            (!MI.isCall() || MI.definesRegister(PPC::R13, &TRI)))
+          StableSDA = false;
+    SmallVector<Register, 32> OldAddresses;
+    if (StableSDA)
+      for (MachineBasicBlock &MBB : MF)
+        for (MachineInstr &MI : MBB) {
+          if ((MI.getOpcode() != PPC::LWZ && MI.getOpcode() != PPC::STW &&
+               MI.getOpcode() != PPC::LVD && MI.getOpcode() != PPC::STVD) ||
+              MI.getNumOperands() != 3 || !MI.getOperand(1).isImm() ||
+              !MI.getOperand(2).isReg() || MI.getOperand(2).getSubReg() ||
+              MI.getOperand(2).isUndef())
+            continue;
+          Register Address = MI.getOperand(2).getReg();
+          Register Reg = Address;
+          int64_t Offset = MI.getOperand(1).getImm();
+          MachineInstr *Root = nullptr;
+          for (unsigned Steps = 0; Steps != 8 && Reg.isVirtual(); ++Steps) {
+            MachineInstr *Def = MRI.getVRegDef(Reg);
+            if (!Def || !MRI.hasOneDef(Reg) || Def->getNumOperands() < 2)
+              break;
+            if (Def->getOpcode() == PPC::LA &&
+                Def->getOperand(1).getReg() == PPC::R13 &&
+                !Def->getOperand(1).isUndef() &&
+                Def->getOperand(2).isGlobal() &&
+                Def->getOperand(2).getTargetFlags() == PPCII::MO_SDA21) {
+              Root = Def;
+              break;
+            }
+            if (Def->isCopy() && !Def->getOperand(1).getSubReg() &&
+                !Def->getOperand(1).isUndef()) {
+              Reg = Def->getOperand(1).getReg();
+              continue;
+            }
+            if (Def->getOpcode() == PPC::ADDI &&
+                Def->getOperand(1).isReg() &&
+                !Def->getOperand(1).getSubReg() &&
+                !Def->getOperand(1).isUndef() &&
+                Def->getOperand(2).isImm() &&
+                !AddOverflow(Offset, Def->getOperand(2).getImm(), Offset)) {
+              Reg = Def->getOperand(1).getReg();
+              continue;
+            }
+            break;
+          }
+          if (!Root || AddOverflow(Offset, Root->getOperand(2).getOffset(),
+                                   Offset))
+            continue;
+          MI.getOperand(1).ChangeToGA(Root->getOperand(2).getGlobal(), Offset,
+                                      PPCII::MO_SDA21);
+          MI.getOperand(2).setReg(PPC::R13);
+          MI.getOperand(2).setIsKill(false);
+          MI.getOperand(2).setIsRenamable(false);
+          OldAddresses.push_back(Address);
+          Changed = true;
+        }
+    // Remove only the pure address/copy chain that became unused. In
+    // particular, do not extend this into memory-value or spill-slot reasoning.
+    while (!OldAddresses.empty()) {
+      Register Reg = OldAddresses.pop_back_val();
+      if (!Reg.isVirtual() || !MRI.use_nodbg_empty(Reg))
+        continue;
+      MachineInstr *Def = MRI.getVRegDef(Reg);
+      if (!Def || (Def->getOpcode() != PPC::LA &&
+                   Def->getOpcode() != PPC::ADDI && !Def->isCopy()))
+        continue;
+      Register Input = Def->getOperand(1).getReg();
+      MRI.markUsesInDebugValueAsUndef(Reg);
+      Def->eraseFromParent();
+      OldAddresses.push_back(Input);
+    }
     // A 64-bit call result is returned in r3:r4. Keeping its two COPY
     // results as unrelated GPRs lets allocation spill them into independent
     // four-byte slots, often in reverse address order. Keep the value in a
@@ -188,7 +265,9 @@ public:
         bool Numeric = FirstDisp.isImm() && SecondDisp.isImm();
         MachineInstr &HiLoad =
             (Numeric ? FirstDisp.getImm() <= SecondDisp.getImm()
-                     : FirstDisp.isGlobal())
+                     : FirstDisp.isGlobal() &&
+                           (!SecondDisp.isGlobal() ||
+                            FirstDisp.getOffset() <= SecondDisp.getOffset()))
                 ? First
                 : Second;
         MachineInstr &LoLoad = &HiLoad == &First ? Second : First;
@@ -221,28 +300,38 @@ public:
           // Match the exact relocation and root register, including SDA21.
           // Pair before allocation so a return can use r3:r4 directly.
           const MachineOperand &LoBase = LoLoad.getOperand(2);
-          if (!HiDisp.isGlobal() || !LoDisp.isImm() || LoDisp.getImm() != 4 ||
-              !Base.isReg() || Base.getReg() == PPC::R0 || !LoBase.isReg() ||
-              !LoBase.getReg().isVirtual())
-            continue;
-          Address = MRI.getVRegDef(LoBase.getReg());
-          if (!Address || Address->getParent() != &MBB ||
-              Address->getOpcode() != PPC::LA ||
-              Address->getNumOperands() != 3 ||
-              !SameBase(Base, Address->getOperand(1)) ||
-              !HiDisp.isIdenticalTo(Address->getOperand(2)))
-            continue;
-          // A virtual root is SSA. Also check physical roots for changes
-          // between the address computation and its low-word load.
-          bool RootChanged = false;
-          for (auto It = std::next(Address->getIterator());
-               It != LoLoad.getIterator(); ++It)
-            if (It->modifiesRegister(Base.getReg(), &TRI)) {
-              RootChanged = true;
-              break;
-            }
-          if (RootChanged)
-            continue;
+          bool DirectSDA = HiDisp.isGlobal() && LoDisp.isGlobal() &&
+                           Base.isReg() && Base.getReg() == PPC::R13 &&
+                           SameBase(Base, LoBase) &&
+                           HiDisp.getTargetFlags() == PPCII::MO_SDA21 &&
+                           LoDisp.getTargetFlags() == PPCII::MO_SDA21 &&
+                           HiDisp.getGlobal() == LoDisp.getGlobal() &&
+                           HiDisp.getOffset() <= INT64_MAX - 4 &&
+                           LoDisp.getOffset() == HiDisp.getOffset() + 4;
+          if (!DirectSDA) {
+            if (!HiDisp.isGlobal() || !LoDisp.isImm() || LoDisp.getImm() != 4 ||
+                !Base.isReg() || Base.getReg() == PPC::R0 || !LoBase.isReg() ||
+                !LoBase.getReg().isVirtual())
+              continue;
+            Address = MRI.getVRegDef(LoBase.getReg());
+            if (!Address || Address->getParent() != &MBB ||
+                Address->getOpcode() != PPC::LA ||
+                Address->getNumOperands() != 3 ||
+                !SameBase(Base, Address->getOperand(1)) ||
+                !HiDisp.isIdenticalTo(Address->getOperand(2)))
+              continue;
+            // A virtual root is SSA. Also check physical roots for changes
+            // between the address computation and its low-word load.
+            bool RootChanged = false;
+            for (auto It = std::next(Address->getIterator());
+                 It != LoLoad.getIterator(); ++It)
+              if (It->modifiesRegister(Base.getReg(), &TRI)) {
+                RootChanged = true;
+                break;
+              }
+            if (RootChanged)
+              continue;
+          }
         }
 
         MachineMemOperand *HiMem = *HiLoad.memoperands_begin();
@@ -402,19 +491,27 @@ public:
         if (Hi == Lo) {
           // A pair of stores of one value needs a copy into the other half
           // of a VDR.  That copy only pays for itself when the resulting VDR
-          // can serve at least two pairs.  Keep the run contiguous so the
-          // pair's live range stays short and no intervening definition or
-          // memory operation can change what the stores observe.
+          // can serve several pairs. Also admit short gaps between pairs:
+          // scalar struct initializers often interleave byte/halfword stores.
+          // Each pair stays at its original memory position, so those memory
+          // operations are not reordered. Never extend the tuple across calls.
           if (!Between.empty())
             continue;
           SmallVector<std::pair<MachineInstr *, MachineInstr *>, 4> Pairs;
           Pairs.emplace_back(&HiStore, &LoStore);
           auto After = std::next(Next);
-          while (After != MBB.end()) {
+          bool HadGap = false, SincePair = false;
+          unsigned Budget = 32;
+          while (After != MBB.end() && Budget) {
             if (After->isDebugInstr()) {
               ++After;
               continue;
             }
+            --Budget;
+            if (After->isCall() || After->isTerminator() ||
+                After->isInlineAsm() || After->hasUnmodeledSideEffects() ||
+                After->modifiesRegister(Hi, &TRI))
+              break;
             auto Other = std::next(After);
             while (Other != MBB.end() && Other->isDebugInstr())
               ++Other;
@@ -427,8 +524,11 @@ public:
                 !Other->getOperand(1).isImm() ||
                 (!After->getOperand(2).isReg() &&
                  !After->getOperand(2).isFI()) ||
-                (!Other->getOperand(2).isReg() && !Other->getOperand(2).isFI()))
-              break;
+                (!Other->getOperand(2).isReg() && !Other->getOperand(2).isFI())) {
+              SincePair = true;
+              ++After;
+              continue;
+            }
             MachineInstr *High = &*After;
             MachineInstr *Low = &*Other;
             if (High->getOperand(1).getImm() > Low->getOperand(1).getImm())
@@ -444,12 +544,19 @@ public:
                 !HighMem->isStore() || !LowMem->isStore() ||
                 HighMem->isVolatile() || LowMem->isVolatile() ||
                 HighMem->isAtomic() || LowMem->isAtomic() ||
-                HighMem->getAlign() < Align(8) || LowMem->getAlign() < Align(4))
-              break;
+                HighMem->getAlign() < Align(8) || LowMem->getAlign() < Align(4)) {
+              SincePair = true;
+              ++After;
+              continue;
+            }
+            HadGap |= SincePair;
+            SincePair = false;
             Pairs.emplace_back(High, Low);
             After = std::next(Other);
           }
-          if (Pairs.size() < 2)
+          // Gapped initializers can keep the scalar live for other fields;
+          // budget two setup instructions rather than assuming coalescing.
+          if (Pairs.size() < (HadGap ? 3u : 2u))
             continue;
 
           Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
