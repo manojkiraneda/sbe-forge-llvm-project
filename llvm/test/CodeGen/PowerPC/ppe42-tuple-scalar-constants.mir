@@ -1,6 +1,6 @@
-# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o %t
-# RUN: FileCheck %s < %t
-# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs -filetype=obj %t -o %t.o
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs -filetype=obj %t.mir -o %t.o
 
 --- |
   declare void @clobber()
