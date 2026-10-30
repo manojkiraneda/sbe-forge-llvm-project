@@ -14,6 +14,11 @@
   define void @two_gapped_zero() optsize { ret void }
   define void @call_breaks_run() optsize { ret void }
   define void @sda_outside_object() optsize { ret void }
+  define void @counted_zero_loop() optsize { ret void }
+  define void @zero_loop_live_old_pointer() optsize { ret void }
+  define void @zero_loop_call() optsize { ret void }
+  define void @zero_loop_nonzero() optsize { ret void }
+  define void @zero_loop_extra_memory() optsize { ret void }
 ...
 ---
 name: sda_store_across_call
@@ -225,5 +230,165 @@ body: |
     %0:gprc_and_gprc_nor0 = LA $r13, target-flags(ppc-sda21) @g
     %1:gprc = LWZ 20, %0 :: (load (s32), align 4)
     $r3 = COPY %1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: counted_zero_loop
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: counted_zero_loop
+  ; CHECK: REG_SEQUENCE
+  ; CHECK: bb.1:
+  ; CHECK-NOT: ADDI
+  ; CHECK-NOT: STW
+  ; CHECK: STVDU
+  ; CHECK-NOT: STW
+  bb.0:
+    liveins: $r6
+    successors: %bb.1
+    %0:gprc_and_gprc_nor0 = COPY $r6
+    %3:gprc = LI 0
+    %4:gprc = LI 4
+    MTCTR %4, implicit-def $ctr
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    %1:gprc_and_gprc_nor0 = PHI %0, %bb.0, %2, %bb.1
+    %2:gprc_and_gprc_nor0 = ADDI %1, 8
+    STW %3, 12, %1 :: (store (s32), align 4)
+    STW %3, 8, %1 :: (store (s32), align 8)
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+    B %bb.2
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: zero_loop_live_old_pointer
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: zero_loop_live_old_pointer
+  ; CHECK-NOT: STVDU
+  ; CHECK: STW
+  ; CHECK: STW
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r6
+    successors: %bb.1
+    %0:gprc_and_gprc_nor0 = COPY $r6
+    %3:gprc = LI 0
+    %4:gprc = LI 4
+    MTCTR %4, implicit-def $ctr
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    %1:gprc_and_gprc_nor0 = PHI %0, %bb.0, %2, %bb.1
+    %2:gprc_and_gprc_nor0 = ADDI %1, 8
+    STW %3, 12, %1 :: (store (s32), align 4)
+    STW %3, 8, %1 :: (store (s32), align 8)
+    $r3 = COPY %1
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+    B %bb.2
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: zero_loop_call
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: zero_loop_call
+  ; CHECK-NOT: STVDU
+  ; CHECK: STW
+  ; CHECK: STW
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r6
+    successors: %bb.1
+    %0:gprc_and_gprc_nor0 = COPY $r6
+    %3:gprc = LI 0
+    %4:gprc = LI 4
+    MTCTR %4, implicit-def $ctr
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    %1:gprc_and_gprc_nor0 = PHI %0, %bb.0, %2, %bb.1
+    %2:gprc_and_gprc_nor0 = ADDI %1, 8
+    STW %3, 12, %1 :: (store (s32), align 4)
+    STW %3, 8, %1 :: (store (s32), align 8)
+    BL @callee, csr_svr432, implicit-def dead $lr, implicit undef $rm
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+    B %bb.2
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: zero_loop_nonzero
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: zero_loop_nonzero
+  ; CHECK-NOT: STVDU
+  ; CHECK: STW
+  ; CHECK: STW
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r6
+    successors: %bb.1
+    %0:gprc_and_gprc_nor0 = COPY $r6
+    %3:gprc = LI 1
+    %4:gprc = LI 4
+    MTCTR %4, implicit-def $ctr
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    %1:gprc_and_gprc_nor0 = PHI %0, %bb.0, %2, %bb.1
+    %2:gprc_and_gprc_nor0 = ADDI %1, 8
+    STW %3, 12, %1 :: (store (s32), align 4)
+    STW %3, 8, %1 :: (store (s32), align 8)
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+    B %bb.2
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: zero_loop_extra_memory
+tracksRegLiveness: true
+frameInfo:
+  hasCalls: true
+  adjustsStack: true
+body: |
+  ; CHECK-LABEL: name: zero_loop_extra_memory
+  ; CHECK-NOT: STVDU
+  ; CHECK: STW
+  ; CHECK: STW
+  ; CHECK-NOT: STVDU
+  bb.0:
+    liveins: $r6
+    successors: %bb.1
+    %0:gprc_and_gprc_nor0 = COPY $r6
+    %3:gprc = LI 0
+    %4:gprc = LI 4
+    MTCTR %4, implicit-def $ctr
+    B %bb.1
+  bb.1:
+    successors: %bb.1, %bb.2
+    %1:gprc_and_gprc_nor0 = PHI %0, %bb.0, %2, %bb.1
+    %2:gprc_and_gprc_nor0 = ADDI %1, 8
+    STW %3, 12, %1 :: (store (s32), align 4)
+    STW %3, 8, %1 :: (store (s32), align 8)
+    STB %3, 0, %1 :: (store (s8))
+    BDNZ %bb.1, implicit-def $ctr, implicit $ctr
+    B %bb.2
+  bb.2:
     BLR implicit $lr, implicit undef $rm
 ...

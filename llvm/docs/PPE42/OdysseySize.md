@@ -174,6 +174,15 @@ the inliner or general select cost policy:
   block, stop at calls/terminators/asm/clobbers, and require three pairs when
   gaps are used so two setup instructions can be amortized. Existing contiguous
   two-pair cases retain their original eligibility.
+* Handle a single zero pair in a canonical counted self-loop when the body is
+  only the pointer PHI, an early increment, the two stores and loop branches.
+  Initialize a dedicated zero tuple in the unique preheader and replace the
+  increment/stores with STVDU, removing the loop-carried pointer copy during
+  allocation. Reject nonzero inputs, extra accesses, calls and other uses of
+  the old pointer. This is a bounded code-shape rule, not general loop unrolling.
+  A controlled old-allocator fixture shrank from 44 to 40 bytes even before
+  dropping its now-unused original zero materializer. Count setup bytes when
+  assessing this optimization; the smaller loop body alone overstates savings.
 
 New MIR tests cover these rewrites and negative cases, with verified complete
 object emission in CI. Local compatibility runs checked inputs and constructed
