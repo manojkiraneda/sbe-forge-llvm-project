@@ -507,6 +507,102 @@ public:
         }
 
         if (Hi == Lo) {
+          // A single zero pair can also pay for its setup in a counted loop:
+          // folding the two stores, the early pointer increment and its PHI
+          // copy into STVDU removes three loop instructions. Keep this narrow:
+          // a canonical self-loop, an immutable zero and no other body effects.
+          MachineBasicBlock *Preheader = nullptr;
+          MachineInstr *PointerPhi = nullptr, *Advance = nullptr;
+          MachineInstr *Zero = MRI.getVRegDef(Hi);
+          if (Between.empty() && Base.isReg() && Base.getReg().isVirtual() &&
+              Offset && !MBB.isEHPad() && MBB.pred_size() == 2 &&
+              MBB.succ_size() == 2 &&
+              MBB.isSuccessor(&MBB) &&
+              Zero && Zero->getOpcode() == PPC::LI &&
+              Zero->getOperand(1).isImm() && !Zero->getOperand(1).getImm()) {
+            for (MachineBasicBlock *Pred : MBB.predecessors())
+              if (Pred != &MBB)
+                Preheader = Pred;
+            PointerPhi = MRI.getVRegDef(Base.getReg());
+            if (!PointerPhi || PointerPhi->getParent() != &MBB ||
+                !PointerPhi->isPHI() || PointerPhi->getNumOperands() != 5 ||
+                !Preheader || Preheader->succ_size() != 1 ||
+                *Preheader->succ_begin() != &MBB)
+              Preheader = nullptr;
+          }
+          if (Preheader) {
+            bool Valid = true, Counted = false, SawAdvance = false;
+            for (MachineInstr &MI : MBB) {
+              if (MI.isDebugInstr() || &MI == PointerPhi)
+                continue;
+              if (&MI == &FirstStore || &MI == &SecondStore) {
+                Valid &= SawAdvance;
+                continue;
+              }
+              if (MI.getOpcode() == PPC::ADDI && !Advance &&
+                  MI.getOperand(1).getReg() == Base.getReg() &&
+                  MI.getOperand(2).isImm() &&
+                  MI.getOperand(2).getImm() == Offset) {
+                Advance = &MI;
+                SawAdvance = true;
+                continue;
+              }
+              if (MI.getOpcode() == PPC::BDNZ) {
+                Counted = MI.getOperand(0).isMBB() &&
+                          MI.getOperand(0).getMBB() == &MBB;
+                continue;
+              }
+              if (MI.getOpcode() == PPC::B && MI.isTerminator())
+                continue;
+              Valid = false;
+            }
+            if (Advance) {
+              Register NextPointer = Advance->getOperand(0).getReg();
+              bool Backedge = false;
+              for (unsigned Op = 1; Op < 5; Op += 2)
+                if (PointerPhi->getOperand(Op + 1).getMBB() == &MBB)
+                  Backedge = PointerPhi->getOperand(Op).getReg() == NextPointer;
+              Valid &= NextPointer.isVirtual() && Backedge &&
+                       MRI.hasOneNonDBGUse(NextPointer);
+              for (MachineInstr &Use : MRI.use_nodbg_instructions(Base.getReg()))
+                Valid &= &Use == Advance || &Use == &FirstStore ||
+                         &Use == &SecondStore;
+            }
+            if (Valid && Counted && Advance &&
+                MRI.constrainRegClass(Base.getReg(),
+                                      &PPC::GPRC_NOR0RegClass) &&
+                MRI.constrainRegClass(Advance->getOperand(0).getReg(),
+                                      &PPC::GPRC_NOR0RegClass)) {
+              Register Fresh = MRI.createVirtualRegister(&PPC::GPRCRegClass);
+              Register Pair = MRI.createVirtualRegister(&PPC::VDRCRegClass);
+              auto Insert = Preheader->getFirstTerminator();
+              BuildMI(*Preheader, Insert, FirstStore.getDebugLoc(),
+                      TII.get(PPC::LI), Fresh).addImm(0);
+              BuildMI(*Preheader, Insert, FirstStore.getDebugLoc(),
+                      TII.get(TargetOpcode::REG_SEQUENCE), Pair)
+                  .addReg(Fresh).addImm(PPC::sub_gpr_hi)
+                  .addReg(Fresh).addImm(PPC::sub_gpr_lo);
+              BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(),
+                      TII.get(PPC::STVDU), Advance->getOperand(0).getReg())
+                  .addReg(Pair).addImm(Offset).addReg(Base.getReg())
+                  .addMemOperand(HiMem).addMemOperand(LoMem);
+              I = std::next(Next);
+              MRI.clearKillFlags(Hi);
+              MRI.clearKillFlags(Base.getReg());
+              MRI.markUsesInDebugValueAsUndef(Advance->getOperand(0).getReg());
+              Advance->eraseFromParent();
+              FirstStore.eraseFromParent();
+              SecondStore.eraseFromParent();
+              if (MRI.use_nodbg_empty(Hi) && Zero->getNumOperands() == 2 &&
+                  !Zero->getFlag(MachineInstr::FrameSetup) &&
+                  !Zero->getFlag(MachineInstr::FrameDestroy)) {
+                MRI.markUsesInDebugValueAsUndef(Hi);
+                Zero->eraseFromParent();
+              }
+              Changed = true;
+              continue;
+            }
+          }
           // A pair of stores of one value needs a copy into the other half
           // of a VDR.  That copy only pays for itself when the resulting VDR
           // can serve several pairs. Also admit short gaps between pairs:
