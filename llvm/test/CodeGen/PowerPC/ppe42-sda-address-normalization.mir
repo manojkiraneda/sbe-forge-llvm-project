@@ -4,7 +4,6 @@
 --- |
   @g = external global [4 x i32], align 8
   declare void @callee()
-  define void @sda_outside_object() optsize { ret void }
   define void @sda_store_across_call() optsize { ret void }
   define void @sda_load_across_blocks() optsize { ret void }
   define void @sda_copy_addend() optsize { ret void }
@@ -14,6 +13,7 @@
   define void @gapped_zero() optsize { ret void }
   define void @two_gapped_zero() optsize { ret void }
   define void @call_breaks_run() optsize { ret void }
+  define void @sda_outside_object() optsize { ret void }
 ...
 ---
 name: sda_store_across_call
