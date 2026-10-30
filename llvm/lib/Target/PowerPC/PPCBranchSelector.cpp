@@ -475,6 +475,39 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           Live.stepBackward(*It);
       return Live.available(Reg);
     };
+    // Do this after allocation: pre-RA record-form folding can create an
+    // unallocatable physical CR0 live range on PPE42. Here an adjacent ANDI.
+    // already supplies exactly the comparison's CR0, including XER.SO. Its
+    // low-halfword result is nonnegative, so unsigned zero comparisons agree
+    // as well. ANDIS. is only equivalent to a signed comparison.
+    for (MachineBasicBlock &MBB : Fn) {
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Cmp = *I++;
+        if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
+            Cmp.getOperand(0).getReg() != PPC::CR0 ||
+            Cmp.getOperand(2).getImm() != 0 || Cmp.peekDebugInstrNum() ||
+            Cmp.isBundledWithPred() || Cmp.isBundledWithSucc())
+          continue;
+        auto P = Cmp.getIterator();
+        while (P != MBB.begin() && std::prev(P)->isDebugInstr())
+          --P;
+        if (P == MBB.begin())
+          continue;
+        MachineInstr &And = *--P;
+        if ((And.getOpcode() != PPC::ANDI_rec &&
+             !(And.getOpcode() == PPC::ANDIS_rec &&
+               Cmp.getOpcode() == PPC::CMPWI)) ||
+            And.getOperand(0).getReg() != Cmp.getOperand(1).getReg() ||
+            And.isBundledWithPred() || And.isBundledWithSucc())
+          continue;
+        for (MachineOperand &MO : And.operands())
+          if (MO.isReg() && MO.isDef() && MO.getReg() == PPC::CR0)
+            MO.setIsDead(false);
+        Cmp.eraseFromParent();
+        BlockSizes[MBB.getNumber()].first -= 4;
+        EverMadeChange = true;
+      }
+    }
     // Scheduling can put independent instructions between a compare and its
     // branch. Move the comparison to the branch only when its inputs are not
     // changed and CR0 is neither observed nor changed in between.
@@ -695,7 +728,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
     // CMPWIBC compares a GPR with a zero-extended five-bit immediate using
     // signed semantics. An unsigned comparison is equivalent only for EQ/NE.
-    // Accept both predicate branches and direct tests of CR0's EQ bit.
+    // Accept predicate branches and direct tests of CR0's EQ/GT bits.
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
       for (auto I = MBB.begin(); I != MBB.end();) {
@@ -708,7 +741,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
         unsigned DestOp = IsBitBranch ? 1 : 2;
         if (!Br.getOperand(DestOp).isMBB() ||
-            (IsBitBranch ? Br.getOperand(0).getReg() != PPC::CR0EQ
+            (IsBitBranch ? (Br.getOperand(0).getReg() != PPC::CR0EQ &&
+                            Br.getOperand(0).getReg() != PPC::CR0GT)
                          : Br.getOperand(1).getReg() != PPC::CR0) ||
             Br.getIterator() == MBB.begin())
           continue;
@@ -719,13 +753,13 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         MachineInstr &Cmp = *CmpPtr;
         if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
             Cmp.getOperand(0).getReg() != PPC::CR0 ||
-            !Cmp.getOperand(2).isImm() ||
-            !isUInt<5>(Cmp.getOperand(2).getImm()))
+            !Cmp.getOperand(2).isImm())
           continue;
 
         unsigned PX = 0, BIX = 2;
         if (IsBitBranch) {
           PX = Br.getOpcode() == PPC::BC ? 1 : 0;
+          BIX = Br.getOperand(0).getReg() == PPC::CR0GT ? 1 : 2;
         } else {
           switch (Br.getOperand(0).getImm()) {
           case PPC::PRED_LT:
@@ -756,11 +790,60 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             continue;
           }
         }
+        // Unsigned x>0 is x!=0, including words with their sign bit set.
+        // Invert the GT test and select EQ; never use signed GT for this.
+        if (Cmp.getOpcode() == PPC::CMPLWI && Cmp.getOperand(2).getImm() == 0 &&
+            BIX == 1) {
+          PX ^= 1;
+          BIX = 2;
+        }
         // CMPWIBC preserves CMPWI's CR0 result. Replacing an unsigned
         // compare is equivalent for EQ/NE, but can change the LT/GT bits.
         if (Cmp.getOpcode() == PPC::CMPLWI &&
             (BIX != 2 || !IsDeadAfter(Br, PPC::CR0)))
           continue;
+
+        int64_t Immediate = Cmp.getOperand(2).getImm();
+        MachineInstr *Mask = nullptr;
+        unsigned Shift = 0;
+        if (!isUInt<5>(Immediate)) {
+          // (rotl(x,R) & contiguous-mask) == K can instead extract the
+          // field into low bits and compare K>>Shift. This exposes the
+          // five-bit fused immediate without adding another instruction.
+          if (Cmp.getOpcode() != PPC::CMPLWI || BIX != 2 || Immediate < 0 ||
+              !IsDeadAfter(Cmp, Cmp.getOperand(1).getReg()))
+            continue;
+          auto P = Cmp.getIterator();
+          for (unsigned Seen = 0; P != MBB.begin() && Seen < 4; ++Seen) {
+            MachineInstr &MI = *--P;
+            if (MI.isDebugInstr())
+              continue;
+            Register R = Cmp.getOperand(1).getReg();
+            if (MI.getOpcode() == PPC::RLWINM &&
+                MI.getOperand(0).getReg() == R) {
+              Mask = &MI;
+              break;
+            }
+            if (MI.isCall() || MI.isTerminator() || MI.isInlineAsm() ||
+                MI.hasUnmodeledSideEffects() || MI.readsRegister(R, TRI) ||
+                MI.modifiesRegister(R, TRI))
+              break;
+          }
+          if (!Mask || Mask->peekDebugInstrNum() || Mask->isBundledWithPred() ||
+              Mask->isBundledWithSucc())
+            continue;
+          unsigned MB = Mask->getOperand(3).getImm();
+          unsigned ME = Mask->getOperand(4).getImm();
+          if (MB > ME)
+            continue;
+          Shift = 31 - ME;
+          uint32_t Bits = UINT32_MAX >> MB;
+          Bits &= UINT32_MAX << Shift;
+          if ((uint64_t(Immediate) & ~uint64_t(Bits)) ||
+              !isUInt<5>(uint64_t(Immediate) >> Shift))
+            continue;
+          Immediate = uint64_t(Immediate) >> Shift;
+        }
 
         int Distance = computeBranchSize(
             Fn, &MBB, Br.getOperand(DestOp).getMBB(), BrOffset);
@@ -768,12 +851,18 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             Distance < -2036 || Distance > 2036)
           continue;
 
+        if (Mask) {
+          Mask->getOperand(2).setImm(
+              (Mask->getOperand(2).getImm() + 32 - Shift) % 32);
+          Mask->getOperand(3).setImm(Mask->getOperand(3).getImm() + Shift);
+          Mask->getOperand(4).setImm(31);
+        }
         BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::CMPWIBC))
             .addImm(PX)
             .addImm(BIX)
             .addReg(Cmp.getOperand(1).getReg(),
                     Cmp.getOperand(1).isKill() ? RegState::Kill : 0)
-            .addImm(Cmp.getOperand(2).getImm())
+            .addImm(Immediate)
             .addMBB(Br.getOperand(DestOp).getMBB());
         Cmp.eraseFromParent();
         Br.eraseFromParent();
