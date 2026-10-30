@@ -5353,10 +5353,14 @@ SDValue PPCTargetLowering::EmitTailCallLoadFPAndRetAddr(
 /// does not fit in registers.
 static SDValue CreateCopyOfByValArgument(SDValue Src, SDValue Dst,
                                          SDValue Chain, ISD::ArgFlagsTy Flags,
-                                         SelectionDAG &DAG, const SDLoc &dl) {
+                                         SelectionDAG &DAG, const SDLoc &dl,
+                                         MaybeAlign KnownCopyAlign = std::nullopt) {
   SDValue SizeNode = DAG.getConstant(Flags.getByValSize(), dl, MVT::i32);
+  Align CopyAlign = Flags.getNonZeroByValAlign();
+  if (KnownCopyAlign)
+    CopyAlign = std::max(CopyAlign, *KnownCopyAlign);
   return DAG.getMemcpy(
-      Chain, dl, Dst, Src, SizeNode, Flags.getNonZeroByValAlign(), false, false,
+      Chain, dl, Dst, Src, SizeNode, CopyAlign, false, false,
       /*CI=*/nullptr, std::nullopt, MachinePointerInfo(), MachinePointerInfo());
 }
 
@@ -6215,10 +6219,19 @@ SDValue PPCTargetLowering::LowerCall_32SVR4(
 
       // Create a copy of the argument in the local area of the current
       // stack frame.
+      MaybeAlign CopyAlign;
+      if (Subtarget.isPPE42()) {
+        // CC_PPC32_SVR4_ByVal reserves outgoing copies with at least word
+        // alignment. Recover stronger source alignment independently of the
+        // byval attribute, which describes only the ABI minimum. Do not
+        // strengthen an external or genuinely unaligned source.
+        Align DstAlign = commonAlignment(Align(4), LocMemOffset);
+        CopyAlign = std::min(DstAlign, DAG.InferPtrAlign(Arg).valueOrOne());
+      }
       SDValue MemcpyCall =
         CreateCopyOfByValArgument(Arg, PtrOff,
                                   CallSeqStart.getNode()->getOperand(0),
-                                  Flags, DAG, dl);
+                                  Flags, DAG, dl, CopyAlign);
 
       // This must go outside the CALLSEQ_START..END.
       SDValue NewCallSeqStart = DAG.getCALLSEQ_START(MemcpyCall, NumBytes, 0,
