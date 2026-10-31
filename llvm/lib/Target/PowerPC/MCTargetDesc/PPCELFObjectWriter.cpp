@@ -136,13 +136,11 @@ unsigned PPCELFObjectWriter::getRelocType(const MCFixup &Fixup,
       Type = ELF::R_PPC_REL14;
       break;
     case PPC::fixup_ppc_ppe42_br10:
-      // PPE42 fused branches have no ELF relocation type.  A target that is
-      // defined in this assembly unit can still be resolved by the assembler,
-      // even when it has global visibility (as is common for firmware
-      // functions).  Keep rejecting genuinely external targets because the
-      // linker cannot repair the 10-bit instruction field later.
-      if (!Target.getAddSym() || !Target.getAddSym()->isDefined())
-        reportError(Loc, "PPE42 fused branch target must be locally resolvable");
+      // The backend resolves supported same-section targets, including strong
+      // globals. Any reference reaching the writer is unresolved. Emitting
+      // R_PPC_NONE here without an error would leave a zero displacement and
+      // silently turn the branch into a self-loop.
+      reportError(Loc, "PPE42 fused branch target must be locally resolvable");
       Type = ELF::R_PPC_NONE;
       break;
     case PPC::fixup_ppc_half16:

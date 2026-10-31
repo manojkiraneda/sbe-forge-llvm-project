@@ -108,6 +108,28 @@ public:
 
   MCFixupKindInfo getFixupKindInfo(MCFixupKind Kind) const override;
 
+  std::optional<bool> evaluateFixup(const MCFragment &F, MCFixup &Fixup,
+                                  MCValue &Target,
+                                  uint64_t &Value) override {
+    if (Fixup.getKind() != PPC::fixup_ppc_ppe42_br10 ||
+        !TT.isOSBinFormatELF())
+      return std::nullopt;
+
+    // Fused branches have no linker relocation. ELF normally leaves global
+    // PC-relative references unresolved, even within the current section.
+    // Resolve this explicitly sized branch locally when the definition cannot
+    // be replaced by a stronger one. Reject all other targets in the writer.
+    const MCSymbol *Sym = Target.getAddSym();
+    if (!Sym || Target.getSubSym() || Target.getSpecifier() ||
+        !Sym->isInSection() || &Sym->getSection() != F.getParent() ||
+        cast<MCSymbolELF>(Sym)->getBinding() == ELF::STB_WEAK)
+      return false;
+
+    Value = Asm->getSymbolOffset(*Sym) + Target.getConstant() -
+            (Asm->getFragmentOffset(F) + Fixup.getOffset());
+    return true;
+  }
+
   void applyFixup(const MCFragment &, const MCFixup &Fixup,
                   const MCValue &Target, MutableArrayRef<char> Data,
                   uint64_t Value, bool IsResolved) override;
