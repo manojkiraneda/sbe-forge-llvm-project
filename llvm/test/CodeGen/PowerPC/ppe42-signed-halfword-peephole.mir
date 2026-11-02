@@ -15,7 +15,7 @@ body: |
     liveins: $r3
     ; PPE-LABEL: name: direct
     ; PPE: [[LOAD:%[0-9]+]]:gprc = LHZ
-    ; PPE: EXTSH [[LOAD]]
+    ; PPE: EXTSH {{(killed )?}}[[LOAD]]
     ; PPC-LABEL: name: direct
     ; PPC: LHA
     ; PPC-NOT: EXTSH
@@ -33,7 +33,7 @@ body: |
     liveins: $r3, $r4
     ; PPE-LABEL: name: indexed
     ; PPE: [[LOAD:%[0-9]+]]:gprc = LHZX
-    ; PPE: EXTSH [[LOAD]]
+    ; PPE: EXTSH {{(killed )?}}[[LOAD]]
     ; PPC-LABEL: name: indexed
     ; PPC: LHAX
     ; PPC-NOT: EXTSH
