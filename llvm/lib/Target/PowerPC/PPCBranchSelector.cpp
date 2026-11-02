@@ -532,7 +532,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
               return nullptr;
             for (unsigned Op = 1; Op < MI.getNumOperands(); ++Op)
               if (MI.getOperand(Op).isReg() &&
-                  Between->modifiesRegister(MI.getOperand(Op).getReg(), TRI))
+                  (Between->modifiesRegister(MI.getOperand(Op).getReg(), TRI) ||
+                   Between->killsRegister(MI.getOperand(Op).getReg(), TRI)))
                 return nullptr;
           }
           return &MI;
