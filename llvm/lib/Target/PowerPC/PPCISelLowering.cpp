@@ -224,10 +224,13 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setOperationAction(ISD::INLINEASM, MVT::Other, Custom);
   setOperationAction(ISD::INLINEASM_BR, MVT::Other, Custom);
 
-  // PowerPC has an i16 but no i8 (or i1) SEXTLOAD.
+  // PowerPC has an i16 but no i8 (or i1) SEXTLOAD. PPE42 also omits the
+  // signed halfword load family: use an unsigned load followed by EXTSH.
   for (MVT VT : MVT::integer_valuetypes()) {
     setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
     setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i8, Expand);
+    if (Subtarget.isPPE42())
+      setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i16, Expand);
   }
 
   setTruncStoreAction(MVT::f128, MVT::f16, Expand);

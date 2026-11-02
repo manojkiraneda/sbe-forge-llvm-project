@@ -1982,7 +1982,7 @@ def LBZ : DForm_1<34, (outs gprc:$RST), (ins (memri $D, $RA):$addr),
 def LHA : DForm_1<42, (outs gprc:$RST), (ins (memri $D, $RA):$addr),
                   "lha $RST, $addr", IIC_LdStLHA,
                   [(set i32:$RST, (sextloadi16 DForm:$addr))]>,
-                  PPC970_DGroup_Cracked, SExt32To64;
+                  PPC970_DGroup_Cracked, SExt32To64, Requires<[NotPPE42]>;
 def LHZ : DForm_1<40, (outs gprc:$RST), (ins (memri $D, $RA):$addr),
                   "lhz $RST, $addr", IIC_LdStLoad,
                   [(set i32:$RST, (zextloadi16 DForm:$addr))]>, ZExt32To64,
@@ -2010,7 +2010,7 @@ def LBZU : DForm_1<35, (outs gprc:$RST, ptr_rc_nor0:$ea_result), (ins (memri $D,
 def LHAU : DForm_1<43, (outs gprc:$RST, ptr_rc_nor0:$ea_result), (ins (memri $D, $RA):$addr),
                    "lhau $RST, $addr", IIC_LdStLHAU,
                    []>, RegConstraint<"$addr.reg = $ea_result">,
-                   NoEncode<"$ea_result">;
+                   NoEncode<"$ea_result">, Requires<[NotPPE42]>;
 
 def LHZU : DForm_1<41, (outs gprc:$RST, ptr_rc_nor0:$ea_result), (ins (memri $D, $RA):$addr),
                    "lhzu $RST, $addr", IIC_LdStLoadUpd,
@@ -2046,7 +2046,7 @@ def LHAUX : XForm_1_memOp<31, 375, (outs gprc:$RST, ptr_rc_nor0:$ea_result),
                    (ins (memrr $RA, $RB):$addr),
                    "lhaux $RST, $addr", IIC_LdStLHAUX,
                    []>, RegConstraint<"$addr.ptrreg = $ea_result">,
-                   NoEncode<"$ea_result">;
+                   NoEncode<"$ea_result">, Requires<[NotPPE42]>;
 
 def LHZUX : XForm_1_memOp<31, 311, (outs gprc:$RST, ptr_rc_nor0:$ea_result),
                    (ins (memrr $RA, $RB):$addr),
@@ -2086,7 +2086,7 @@ def LBZX : XForm_1_memOp<31,  87, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr)
 def LHAX : XForm_1_memOp<31, 343, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr),
                    "lhax $RST, $addr", IIC_LdStLHA,
                    [(set i32:$RST, (sextloadi16 XForm:$addr))]>,
-                   PPC970_DGroup_Cracked, SExt32To64;
+                   PPC970_DGroup_Cracked, SExt32To64, Requires<[NotPPE42]>;
 def LHZX : XForm_1_memOp<31, 279, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr),
                    "lhzx $RST, $addr", IIC_LdStLoad,
                    [(set i32:$RST, (zextloadi16 XForm:$addr))]>, ZExt32To64,
