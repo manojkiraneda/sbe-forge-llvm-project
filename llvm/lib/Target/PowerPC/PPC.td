@@ -21,7 +21,8 @@ def FeaturePPE42 : SubtargetFeature<"ppe42", "IsPPE42", "true",
                                         "Enable PPE42 instructions">;
 def FeaturePPE42XStack : SubtargetFeature<"ppe42x-stack", "HasPPE42XStack",
                                             "true", "Enable PPE42 stack pair instructions">;
-def NotPPE42 : Predicate<"!Subtarget->isPPE42()">;
+def NotPPE42 : Predicate<"!Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of (not FeaturePPE42)), "non-PPE42">;
 def In64BitMode : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
 def IsPPE42 : Predicate<"Subtarget->isPPE42()">,
               AssemblerPredicate<(all_of FeaturePPE42), "PPE42">;
