@@ -221,6 +221,7 @@ jobs:
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
             llvm/test/CodeGen/PowerPC/ppe42-signed-halfword-loads.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-signed-halfword-peephole.mir \
             llvm/test/MC/PowerPC/ppe42-signed-halfword-loads.s
 
       - name: Test PPE42 size-aware inlining

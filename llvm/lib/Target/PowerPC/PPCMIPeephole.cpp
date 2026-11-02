@@ -931,7 +931,10 @@ bool PPCMIPeephole::simplifyCode() {
       case PPC::EXTSH:
       case PPC::EXTSH8:
       case PPC::EXTSH8_32_64: {
-        if (!CLOpts.eliminate_signext)
+        // PPE42 deliberately lowers signed halfword loads to LHZ + EXTSH.
+        // Do not recreate the unsupported LHA/LHAX after legalization.
+        if (!CLOpts.eliminate_signext ||
+            MF->getSubtarget<PPCSubtarget>().isPPE42())
           break;
         Register NarrowReg = MI.getOperand(1).getReg();
         if (!NarrowReg.isVirtual())
