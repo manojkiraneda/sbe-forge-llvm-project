@@ -724,7 +724,8 @@ let WantsParent = true in {
 // PowerPC Instruction Predicate Definitions.
 def In32BitMode  : Predicate<"!Subtarget->isPPC64()">;
 def In64BitMode  : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
-def NotPPE42 : Predicate<"!Subtarget->isPPE42()">;
+def NotPPE42 : Predicate<"!Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of (not FeaturePPE42)), "non-PPE42">;
 def IsBookE  : Predicate<"Subtarget->isBookE()">;
 def IsNotBookE  : Predicate<"!Subtarget->isBookE()">;
 def HasOnlyMSYNC : Predicate<"Subtarget->hasOnlyMSYNC()">;
