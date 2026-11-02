@@ -217,6 +217,12 @@ jobs:
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
 
+      - name: Test PPE42 signed halfword load legalization
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/CodeGen/PowerPC/ppe42-signed-halfword-loads.ll \
+            llvm/test/MC/PowerPC/ppe42-signed-halfword-loads.s
+
       - name: Test PPE42 size-aware inlining
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
