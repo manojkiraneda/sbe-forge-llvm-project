@@ -370,7 +370,8 @@ def IsLittleEndian : Predicate<"Subtarget->isLittleEndian()">;
 def IsBigEndian : Predicate<"!Subtarget->isLittleEndian()">;
 def IsPPC32 : Predicate<"!Subtarget->isPPC64()">;
 def IsPPC64 : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
-def NotPPE42 : Predicate<"!Subtarget->isPPE42()">;
+def NotPPE42 : Predicate<"!Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of (not FeaturePPE42)), "non-PPE42">;
 def IsBookE  : Predicate<"Subtarget->isBookE()">;
 def IsNotBookE  : Predicate<"!Subtarget->isBookE()">;
 def HasOnlyMSYNC : Predicate<"Subtarget->hasOnlyMSYNC()">;
