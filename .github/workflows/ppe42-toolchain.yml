@@ -217,6 +217,12 @@ jobs:
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
             llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
 
+      - name: Test PPE42 byte-reversed memory legalization
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v \
+            llvm/test/CodeGen/PowerPC/ppe42-byte-reversed-memory.ll \
+            llvm/test/MC/PowerPC/ppe42-byte-reversed-memory.s
+
       - name: Test PPE42 signed halfword load legalization
         run: |
           "$BUILD_DIR/bin/llvm-lit" -v \
