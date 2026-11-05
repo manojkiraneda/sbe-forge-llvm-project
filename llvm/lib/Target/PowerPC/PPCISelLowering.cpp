@@ -17570,7 +17570,8 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     }
 
     // Turn STORE (BSWAP) -> sthbrx/stwbrx.
-    if (cast<StoreSDNode>(N)->isUnindexed() && Opcode == ISD::BSWAP &&
+    if (!Subtarget.isPPE42() && cast<StoreSDNode>(N)->isUnindexed() &&
+        Opcode == ISD::BSWAP &&
         N->getOperand(1).getNode()->hasOneUse() &&
         (Op1VT == MVT::i32 || Op1VT == MVT::i16 ||
          (Subtarget.hasLDBRX() && Subtarget.isPPC64() && Op1VT == MVT::i64))) {
@@ -18019,6 +18020,10 @@ SDValue PPCTargetLowering::PerformDAGCombine(SDNode *N,
     }
     break;
   case ISD::BSWAP: {
+    // PPE42 omits byte-reversed memory operations. Keep the ordinary load
+    // and let legalization expand BSWAP into supported integer operations.
+    if (Subtarget.isPPE42())
+      break;
     // Turn BSWAP (LOAD) -> lhbrx/lwbrx.
     // For subtargets without LDBRX, we can still do better than the default
     // expansion even for 64-bit BSWAP (LOAD).
