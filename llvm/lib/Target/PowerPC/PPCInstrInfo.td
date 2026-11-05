@@ -2097,10 +2097,10 @@ def LWZX : XForm_1_memOp<31,  23, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr)
                    [(set i32:$RST, (load XForm:$addr))]>, ZExt32To64;
 def LHBRX : XForm_1_memOp<31, 790, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr),
                    "lhbrx $RST, $addr", IIC_LdStLoad,
-                   [(set i32:$RST, (PPClbrx ForceXForm:$addr, i16))]>, ZExt32To64;
+                   [(set i32:$RST, (PPClbrx ForceXForm:$addr, i16))]>, ZExt32To64, Requires<[NotPPE42]>;
 def LWBRX : XForm_1_memOp<31,  534, (outs gprc:$RST), (ins (memrr $RA, $RB):$addr),
                    "lwbrx $RST, $addr", IIC_LdStLoad,
-                   [(set i32:$RST, (PPClbrx ForceXForm:$addr, i32))]>, ZExt32To64;
+                   [(set i32:$RST, (PPClbrx ForceXForm:$addr, i32))]>, ZExt32To64, Requires<[NotPPE42]>;
 
 let Predicates = [HasFPU] in {
 def LFSX   : XForm_25_memOp<31, 535, (outs f4rc:$RST), (ins (memrr $RA, $RB):$addr),
@@ -2202,11 +2202,11 @@ def STWX  : XForm_8_memOp<31, 151, (outs), (ins gprc:$RST, (memrr $RA, $RB):$add
 def STHBRX: XForm_8_memOp<31, 918, (outs), (ins gprc:$RST, (memrr $RA, $RB):$addr),
                    "sthbrx $RST, $addr", IIC_LdStStore,
                    [(PPCstbrx i32:$RST, ForceXForm:$addr, i16)]>,
-                   PPC970_DGroup_Cracked;
+                   PPC970_DGroup_Cracked, Requires<[NotPPE42]>;
 def STWBRX: XForm_8_memOp<31, 662, (outs), (ins gprc:$RST, (memrr $RA, $RB):$addr),
                    "stwbrx $RST, $addr", IIC_LdStStore,
                    [(PPCstbrx i32:$RST, ForceXForm:$addr, i32)]>,
-                   PPC970_DGroup_Cracked;
+                   PPC970_DGroup_Cracked, Requires<[NotPPE42]>;
 
 let Predicates = [HasFPU] in {
 def STFIWX: XForm_28_memOp<31, 983, (outs), (ins f8rc:$RST, (memrr $RA, $RB):$addr),
