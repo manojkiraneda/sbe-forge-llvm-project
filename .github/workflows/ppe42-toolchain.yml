@@ -8,7 +8,7 @@ on:
       - 'lld/**'
       - '.github/workflows/ppe42-toolchain.yml'
   push:
-    branches: ['ppe42/llvm-21']
+    branches: ['ppe42/llvm-21', 'ppe42/llvm-22.1.8']
     tags: ['ppe42-toolchain-v*']
   workflow_dispatch:
 
