@@ -3,20 +3,6 @@
 # RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %S/ppe42-register-compare-branch.mir -o - | FileCheck %S/ppe42-register-compare-branch.mir
 
 --- |
-  define void @bit_signed_lt_zero() { ret void }
-  define void @bit_signed_ge_zero() { ret void }
-  define void @bit_signed_lt_immediate() { ret void }
-  define void @bit_signed_ge_immediate() { ret void }
-  define void @sign_nonnegative() { ret void }
-  define void @sign_negative() { ret void }
-  define void @unsigned_byte_gt() { ret void }
-  define void @unsigned_half_lt() { ret void }
-  define void @unsigned_mask_ge() { ret void }
-  define void @unsigned_word_gt() { ret void }
-  define void @unsigned_wrapped_mask() { ret void }
-  define void @unsigned_live_eq() { ret void }
-  define void @sign_live_cr() { ret void }
-  define void @fixed_access_span() { ret void }
   define void @signed_eq() { ret void }
   define void @bit_eq() { ret void }
   define void @bit_ne() { ret void }
@@ -41,6 +27,20 @@
   define void @multiple_instructions_in_range() { ret void }
   define void @sync_asm_in_range() { ret void }
   define void @live_unsigned_condition() { ret void }
+  define void @bit_signed_lt_zero() { ret void }
+  define void @bit_signed_ge_zero() { ret void }
+  define void @bit_signed_lt_immediate() { ret void }
+  define void @bit_signed_ge_immediate() { ret void }
+  define void @sign_nonnegative() { ret void }
+  define void @sign_negative() { ret void }
+  define void @unsigned_byte_gt() { ret void }
+  define void @unsigned_half_lt() { ret void }
+  define void @unsigned_mask_ge() { ret void }
+  define void @unsigned_word_gt() { ret void }
+  define void @unsigned_wrapped_mask() { ret void }
+  define void @unsigned_live_eq() { ret void }
+  define void @sign_live_cr() { ret void }
+  define void @fixed_access_span() { ret void }
 ...
 ---
 name: signed_eq
