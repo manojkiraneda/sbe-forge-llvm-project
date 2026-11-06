@@ -6,7 +6,6 @@
 # fused instruction. Keep the mask when its result is live; the remaining
 # zero comparison and branch can still use CMPWIBC.
 --- |
-  define void @bit_fixed_access_span() { ret void }
   define void @bit_clear() { ret void }
   define void @bit_set() { ret void }
   define void @result_live() { ret void }
@@ -21,6 +20,7 @@
   define void @cr_still_live() { ret void }
   define void @other_condition_bit() { ret void }
   define void @multiple_mask_bits() { ret void }
+  define void @bit_fixed_access_span() { ret void }
 ...
 ---
 name: bit_clear
@@ -217,8 +217,8 @@ body: |
     liveins: $r3
     ; CHECK-LABEL: name: cr_still_live
     ; CHECK: RLWINM
-    ; CHECK: CMPLWI
-    ; CHECK: BC $cr0eq, %bb.1
+    ; The mask clears the sign bit, so signed and unsigned CR0 agree.
+    ; CHECK: CMPWIBC 1, 2, $r4, 0, %bb.1
     $r4 = RLWINM $r3, 0, 11, 11
     $cr0 = CMPLWI $r4, 0
     BC $cr0eq, %bb.1
