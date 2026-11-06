@@ -1,0 +1,88 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -start-after=ppc-branch-select -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+--- |
+  define void @decrement_ne() { ret void }
+  define void @subtract_eq() { ret void }
+  define void @encoded_decrement() { ret void }
+  define void @carry_decrement() { ret void }
+  define void @live_decrement_condition() { ret void }
+...
+---
+name: decrement_ne
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: decrement_ne
+    ; CHECK: $r3 = SUBWIBC 0, killed $r3, 1, %bb.1
+    $r3 = ADDI killed $r3, -1
+    $cr0 = CMPWI $r3, 0
+    BCn killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: subtract_eq
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: subtract_eq
+    ; CHECK: $r3 = SUBWIBC 1, killed $r3, 7, %bb.1
+    $r3 = ADDI killed $r3, -7
+    $cr0 = CMPWI $r3, 0
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: encoded_decrement
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: encoded_decrement
+    ; CHECK: $r3 = SUBWIBC 0, killed $r3, 1, %bb.1
+    $r3 = ADDI killed $r3, 65535
+    $cr0 = CMPWI $r3, 0
+    BCn killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: carry_decrement
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: carry_decrement
+    ; CHECK: ADDIC
+    ; CHECK: CMPWIBC 0, 2, $r3, 0, %bb.1
+    $r3 = ADDIC killed $r3, -1, implicit-def $carry
+    $cr0 = CMPWI $r3, 0
+    BCn killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: live_decrement_condition
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: live_decrement_condition
+    ; CHECK: ADDI
+    ; CHECK: CMPWIBC
+    $r3 = ADDI killed $r3, -1
+    $cr0 = CMPWI $r3, 0
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm, implicit killed $cr0lt
+  bb.1:
+    liveins: $cr0lt
+    BLR implicit $lr, implicit $rm, implicit killed $cr0lt
+...
