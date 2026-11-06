@@ -521,10 +521,14 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
     // Scheduling can put independent instructions between a compare and its
     // branch. Move the comparison to the branch only when its inputs are not
     // changed and CR0 is neither observed nor changed in between.
+    auto PredicateCondition = [](const MachineInstr &Br) {
+      return PPC::getPredicateCondition(
+          static_cast<PPC::Predicate>(Br.getOperand(0).getImm()));
+    };
     auto FindMovableCompare = [&](MachineInstr &Br) -> MachineInstr * {
       auto It = Br.getIterator();
       unsigned Seen = 0;
-      while (It != Br.getParent()->begin() && Seen < 4) {
+      while (It != Br.getParent()->begin() && Seen < 12) {
         --It;
         MachineInstr &MI = *It;
         if (MI.isDebugInstr())
@@ -581,8 +585,16 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         case PPC::ANDI_rec:
           return true;
         case PPC::LI:
-          return Def.getOperand(1).getImm() >= 0;
+          return SignExtend64<16>(Def.getOperand(1).getImm()) >= 0;
+        case PPC::OR:
+          if (Def.getOperand(1).getReg() != Def.getOperand(2).getReg())
+            return false;
+          R = Def.getOperand(1).getReg();
+          continue;
+        case PPC::ANDIS_rec:
+          return (Def.getOperand(2).getImm() & 0x8000) == 0;
         case PPC::RLWINM:
+        case PPC::RLWINM_rec:
           return Def.getOperand(3).getImm() > 0 &&
                  Def.getOperand(3).getImm() <= Def.getOperand(4).getImm();
         default:
@@ -605,8 +617,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         if (!Br.getOperand(DestOp).isMBB() ||
             (IsBitBranch ? Br.getOperand(0).getReg() != PPC::CR0EQ
                          : Br.getOperand(1).getReg() != PPC::CR0 ||
-                               (Br.getOperand(0).getImm() != PPC::PRED_EQ &&
-                                Br.getOperand(0).getImm() != PPC::PRED_NE)))
+                               (PredicateCondition(Br) != PPC::PRED_EQ &&
+                                PredicateCondition(Br) != PPC::PRED_NE)))
           continue;
 
         MachineInstr *CmpPtr = FindMovableCompare(Br);
@@ -672,7 +684,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         unsigned Bit =
             (Mask.getOperand(3).getImm() + Mask.getOperand(2).getImm()) % 32;
         unsigned PX = IsBitBranch ? Br.getOpcode() == PPC::BC
-                                  : Br.getOperand(0).getImm() == PPC::PRED_EQ;
+                                  : PredicateCondition(Br) == PPC::PRED_EQ;
         BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
             .addImm(PX)
             .addReg(SrcReg, IsDeadAfter(Br, SrcReg) ? RegState::Kill : 0)
@@ -701,7 +713,9 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
         unsigned DestOp = IsBitBranch ? 1 : 2;
         if (!Br.getOperand(DestOp).isMBB() ||
-            (IsBitBranch ? Br.getOperand(0).getReg() != PPC::CR0EQ
+            (IsBitBranch ? (Br.getOperand(0).getReg() != PPC::CR0LT &&
+                            Br.getOperand(0).getReg() != PPC::CR0GT &&
+                            Br.getOperand(0).getReg() != PPC::CR0EQ)
                          : Br.getOperand(1).getReg() != PPC::CR0) ||
             Br.getIterator() == MBB.begin())
           continue;
@@ -718,8 +732,10 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         unsigned PX = 0, BIX = 2;
         if (IsBitBranch) {
           PX = Br.getOpcode() == PPC::BC ? 1 : 0;
+          Register Cond = Br.getOperand(0).getReg();
+          BIX = Cond == PPC::CR0LT ? 0 : (Cond == PPC::CR0GT ? 1 : 2);
         } else {
-          switch (Br.getOperand(0).getImm()) {
+          switch (PredicateCondition(Br)) {
           case PPC::PRED_LT:
             PX = 1;
             BIX = 0;
@@ -809,7 +825,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           Register Cond = Br.getOperand(0).getReg();
           BIX = Cond == PPC::CR0LT ? 0 : (Cond == PPC::CR0GT ? 1 : 2);
         } else {
-          switch (Br.getOperand(0).getImm()) {
+          switch (PredicateCondition(Br)) {
           case PPC::PRED_LT:
             PX = 1;
             BIX = 0;
@@ -846,6 +862,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           BIX = 2;
         }
         int64_t Immediate = Cmp.getOperand(2).getImm();
+        if (Cmp.getOpcode() == PPC::CMPWI)
+          Immediate = SignExtend64<16>(Immediate);
         // x > -1 and x <= -1 are exactly the nonnegative/negative tests.
         // The comparison result changes, so no CR0 bit may remain live.
         if (Cmp.getOpcode() == PPC::CMPWI && Immediate == -1 && BIX == 1 &&
@@ -927,6 +945,58 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         Br.eraseFromParent();
         BlockSizes[MBB.getNumber()].first -= 4;
         Offset -= 4;
+        EverMadeChange = true;
+      }
+    }
+  }
+
+  // Fold an adjacent in-place decrement into a fused equality branch.
+  // Restrict this to ADDI: ADDIC also changes XER.CA. The fused instruction
+  // compares the old RA with the decrement and then writes the difference.
+  if (Fn.getSubtarget<PPCSubtarget>().isPPE42()) {
+    const TargetRegisterInfo *TRI = Fn.getSubtarget().getRegisterInfo();
+    for (MachineBasicBlock &MBB : Fn) {
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Br = *I++;
+        if (Br.getOpcode() != PPC::CMPWIBC ||
+            Br.getOperand(1).getImm() != 2 || Br.getOperand(3).getImm() != 0 ||
+            Br.peekDebugInstrNum() || Br.isBundledWithPred() ||
+            Br.isBundledWithSucc())
+          continue;
+        auto P = Br.getIterator();
+        while (P != MBB.begin() && std::prev(P)->isDebugInstr())
+          --P;
+        if (P == MBB.begin())
+          continue;
+        MachineInstr &Dec = *--P;
+        Register R = Br.getOperand(2).getReg();
+        if (Dec.getOpcode() != PPC::ADDI ||
+            Dec.getOperand(0).getReg() != R || Dec.getOperand(1).getReg() != R ||
+            !Dec.getOperand(2).isImm() || Dec.peekDebugInstrNum() ||
+            Dec.isBundledWithPred() || Dec.isBundledWithSucc())
+          continue;
+        int64_t Amount = -SignExtend64<16>(Dec.getOperand(2).getImm());
+        if (Amount <= 0 || !isUInt<5>(Amount))
+          continue;
+        LiveRegUnits Live(*TRI);
+        Live.addLiveOuts(MBB);
+        for (auto J = MBB.rbegin(); &*J != &Br; ++J)
+          if (!J->isDebugInstr())
+            Live.stepBackward(*J);
+        // Relational CR bits are different at signed overflow boundaries.
+        if (!Fn.getRegInfo().tracksLiveness() || !Live.available(PPC::CR0))
+          continue;
+        unsigned DefFlags = RegState::Define;
+        if (Live.available(R))
+          DefFlags |= RegState::Dead;
+        BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::SUBWIBC))
+            .addReg(R, DefFlags)
+            .addImm(Br.getOperand(0).getImm())
+            .addReg(R, Dec.getOperand(1).isKill() ? RegState::Kill : 0)
+            .addImm(Amount)
+            .addMBB(Br.getOperand(4).getMBB());
+        Dec.eraseFromParent();
+        Br.eraseFromParent();
         EverMadeChange = true;
       }
     }
