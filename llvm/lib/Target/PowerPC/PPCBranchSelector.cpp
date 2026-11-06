@@ -729,7 +729,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
 
     // CMPWIBC compares a GPR with a zero-extended five-bit immediate using
     // signed semantics. An unsigned comparison is equivalent only for EQ/NE.
-    // Accept predicate branches and direct tests of CR0's EQ/GT bits.
+    // Accept predicate branches and direct tests of CR0's LT/GT/EQ bits.
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
       for (auto I = MBB.begin(); I != MBB.end();) {
@@ -742,8 +742,9 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
         unsigned DestOp = IsBitBranch ? 1 : 2;
         if (!Br.getOperand(DestOp).isMBB() ||
-            (IsBitBranch ? (Br.getOperand(0).getReg() != PPC::CR0EQ &&
-                            Br.getOperand(0).getReg() != PPC::CR0GT)
+            (IsBitBranch ? (Br.getOperand(0).getReg() != PPC::CR0LT &&
+                            Br.getOperand(0).getReg() != PPC::CR0GT &&
+                            Br.getOperand(0).getReg() != PPC::CR0EQ)
                          : Br.getOperand(1).getReg() != PPC::CR0) ||
             Br.getIterator() == MBB.begin())
           continue;
@@ -760,7 +761,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         unsigned PX = 0, BIX = 2;
         if (IsBitBranch) {
           PX = Br.getOpcode() == PPC::BC ? 1 : 0;
-          BIX = Br.getOperand(0).getReg() == PPC::CR0GT ? 1 : 2;
+          Register Cond = Br.getOperand(0).getReg();
+          BIX = Cond == PPC::CR0LT ? 0 : (Cond == PPC::CR0GT ? 1 : 2);
         } else {
           switch (Br.getOperand(0).getImm()) {
           case PPC::PRED_LT:
