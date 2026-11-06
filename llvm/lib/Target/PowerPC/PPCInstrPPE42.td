@@ -42,6 +42,17 @@ let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
     // consumed by the branch predicates selected by the compiler.
     let Uses = [];
   }
+  // BIX=3 also writes RA. Model that definition and its tied input explicitly
+  // when selecting subtract-and-branch after register allocation.
+  def SUBWIBC : FCBForm<2, 0, (outs gprc:$RA),
+                        (ins u1imm:$PX, gprc:$RA_in, u5imm:$RB,
+                             ppe42brtarget:$BDX),
+                        "cmpwibc $PX, 3, $RA, $RB, $BDX">,
+                 RegConstraint<"$RA = $RA_in">, NoEncode<"$RA_in"> {
+    let BIX = 3;
+    let isCodeGenOnly = 1;
+    let Uses = [];
+  }
   def CMPWIBCL : FCBForm<2, 1, (outs),
                          (ins u1imm:$PX, u2imm:$BIX, gprc:$RA, u5imm:$RB,
                               ppe42brtarget:$BDX),
