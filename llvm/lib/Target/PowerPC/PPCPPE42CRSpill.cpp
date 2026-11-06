@@ -24,7 +24,7 @@ public:
   PPCPPE42CRSpill() : MachineFunctionPass(ID) {}
 
   StringRef getPassName() const override {
-    return "PPE42 cross-block immediate comparison live ranges";
+    return "PPE42 immediate comparison live ranges";
   }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
@@ -44,7 +44,8 @@ public:
             MI.getOperand(0).getReg().isVirtual() &&
             !MI.getOperand(0).getSubReg() && MI.getOperand(1).isReg() &&
             MI.getOperand(1).getReg().isVirtual() &&
-            !MI.getOperand(1).getSubReg() && MI.getOperand(2).isImm())
+            !MI.getOperand(1).getSubReg() && !MI.getOperand(1).isUndef() &&
+            MI.getOperand(2).isImm())
           Compares.push_back(&MI);
 
     bool Changed = false;
@@ -84,12 +85,10 @@ public:
           break;
         }
       }
-      if (!Safe || Users.size() < 2)
+      if (!Safe || Users.empty())
         continue;
 
       for (MachineInstr *Use : Users) {
-        if (Use->getParent() == Cmp->getParent())
-          continue;
         // Only split when the saved field competes with another CR0 writer
         // on a path to this use. A comparison that can stay in CR0 without
         // interference should not be duplicated. Bound the CFG walk.
@@ -161,7 +160,7 @@ public:
 
 char PPCPPE42CRSpill::ID = 0;
 INITIALIZE_PASS(PPCPPE42CRSpill, "ppc-ppe42-cr-spill",
-                "PPE42 cross-block immediate comparison live ranges", false,
+                "PPE42 immediate comparison live ranges", false,
                 false)
 
 FunctionPass *llvm::createPPCPPE42CRSpillPass() {
