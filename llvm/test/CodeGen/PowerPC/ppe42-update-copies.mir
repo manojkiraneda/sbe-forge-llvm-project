@@ -17,7 +17,7 @@ tracksRegLiveness: true
 body: |
   ; CHECK-LABEL: name: store_then_update
   ; CHECK-NOT: $r0 = ADDI
-  ; CHECK: STB $r10, 1, $r9
+  ; CHECK: STB killed $r10, 1, $r9
   ; CHECK-NEXT: $r9 = ADDI killed $r9, 1
   ; CHECK-NOT: OR
   bb.0:
