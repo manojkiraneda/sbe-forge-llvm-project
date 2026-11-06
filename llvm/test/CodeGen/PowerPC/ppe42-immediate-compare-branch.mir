@@ -41,6 +41,15 @@
   define void @unsigned_live_eq() { ret void }
   define void @sign_live_cr() { ret void }
   define void @fixed_access_span() { ret void }
+  define void @encoded_sign_gt() { ret void }
+  define void @encoded_sign_le() { ret void }
+  define void @hinted_zero_eq() { ret void }
+  define void @hinted_zero_ne() { ret void }
+  define void @hinted_signed_lt() { ret void }
+  define void @scheduled_compare_window() { ret void }
+  define void @scheduled_changed_input() { ret void }
+  define void @encoded_negative_li() { ret void }
+  define void @unsigned_byte_copy() { ret void }
 ...
 ---
 name: signed_eq
@@ -642,5 +651,150 @@ body: |
     INLINEASM &"wrteei 1", 25
     BLR implicit $lr, implicit $rm
   bb.2:
+    BLR implicit $lr, implicit $rm
+...
+
+---
+name: encoded_sign_gt
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: encoded_sign_gt
+    ; CHECK: CMPWIBC 0, 0, killed $r3, 0, %bb.1
+    $cr0 = CMPWI killed $r3, 65535
+    BC killed $cr0gt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: encoded_sign_le
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: encoded_sign_le
+    ; CHECK: CMPWIBC 1, 0, killed $r3, 0, %bb.1
+    $cr0 = CMPWI killed $r3, 65535
+    BCn killed $cr0gt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: hinted_zero_eq
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: hinted_zero_eq
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPWI killed $r3, 0
+    BCC 78, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: hinted_zero_ne
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: hinted_zero_ne
+    ; CHECK: CMPWIBC 0, 2, killed $r3, 0, %bb.1
+    $cr0 = CMPWI killed $r3, 0
+    BCC 71, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: hinted_signed_lt
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: hinted_signed_lt
+    ; CHECK: CMPWIBC 1, 0, killed $r3, 0, %bb.1
+    $cr0 = CMPWI killed $r3, 0
+    BCC 15, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: scheduled_compare_window
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: scheduled_compare_window
+    ; CHECK: CMPWIBC 1, 2, killed $r3, 7, %bb.1
+    $cr0 = CMPWI killed $r3, 7
+    $r4 = LI 1
+    $r4 = LI 2
+    $r4 = LI 3
+    $r4 = LI 4
+    $r4 = LI 5
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: scheduled_changed_input
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: scheduled_changed_input
+    ; CHECK: CMPWI $r3, 7
+    ; CHECK: BC killed $cr0eq, %bb.1
+    $cr0 = CMPWI $r3, 7
+    $r4 = LI 1
+    $r4 = LI 2
+    $r4 = LI 3
+    $r4 = LI 4
+    $r3 = LI 5
+    BC killed $cr0eq, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+
+---
+name: encoded_negative_li
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: encoded_negative_li
+    ; CHECK: LI 65535
+    ; CHECK: CMPLWI killed $r4, 5
+    ; CHECK: BC killed $cr0gt, %bb.1
+    $r4 = LI 65535
+    $cr0 = CMPLWI killed $r4, 5
+    BC killed $cr0gt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+
+---
+name: unsigned_byte_copy
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: unsigned_byte_copy
+    ; CHECK: CMPWIBC 1, 1, killed $r5, 5, %bb.1
+    $r4 = LBZ 0, killed $r3
+    $r5 = OR $r4, killed $r4
+    $cr0 = CMPLWI killed $r5, 5
+    BC killed $cr0gt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
     BLR implicit $lr, implicit $rm
 ...
