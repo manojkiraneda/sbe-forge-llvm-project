@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -190,6 +191,84 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         recomputeLivenessFlags(Head);
         recomputeLivenessFlags(*UpdateBB);
         Changed = true;
+      }
+      return Changed;
+    }
+
+    // Move an address increment to its final copy when the temporary is dead:
+    // tmp = base + N; store ...,base; base = tmp.
+    // Keeping the increment after the store preserves its old address and
+    // removes both the temporary live range and one instruction.
+    bool foldPPE42UpdateCopies(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
+                               const TargetRegisterInfo &TRI) {
+      bool Changed = false;
+      SmallVector<MachineInstr *, 4> CopiesToErase;
+      for (MachineInstr &Copy : MBB) {
+        if (!((Copy.isCopy() && Copy.getNumOperands() == 2) ||
+              (Copy.getOpcode() == PPC::OR && Copy.getNumOperands() == 3 &&
+               Copy.getOperand(1).isIdenticalTo(Copy.getOperand(2)))) ||
+            Copy.isBundled() || Copy.getFlag(MachineInstr::FrameSetup) ||
+            Copy.getFlag(MachineInstr::FrameDestroy) ||
+            Copy.getOperand(1).isUndef())
+          continue;
+        Register Dst = Copy.getOperand(0).getReg();
+        Register Tmp = Copy.getOperand(1).getReg();
+        if (!PPC::GPRCRegClass.contains(Dst) ||
+            !PPC::GPRCRegClass.contains(Tmp) || Dst == Tmp || Dst == PPC::R1 ||
+            Dst == PPC::R13 || Tmp == PPC::R1 || Tmp == PPC::R13 ||
+            Copy.getOperand(0).getSubReg() || Copy.getOperand(1).getSubReg())
+          continue;
+        LiveRegUnits Live(TRI);
+        Live.addLiveOuts(MBB);
+        for (auto I = MBB.rbegin(); &*I != &Copy; ++I)
+          Live.stepBackward(*I);
+        if (!Live.available(Tmp))
+          continue;
+        auto I = Copy.getIterator();
+        MachineInstr *Add = nullptr;
+        unsigned Budget = 8;
+        while (I != MBB.begin() && Budget--) {
+          MachineInstr &MI = *--I;
+          if (MI.isDebugInstr())
+            continue;
+          if (MI.isCall() || MI.isInlineAsm() || MI.isTerminator() ||
+              MI.isBundled() || MI.isCFIInstruction() ||
+              MI.hasUnmodeledSideEffects() ||
+              MI.getFlag(MachineInstr::FrameSetup) ||
+              MI.getFlag(MachineInstr::FrameDestroy))
+            break;
+          if (MI.modifiesRegister(Tmp, &TRI)) {
+            if (MI.getOpcode() == PPC::ADDI && MI.getNumOperands() == 3 &&
+                MI.getOperand(0).getReg() == Tmp &&
+                !MI.getOperand(0).getSubReg() &&
+                MI.getOperand(1).getReg() == Dst &&
+                !MI.getOperand(1).isUndef() && !MI.getOperand(1).getSubReg() &&
+                MI.getOperand(2).isImm() && Dst != PPC::R0)
+              Add = &MI;
+            break;
+          }
+          if (MI.readsRegister(Tmp, &TRI) || MI.modifiesRegister(Dst, &TRI))
+            break;
+        }
+        if (!Add)
+          continue;
+        // A debug location for the temporary cannot describe the moved value.
+        if (llvm::any_of(MBB, [&](const MachineInstr &MI) {
+              return MI.isDebugInstr() && MI.readsRegister(Tmp, &TRI);
+            }))
+          continue;
+        BuildMI(MBB, Copy, Copy.getDebugLoc(), TII.get(PPC::ADDI), Dst)
+            .addReg(Dst)
+            .addImm(Add->getOperand(2).getImm());
+        Add->eraseFromParent();
+        // Erase after iteration: the range iterator must remain valid.
+        CopiesToErase.push_back(&Copy);
+        Changed = true;
+      }
+      if (Changed) {
+        for (MachineInstr *Copy : CopiesToErase)
+          Copy->eraseFromParent();
+        recomputeLivenessFlags(MBB);
       }
       return Changed;
     }
@@ -1222,6 +1301,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           !MF.getSubtarget<PPCSubtarget>().isLittleEndian()) {
         Changed |= simplifyPPE42ConditionalUpdates(MF);
         for (MachineBasicBlock &MBB : MF) {
+          Changed |= foldPPE42UpdateCopies(MBB, *TII, *TRI);
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
           Changed |= combinePPE42Updates(MBB, *TII, *TRI);

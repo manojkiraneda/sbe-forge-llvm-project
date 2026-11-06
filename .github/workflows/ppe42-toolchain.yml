@@ -239,6 +239,7 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-small-zero-fill.ll \
             llvm/test/CodeGen/PowerPC/ppe42-late-size-patterns.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-update-copies.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill-large.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.ll \
             llvm/test/CodeGen/PowerPC/ppe42-const-spill.mir \
