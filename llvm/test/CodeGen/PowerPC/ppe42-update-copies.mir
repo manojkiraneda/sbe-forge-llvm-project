@@ -1,0 +1,118 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  define void @store_then_update() optsize { ret void }
+  define void @temporary_live() optsize { ret void }
+  define void @temporary_used() optsize { ret void }
+  define void @source_changed() optsize { ret void }
+  define void @tuple_live() optsize { ret void }
+  define void @inline_assembly() optsize { ret void }
+  define void @stack_update() optsize { ret void }
+...
+---
+name: store_then_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store_then_update
+  ; CHECK-NOT: $r0 = ADDI
+  ; CHECK: STB $r10, 1, $r9
+  ; CHECK-NEXT: $r9 = ADDI killed $r9, 1
+  ; CHECK-NOT: OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r9, 1
+    STB $r10, 1, $r9
+    $r9 = OR $r0, $r0
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: temporary_live
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: temporary_live
+  ; CHECK: $r0 = ADDI $r9, 1
+  ; CHECK: $r9 = OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r9, 1
+    STB $r10, 1, $r9
+    $r9 = OR $r0, $r0
+    STW $r0, 4, $r3
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: temporary_used
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: temporary_used
+  ; CHECK: $r0 = ADDI $r9, 1
+  ; CHECK: $r9 = OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r9, 1
+    STB $r10, 1, $r9
+    STW $r0, 4, $r3
+    $r9 = OR $r0, $r0
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: source_changed
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: source_changed
+  ; CHECK: $r0 = ADDI $r9, 1
+  ; CHECK: $r9 = OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r9, 1
+    STB $r10, 1, $r9
+    $r9 = LI 4
+    $r9 = OR $r0, $r0
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: tuple_live
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: tuple_live
+  ; CHECK: $r0 = ADDI $r9, 1
+  ; CHECK: $r9 = OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r9, 1
+    STB $r10, 1, $r9
+    $r9 = OR $r0, $r0
+    STVD $r0_r1, 0, $r3
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: inline_assembly
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: inline_assembly
+  ; CHECK: $r0 = ADDI $r9, 1
+  ; CHECK: $r9 = OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r9, 1
+    STB $r10, 1, $r9
+    INLINEASM &"", 1
+    $r9 = OR $r0, $r0
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stack_update
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: stack_update
+  ; CHECK: $r0 = ADDI $r1, 1
+  ; CHECK: $r1 = OR
+  bb.0:
+    liveins: $r3, $r9, $r10, $r1
+    $r0 = ADDI $r1, 1
+    STB $r10, 1, $r1
+    $r1 = OR $r0, $r0
+    BLR implicit $lr, implicit undef $rm
+...
