@@ -3,6 +3,10 @@
 # RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %S/ppe42-register-compare-branch.mir -o - | FileCheck %S/ppe42-register-compare-branch.mir
 
 --- |
+  define void @bit_signed_lt_zero() { ret void }
+  define void @bit_signed_ge_zero() { ret void }
+  define void @bit_signed_lt_immediate() { ret void }
+  define void @bit_signed_ge_immediate() { ret void }
   define void @signed_eq() { ret void }
   define void @bit_eq() { ret void }
   define void @bit_ne() { ret void }
@@ -413,4 +417,66 @@ body: |
   bb.1:
     liveins: $cr0lt
     BLR implicit $lr, implicit $rm, implicit killed $cr0lt
+...
+
+# Signed LT-bit tests use the same fused encoding as predicate LT/GE branches.
+---
+name: bit_signed_lt_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_signed_lt_zero
+    ; CHECK: CMPWIBC 1, 0, killed $r3, 0, %bb.1
+    ; CHECK-NEXT: BLR
+    $cr0 = CMPWI killed $r3, 0
+    BC killed $cr0lt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_signed_ge_zero
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_signed_ge_zero
+    ; CHECK: CMPWIBC 0, 0, killed $r3, 0, %bb.1
+    ; CHECK-NEXT: BLR
+    $cr0 = CMPWI killed $r3, 0
+    BCn killed $cr0lt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_signed_lt_immediate
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_signed_lt_immediate
+    ; CHECK: CMPWIBC 1, 0, killed $r3, 7, %bb.1
+    ; CHECK-NEXT: BLR
+    $cr0 = CMPWI killed $r3, 7
+    BC killed $cr0lt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
+...
+---
+name: bit_signed_ge_immediate
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: bit_signed_ge_immediate
+    ; CHECK: CMPWIBC 0, 0, killed $r3, 31, %bb.1
+    ; CHECK-NEXT: BLR
+    $cr0 = CMPWI killed $r3, 31
+    BCn killed $cr0lt, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
+    BLR implicit $lr, implicit $rm
 ...
