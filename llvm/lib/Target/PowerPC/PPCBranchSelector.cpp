@@ -422,6 +422,16 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         return false;
       StringRef Asm = MI.getOperand(0).getSymbolName();
       Asm = Asm.trim();
+      // A single fixed-width access is precise even when its operands differ
+      // from the common templates below. Reject separators and directives.
+      auto Mnemonic = Asm.take_until([](char C) { return C == ' ' || C == '\t'; });
+      bool FixedAccess = StringSwitch<bool>(Mnemonic)
+                             .Cases("lbz", "lhz", "lwz", "stb", "sth", "stw", true)
+                             .Cases("lvd", "stvd", "mfspr", "mtspr", true)
+                             .Cases("mfmsr", "mtmsr", "wrteei", true)
+                             .Default(false);
+      if (FixedAccess && Asm.find_first_of("\n\r;#.") == StringRef::npos)
+        return false;
       return !StringSwitch<bool>(Asm)
                   .Cases("nop", "trap", "sync", "isync", "eieio", true)
                   .Cases("tw 31, $0, $1", "tw 0, $0, $1", "tw 0, 0, 0", true)
@@ -545,6 +555,41 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         ++Seen;
       }
       return nullptr;
+    };
+    // Prove signed/unsigned equivalence only from a reaching definition in
+    // this block. Do not infer a range from the comparison itself.
+    auto IsKnownNonNegative = [&](const MachineInstr &Cmp) {
+      Register R = Cmp.getOperand(1).getReg();
+      auto It = Cmp.getIterator();
+      for (unsigned Seen = 0; It != Cmp.getParent()->begin() && Seen < 12;) {
+        const MachineInstr &Def = *--It;
+        if (Def.isDebugInstr())
+          continue;
+        ++Seen;
+        if (Def.isCall() || Def.isInlineAsm() || Def.hasUnmodeledSideEffects())
+          return false;
+        if (!Def.modifiesRegister(R, TRI))
+          continue;
+        if (Def.getNumOperands() == 0 || !Def.getOperand(0).isReg() ||
+            Def.getOperand(0).getReg() != R)
+          return false;
+        switch (Def.getOpcode()) {
+        case PPC::LBZ:
+        case PPC::LBZX:
+        case PPC::LHZ:
+        case PPC::LHZX:
+        case PPC::ANDI_rec:
+          return true;
+        case PPC::LI:
+          return Def.getOperand(1).getImm() >= 0;
+        case PPC::RLWINM:
+          return Def.getOperand(3).getImm() > 0 &&
+                 Def.getOperand(3).getImm() <= Def.getOperand(4).getImm();
+        default:
+          return false;
+        }
+      }
+      return false;
     };
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
@@ -800,13 +845,24 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           PX ^= 1;
           BIX = 2;
         }
-        // CMPWIBC preserves CMPWI's CR0 result. Replacing an unsigned
-        // compare is equivalent for EQ/NE, but can change the LT/GT bits.
+        int64_t Immediate = Cmp.getOperand(2).getImm();
+        // x > -1 and x <= -1 are exactly the nonnegative/negative tests.
+        // The comparison result changes, so no CR0 bit may remain live.
+        if (Cmp.getOpcode() == PPC::CMPWI && Immediate == -1 && BIX == 1 &&
+            IsDeadAfter(Br, PPC::CR0)) {
+          Immediate = 0;
+          BIX = 0;
+          PX ^= 1;
+        }
+        // Signed and unsigned relational comparisons agree when the loaded
+        // or masked input is nonnegative and the immediate fits five bits.
+        // For EQ/NE, only live LT/GT bits can prevent equivalence.
         if (Cmp.getOpcode() == PPC::CMPLWI &&
-            (BIX != 2 || !IsDeadAfter(Br, PPC::CR0)))
+            !(isUInt<5>(Immediate) && IsKnownNonNegative(Cmp)) &&
+            (BIX != 2 || !IsDeadAfter(Br, PPC::CR0LT) ||
+             !IsDeadAfter(Br, PPC::CR0GT)))
           continue;
 
-        int64_t Immediate = Cmp.getOperand(2).getImm();
         MachineInstr *Mask = nullptr;
         unsigned Shift = 0;
         if (!isUInt<5>(Immediate)) {
