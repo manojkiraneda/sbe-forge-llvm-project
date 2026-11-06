@@ -125,6 +125,7 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-bit-test-context.ll \
             llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir \
             llvm/test/CodeGen/PowerPC/ppe42-register-compare-branch.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-subtract-branch.mir \
             llvm/test/CodeGen/PowerPC/ppe42-wide-boundary-compare.ll
 
       - name: Test PPE42 PIBMEM core support

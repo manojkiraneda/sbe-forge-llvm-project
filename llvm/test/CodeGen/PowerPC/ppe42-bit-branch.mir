@@ -21,6 +21,7 @@
   define void @other_condition_bit() { ret void }
   define void @multiple_mask_bits() { ret void }
   define void @bit_fixed_access_span() { ret void }
+  define void @hinted_bit_clear() { ret void }
 ...
 ---
 name: bit_clear
@@ -277,5 +278,21 @@ body: |
     INLINEASM &"wrteei 0", 25
     BLR implicit $lr, implicit $rm
   bb.2:
+    BLR implicit $lr, implicit $rm
+...
+
+---
+name: hinted_bit_clear
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3
+    ; CHECK-LABEL: name: hinted_bit_clear
+    ; CHECK: BNBWI 1, killed $r3, 4, %bb.1
+    $r4 = RLWINM killed $r3, 0, 4, 4
+    $cr0 = CMPLWI killed $r4, 0
+    BCC 78, killed $cr0, %bb.1
+    BLR implicit $lr, implicit $rm
+  bb.1:
     BLR implicit $lr, implicit $rm
 ...
