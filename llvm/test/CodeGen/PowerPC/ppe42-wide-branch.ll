@@ -168,3 +168,20 @@ define i1 @boolean(i64 %a, i64 %b) optsize {
   %c = icmp ult i64 %a, %b
   ret i1 %c
 }
+
+define i64 @wide_select(i1 %cond, i64 %a, i64 %b) optsize {
+; CHECK-LABEL: define i64 @wide_select
+; CHECK: freeze i1 %cond
+; CHECK: br i1
+; CHECK-NOT: select i1
+; CHECK: phi i64
+  %r = select i1 %cond, i64 %a, i64 %b
+  ret i64 %r
+}
+
+define i64 @select_one_word(i1 %cond) optsize {
+; CHECK-LABEL: define i64 @select_one_word
+; CHECK: select i1 %cond
+  %r = select i1 %cond, i64 9, i64 12
+  ret i64 %r
+}

@@ -16,6 +16,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 using namespace llvm;
 
@@ -73,6 +74,50 @@ public:
         Changed = true;
       }
     }
+    // Select both halves with one control-flow decision. Expanding the i64
+    // type first otherwise creates two scalar selects and duplicate branches.
+    SmallVector<SelectInst *, 8> Selects;
+    if (F.hasOptSize())
+      for (BasicBlock &BB : F)
+        for (Instruction &I : BB)
+          if (auto *Sel = dyn_cast<SelectInst>(&I))
+            if (Sel->getType()->isIntegerTy(64) &&
+                !Sel->getMetadata(LLVMContext::MD_unpredictable))
+              Selects.push_back(Sel);
+    for (SelectInst *Sel : Selects) {
+      auto *T = dyn_cast<ConstantInt>(Sel->getTrueValue());
+      auto *E = dyn_cast<ConstantInt>(Sel->getFalseValue());
+      if (T && E &&
+          (uint32_t(T->getZExtValue()) == uint32_t(E->getZExtValue()) ||
+           (T->getZExtValue() >> 32) == (E->getZExtValue() >> 32)))
+        continue; // Only one word needs selecting.
+      IRBuilder<> B(Sel);
+      B.SetCurrentDebugLocation(Sel->getDebugLoc());
+      Value *Cond = Sel->getCondition();
+      auto *Cmp = dyn_cast<ICmpInst>(Cond);
+      if (Cmp && Cmp->hasOneUse() && Cmp->isRelational() &&
+          Cmp->getOperand(0)->getType()->isIntegerTy(64)) {
+        // Freezing inputs lets the branch-only lowering below recognize the
+        // comparison while avoiding undefined control flow on poison.
+        Value *L = B.CreateFreeze(Cmp->getOperand(0));
+        Value *R = B.CreateFreeze(Cmp->getOperand(1));
+        Cond = B.CreateICmp(Cmp->getPredicate(), L, R);
+      } else
+        Cond = B.CreateFreeze(Cond);
+      Instruction *ThenTerm, *ElseTerm;
+      SplitBlockAndInsertIfThenElse(Cond, Sel, &ThenTerm, &ElseTerm);
+      auto *Phi =
+          PHINode::Create(Sel->getType(), 2, "wide.select", Sel->getIterator());
+      Phi->setDebugLoc(Sel->getDebugLoc());
+      Phi->addIncoming(Sel->getTrueValue(), ThenTerm->getParent());
+      Phi->addIncoming(Sel->getFalseValue(), ElseTerm->getParent());
+      Sel->replaceAllUsesWith(Phi);
+      Sel->eraseFromParent();
+      if (Cmp && Cmp->use_empty())
+        Cmp->eraseFromParent();
+      Changed = true;
+    }
+
     // Keep a branch-only wide relation as control flow instead of selecting
     // two Boolean words and keeping a high-word CR live over a low-word
     // comparison. Freeze each operand once: a split must not choose different
