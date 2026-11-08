@@ -88,7 +88,22 @@ def STVDX : XForm_1<31, 0, (outs),
 // The destination register $RA must be the same as input register $RTi
 // (read-modify-write operation, similar to PPC64 RLDIMI)
 // Pattern matching is done in C++ code (tryAsSingleRLDIMI)
-let hasSideEffects = 0, Predicates = [IsPPE42] in {
+let hasSideEffects = 0, Predicates = [IsPPE42, HasPPE42XRotate],
+    DecoderNamespace = "PPE42" in {
+def RLDICL_VDR : MDForm_1<30, 0, (outs vdrc:$RA),
+    (ins vdrc:$RS, u6imm:$SH, u6imm:$MBE),
+    "rldicl $RA, $RS, $SH, $MBE", IIC_IntRotateDI, []>;
+def RLDICR_VDR : MDForm_1<30, 1, (outs vdrc:$RA),
+    (ins vdrc:$RS, u6imm:$SH, u6imm:$MBE),
+    "rldicr $RA, $RS, $SH, $MBE", IIC_IntRotateDI, []>;
+let Defs = [CR0], RC = 1 in {
+def RLDICL_VDR_rec : MDForm_1<30, 0, (outs vdrc:$RA),
+    (ins vdrc:$RS, u6imm:$SH, u6imm:$MBE),
+    "rldicl. $RA, $RS, $SH, $MBE", IIC_IntRotateDI, []>;
+def RLDICR_VDR_rec : MDForm_1<30, 1, (outs vdrc:$RA),
+    (ins vdrc:$RS, u6imm:$SH, u6imm:$MBE),
+    "rldicr. $RA, $RS, $SH, $MBE", IIC_IntRotateDI, []>;
+}
 def RLDIMI_VDR : MDForm_1<30, 3, (outs vdrc:$RA),
                           (ins vdrc:$RTi, vdrc:$RS, u6imm:$SH, u6imm:$MBE),
                           "rldimi $RA, $RS, $SH, $MBE", IIC_IntRotateDI,
@@ -98,6 +113,9 @@ def RLDIMI_VDR : MDForm_1<30, 3, (outs vdrc:$RA),
   let DecoderNamespace = "PPE42";
 }
 
+} // PPE42X immediate rotates
+
+let hasSideEffects = 0, Predicates = [IsPPE42] in {
 def SLVD : XForm_6<31, 59, (outs vdrc:$RA),
                     (ins vdrc:$RST, gprc:$RB),
                     "slvd $RA, $RST, $RB", IIC_IntGeneral, []> {

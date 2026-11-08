@@ -5226,8 +5226,8 @@ bool PPCDAGToDAGISel::tryAsSingleRLDIMI(SDNode *N) {
   unsigned SH = 63 - ME;
   SDLoc Dl(N);
 
-  if (Subtarget->isPPE42()) {
-    // PPE42 RLDIMI_VDR has 4 independent operands (not destructive)
+  if (Subtarget->isPPE42() && Subtarget->hasPPE42XRotate()) {
+    // PPE42X RLDIMI_VDR ties the old destination to the result
     // Format: rldimi RA, RS, SH, MBE
     // Use LI8_VDR pseudo to materialize -1 into VDR register pair
     SDValue Ops[] = {
