@@ -1003,6 +1003,112 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
       }
     }
 
+    // A two-bit equality mismatch is the OR of two individual bit mismatches.
+    // Use two bit branches when a large comparison immediate prevented the
+    // cheaper folds above. Three or more bit branches would not save code.
+    for (MachineBasicBlock &MBB : Fn) {
+      unsigned Offset = 0;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Br = *I++;
+        unsigned BrOffset = Offset;
+        Offset += TII->getInstSizeInBytes(Br);
+        bool BitBranch = Br.getOpcode() == PPC::BCn &&
+                         Br.getOperand(0).getReg() == PPC::CR0EQ;
+        if ((!BitBranch && (Br.getOpcode() != PPC::BCC ||
+                            Br.getOperand(1).getReg() != PPC::CR0 ||
+                            PredicateCondition(Br) != PPC::PRED_NE)) ||
+            Br.isBundled() || Br.peekDebugInstrNum())
+          continue;
+        unsigned DestOp = BitBranch ? 1 : 2;
+        if (!Br.getOperand(DestOp).isMBB() || !IsDeadAfter(Br, PPC::CR0))
+          continue;
+        MachineInstr *Cmp = FindMovableCompare(Br);
+        if (!Cmp ||
+            (Cmp->getOpcode() != PPC::CMPWI &&
+             Cmp->getOpcode() != PPC::CMPLWI) ||
+            Cmp->peekDebugInstrNum() || Cmp->isBundled())
+          continue;
+        Register R = Cmp->getOperand(1).getReg();
+        if (!IsDeadAfter(*Cmp, R))
+          continue;
+        MachineInstr *Mask = nullptr;
+        auto P = Cmp->getIterator();
+        for (unsigned Seen = 0; P != MBB.begin() && Seen < 8;) {
+          MachineInstr &MI = *--P;
+          if (MI.isDebugInstr())
+            continue;
+          ++Seen;
+          if (MI.modifiesRegister(R, TRI)) {
+            if ((MI.getOpcode() == PPC::ANDI_rec ||
+                 MI.getOpcode() == PPC::ANDIS_rec ||
+                 MI.getOpcode() == PPC::RLWINM) &&
+                MI.getOperand(0).getReg() == R && !MI.isBundled() &&
+                !MI.peekDebugInstrNum())
+              Mask = &MI;
+            break;
+          }
+          if (MI.isCall() || MI.isInlineAsm() || MI.isTerminator() ||
+              MI.hasUnmodeledSideEffects() || MI.readsRegister(R, TRI) ||
+              MI.readsRegister(PPC::CR0, TRI) ||
+              MI.modifiesRegister(PPC::CR0, TRI))
+            break;
+        }
+        if (!Mask)
+          continue;
+        uint32_t Bits;
+        unsigned Rotate = 0;
+        if (Mask->getOpcode() == PPC::RLWINM) {
+          unsigned MB = Mask->getOperand(3).getImm();
+          unsigned ME = Mask->getOperand(4).getImm();
+          Bits = MB <= ME ? (UINT32_MAX >> MB) & (UINT32_MAX << (31 - ME))
+                          : (UINT32_MAX >> MB) | (UINT32_MAX << (31 - ME));
+          Rotate = Mask->getOperand(2).getImm();
+        } else {
+          Bits = uint32_t(Mask->getOperand(2).getImm()) & 0xffff;
+          if (Mask->getOpcode() == PPC::ANDIS_rec)
+            Bits <<= 16;
+        }
+        uint32_t Expected = Cmp->getOperand(2).getImm();
+        if (Cmp->getOpcode() == PPC::CMPWI)
+          Expected = SignExtend64<16>(Expected);
+        if (llvm::popcount(Bits) != 2 || (Expected & ~Bits))
+          continue;
+        Register Src = Mask->getOperand(1).getReg();
+        bool Safe = true;
+        for (auto J = std::next(Mask->getIterator()); J != Br.getIterator();
+             ++J) {
+          if (&*J == Cmp || J->isDebugInstr())
+            continue;
+          if (J->readsRegister(R, TRI) || J->readsRegister(Src, TRI) ||
+              J->modifiesRegister(Src, TRI)) {
+            Safe = false;
+            break;
+          }
+        }
+        MachineBasicBlock *Dest = Br.getOperand(DestOp).getMBB();
+        int Distance = computeBranchSize(Fn, &MBB, Dest, BrOffset);
+        if (!Safe || HasImpreciseBranchSpan(Br, *Dest) || Distance < -2032 ||
+            Distance > 2032)
+          continue;
+        for (unsigned N = 0; N != 2; ++N) {
+          unsigned Bit = llvm::countr_zero(Bits);
+          uint32_t BitMask = uint32_t(1) << Bit;
+          BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
+              .addImm(bool(Expected & BitMask))
+              .addReg(Src, N == 1 && IsDeadAfter(Br, Src) ? RegState::Kill : 0)
+              .addImm((31 - Bit + Rotate) % 32)
+              .addMBB(Dest);
+          Bits &= ~BitMask;
+        }
+        Mask->eraseFromParent();
+        Cmp->eraseFromParent();
+        Br.eraseFromParent();
+        BlockSizes[MBB.getNumber()].first -= 4;
+        Offset -= 4;
+        EverMadeChange = true;
+      }
+    }
+
     // Prefer the fused branches above when possible. For the remaining zero
     // comparisons, reuse the producer's record form after register allocation.
     // This also handles a result overwritten between its compare and branch,
@@ -1055,7 +1161,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             case PPC::SRAWI:
             case PPC::CNTLZW:
             case PPC::EXTSB:
-              RecordOpcode = PPC::getRecordFormOpcode(Def.getOpcode());
+              RecordOpcode = TII->getRecordFormOpcode(Def.getOpcode());
               break;
             case PPC::ANDI_rec:
             case PPC::ANDIS_rec:
