@@ -1,0 +1,131 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-branch-select -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  define void @predecessor_byte(ptr %p) { ret void }
+  define void @safe_join(ptr %p) { ret void }
+  define void @unsafe_join(ptr %p) { ret void }
+  define void @logical_chain(ptr %p) { ret void }
+  define void @sign_set(ptr %p) { ret void }
+  define void @loop_unknown(ptr %p) { ret void }
+...
+---
+name: predecessor_byte
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: predecessor_byte
+  ; CHECK: CMPWIBC 1, 1, $r3, 7,
+  bb.0:
+    liveins: $r4
+    $r3 = LBZ 0, $r4 :: (load (s8) from %ir.p)
+    B %bb.1
+  bb.1:
+    liveins: $r3
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.2
+    BLR implicit $lr, implicit undef $rm
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: safe_join
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: safe_join
+  ; CHECK: CMPWIBC 1, 1, $r3, 7,
+  bb.0:
+    liveins: $cr0
+    BC $cr0eq, %bb.2
+    B %bb.1
+  bb.1:
+    $r3 = LI 4
+    B %bb.3
+  bb.2:
+    $r3 = LI 9
+    B %bb.3
+  bb.3:
+    liveins: $r3
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.4
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: unsafe_join
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: unsafe_join
+  ; CHECK: $cr0 = CMPLWI $r3, 7
+  ; CHECK-NEXT: BC $cr0gt,
+  bb.0:
+    liveins: $cr0
+    BC $cr0eq, %bb.2
+    B %bb.1
+  bb.1:
+    $r3 = LI 4
+    B %bb.3
+  bb.2:
+    $r3 = LI -1
+    B %bb.3
+  bb.3:
+    liveins: $r3
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.4
+    BLR implicit $lr, implicit undef $rm
+  bb.4:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: logical_chain
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: logical_chain
+  ; CHECK: CMPWIBC 1, 1, $r3, 7,
+  bb.0:
+    liveins: $r4
+    $r3 = LBZ 0, $r4 :: (load (s8) from %ir.p)
+    $r3 = ORI $r3, 256
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sign_set
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: sign_set
+  ; CHECK: $cr0 = CMPLWI $r3, 7
+  ; CHECK-NEXT: BC $cr0gt,
+  bb.0:
+    liveins: $r4
+    $r3 = LBZ 0, $r4 :: (load (s8) from %ir.p)
+    $r3 = ORI $r3, 256
+    $r3 = ORIS $r3, 32768
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: loop_unknown
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: loop_unknown
+  ; CHECK: $cr0 = CMPLWI $r3, 7
+  ; CHECK-NEXT: BC $cr0gt,
+  bb.0:
+    liveins: $r3
+    B %bb.1
+  bb.1:
+    liveins: $r3
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.2
+    B %bb.1
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...

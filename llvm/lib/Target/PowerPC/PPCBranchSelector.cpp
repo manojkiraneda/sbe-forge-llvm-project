@@ -18,6 +18,7 @@
 #include "PPC.h"
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/CodeGen/LiveRegUnits.h"
@@ -560,48 +561,101 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
       }
       return nullptr;
     };
-    // Prove signed/unsigned equivalence only from a reaching definition in
-    // this block. Do not infer a range from the comparison itself.
+    // Recover known-zero bits from reaching physical-register definitions.
+    // At a join every predecessor must prove the bits; loops and long chains
+    // conservatively exhaust the budget. Never derive a range from a compare.
     auto IsKnownNonNegative = [&](const MachineInstr &Cmp) {
-      Register R = Cmp.getOperand(1).getReg();
-      auto It = Cmp.getIterator();
-      for (unsigned Seen = 0; It != Cmp.getParent()->begin() && Seen < 12;) {
-        const MachineInstr &Def = *--It;
-        if (Def.isDebugInstr())
-          continue;
-        ++Seen;
-        if (Def.isCall() || Def.isInlineAsm() || Def.hasUnmodeledSideEffects())
-          return false;
-        if (!Def.modifiesRegister(R, TRI))
-          continue;
-        if (Def.getNumOperands() == 0 || !Def.getOperand(0).isReg() ||
-            Def.getOperand(0).getReg() != R)
-          return false;
-        switch (Def.getOpcode()) {
-        case PPC::LBZ:
-        case PPC::LBZX:
-        case PPC::LHZ:
-        case PPC::LHZX:
-        case PPC::ANDI_rec:
-          return true;
-        case PPC::LI:
-          return SignExtend64<16>(Def.getOperand(1).getImm()) >= 0;
-        case PPC::OR:
-          if (Def.getOperand(1).getReg() != Def.getOperand(2).getReg())
-            return false;
-          R = Def.getOperand(1).getReg();
-          continue;
-        case PPC::ANDIS_rec:
-          return (Def.getOperand(2).getImm() & 0x8000) == 0;
-        case PPC::RLWINM:
-        case PPC::RLWINM_rec:
-          return Def.getOperand(3).getImm() > 0 &&
-                 Def.getOperand(3).getImm() <= Def.getOperand(4).getImm();
-        default:
-          return false;
+      unsigned Budget = 96;
+      auto KnownZero = [&](auto &&Self, const MachineBasicBlock &BB,
+                           MachineBasicBlock::const_iterator At,
+                           Register R) -> uint32_t {
+        if (!Budget)
+          return 0;
+        --Budget;
+        while (At != BB.begin()) {
+          if (!Budget)
+            return 0;
+          --Budget;
+          const MachineInstr &Def = *--At;
+          if (Def.isDebugInstr())
+            continue;
+          if (Def.isCall() || Def.isInlineAsm() ||
+              Def.hasUnmodeledSideEffects())
+            return 0;
+          if (!Def.modifiesRegister(R, TRI))
+            continue;
+          if (!Def.getNumOperands() || !Def.getOperand(0).isReg() ||
+              Def.getOperand(0).getReg() != R ||
+              llvm::any_of(Def.operands(), [](const MachineOperand &MO) {
+                return MO.isReg() && MO.isUse() && MO.isUndef();
+              }))
+            return 0;
+          auto Input = [&](unsigned Op) {
+            return Self(Self, BB, At, Def.getOperand(Op).getReg());
+          };
+          switch (Def.getOpcode()) {
+          case PPC::LBZ:
+          case PPC::LBZX:
+            return 0xffffff00u;
+          case PPC::LHZ:
+          case PPC::LHZX:
+            return 0xffff0000u;
+          case PPC::LI:
+            return ~uint32_t(SignExtend64<16>(Def.getOperand(1).getImm()));
+          case PPC::LIS:
+            return ~(uint32_t(Def.getOperand(1).getImm()) << 16);
+          case PPC::COPY:
+            return Input(1);
+          case PPC::OR: {
+            if (Def.getOperand(1).getReg() == Def.getOperand(2).getReg())
+              return Input(1);
+            uint32_t Left = Input(1);
+            return Left & Input(2);
+          }
+          case PPC::AND: {
+            uint32_t Left = Input(1);
+            return Left | Input(2);
+          }
+          case PPC::ORI:
+            return Input(1) & ~uint32_t(Def.getOperand(2).getImm());
+          case PPC::ORIS:
+            return Input(1) & ~(uint32_t(Def.getOperand(2).getImm()) << 16);
+          case PPC::ANDI_rec:
+            return ~uint32_t(Def.getOperand(2).getImm());
+          case PPC::ANDIS_rec:
+            return ~(uint32_t(Def.getOperand(2).getImm()) << 16);
+          case PPC::RLWINM:
+          case PPC::RLWINM_rec: {
+            unsigned MB = Def.getOperand(3).getImm();
+            unsigned ME = Def.getOperand(4).getImm();
+            uint32_t Mask =
+                MB <= ME ? (UINT32_MAX >> MB) & (UINT32_MAX << (31 - ME))
+                         : (UINT32_MAX >> MB) | (UINT32_MAX << (31 - ME));
+            // A mask that clears the sign bit needs no input analysis.
+            if (!(Mask & 0x80000000u))
+              return ~Mask;
+            return ~Mask |
+                   llvm::rotl(Input(1), int(Def.getOperand(2).getImm()));
+          }
+          default:
+            return 0;
+          }
         }
-      }
-      return false;
+        if (BB.pred_empty() || !Budget)
+          return 0;
+        uint32_t Bits = UINT32_MAX;
+        for (const MachineBasicBlock *Pred : BB.predecessors()) {
+          if (!Budget)
+            return 0;
+          Bits &= Self(Self, *Pred, Pred->end(), R);
+          if (!Bits)
+            break;
+        }
+        return Bits;
+      };
+      return bool(KnownZero(KnownZero, *Cmp.getParent(), Cmp.getIterator(),
+                            Cmp.getOperand(1).getReg()) &
+                  0x80000000u);
     };
     for (MachineBasicBlock &MBB : Fn) {
       unsigned Offset = 0;
@@ -948,6 +1002,94 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         EverMadeChange = true;
       }
     }
+
+    // Prefer the fused branches above when possible. For the remaining zero
+    // comparisons, reuse the producer's record form after register allocation.
+    // This also handles a result overwritten between its compare and branch,
+    // where moving the comparison into a fused branch would be incorrect.
+    for (MachineBasicBlock &MBB : Fn) {
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Cmp = *I++;
+        if ((Cmp.getOpcode() != PPC::CMPWI && Cmp.getOpcode() != PPC::CMPLWI) ||
+            Cmp.getOperand(0).getReg() != PPC::CR0 ||
+            Cmp.getOperand(2).getImm() != 0 || Cmp.peekDebugInstrNum() ||
+            Cmp.isBundled())
+          continue;
+        // A record form compares signed. EQ and SO agree for unsigned inputs;
+        // LT/GT require proof that the input's sign bit is clear.
+        if (Cmp.getOpcode() == PPC::CMPLWI && !IsKnownNonNegative(Cmp) &&
+            (!IsDeadAfter(Cmp, PPC::CR0LT) || !IsDeadAfter(Cmp, PPC::CR0GT)))
+          continue;
+        Register R = Cmp.getOperand(1).getReg();
+        auto P = Cmp.getIterator();
+        for (unsigned Seen = 0; P != MBB.begin() && Seen < 12;) {
+          MachineInstr &Def = *--P;
+          if (Def.isDebugInstr())
+            continue;
+          ++Seen;
+          if (Def.isCall() || Def.isInlineAsm() || Def.isTerminator() ||
+              Def.hasUnmodeledSideEffects() || Def.isBundled() ||
+              Def.peekDebugInstrNum())
+            break;
+          if (Def.modifiesRegister(R, TRI)) {
+            if (!Def.getOperand(0).isReg() || Def.getOperand(0).getReg() != R)
+              break;
+            int RecordOpcode = -1;
+            switch (Def.getOpcode()) {
+            case PPC::RLWINM:
+            case PPC::RLWNM:
+            case PPC::AND:
+            case PPC::ANDC:
+            case PPC::OR:
+            case PPC::ORC:
+            case PPC::XOR:
+            case PPC::EQV:
+            case PPC::NAND:
+            case PPC::NOR:
+            case PPC::ADD4:
+            case PPC::SUBF:
+            case PPC::NEG:
+            case PPC::SLW:
+            case PPC::SRW:
+            case PPC::SRAW:
+            case PPC::SRAWI:
+            case PPC::CNTLZW:
+            case PPC::EXTSB:
+              RecordOpcode = PPC::getRecordFormOpcode(Def.getOpcode());
+              break;
+            case PPC::ANDI_rec:
+            case PPC::ANDIS_rec:
+            case PPC::RLWINM_rec:
+            case PPC::RLWNM_rec:
+              RecordOpcode = Def.getOpcode();
+              break;
+            default:
+              break;
+            }
+            if (RecordOpcode == -1 || Def.readsRegister(PPC::CR0, TRI))
+              break;
+            bool AlreadyRecords = Def.modifiesRegister(PPC::CR0, TRI);
+            Def.setDesc(TII->get(RecordOpcode));
+            if (!AlreadyRecords)
+              Def.addOperand(Fn,
+                             MachineOperand::CreateReg(PPC::CR0, true, true));
+            for (MachineOperand &MO : Def.operands())
+              if (MO.isReg() && MO.isDef() && MO.getReg() == PPC::CR0)
+                MO.setIsDead(false);
+            Cmp.eraseFromParent();
+            BlockSizes[MBB.getNumber()].first -= 4;
+            EverMadeChange = true;
+            break;
+          }
+          // Reusing earlier flags must not change any intervening observer,
+          // and XER.SO must still have the value sampled by the comparison.
+          if (Def.readsRegister(PPC::CR0, TRI) ||
+              Def.modifiesRegister(PPC::CR0, TRI) ||
+              Def.modifiesRegister(PPC::XER, TRI))
+            break;
+        }
+      }
+    }
   }
 
   // Fold an adjacent in-place decrement into a fused equality branch.
@@ -958,10 +1100,9 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
     for (MachineBasicBlock &MBB : Fn) {
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &Br = *I++;
-        if (Br.getOpcode() != PPC::CMPWIBC ||
-            Br.getOperand(1).getImm() != 2 || Br.getOperand(3).getImm() != 0 ||
-            Br.peekDebugInstrNum() || Br.isBundledWithPred() ||
-            Br.isBundledWithSucc())
+        if (Br.getOpcode() != PPC::CMPWIBC || Br.getOperand(1).getImm() != 2 ||
+            Br.getOperand(3).getImm() != 0 || Br.peekDebugInstrNum() ||
+            Br.isBundledWithPred() || Br.isBundledWithSucc())
           continue;
         auto P = Br.getIterator();
         while (P != MBB.begin() && std::prev(P)->isDebugInstr())
@@ -970,10 +1111,10 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           continue;
         MachineInstr &Dec = *--P;
         Register R = Br.getOperand(2).getReg();
-        if (Dec.getOpcode() != PPC::ADDI ||
-            Dec.getOperand(0).getReg() != R || Dec.getOperand(1).getReg() != R ||
-            !Dec.getOperand(2).isImm() || Dec.peekDebugInstrNum() ||
-            Dec.isBundledWithPred() || Dec.isBundledWithSucc())
+        if (Dec.getOpcode() != PPC::ADDI || Dec.getOperand(0).getReg() != R ||
+            Dec.getOperand(1).getReg() != R || !Dec.getOperand(2).isImm() ||
+            Dec.peekDebugInstrNum() || Dec.isBundledWithPred() ||
+            Dec.isBundledWithSucc())
           continue;
         int64_t Amount = -SignExtend64<16>(Dec.getOperand(2).getImm());
         if (Amount <= 0 || !isUInt<5>(Amount))
