@@ -804,7 +804,8 @@ public:
         bool IsPair =
             Mem.getOpcode() == PPC::LVD || Mem.getOpcode() == PPC::STVD;
         bool IsLoad =
-            Mem.getOpcode() == PPC::LVD || Mem.getOpcode() == PPC::LWZ;
+            Mem.getOpcode() == PPC::LVD || Mem.getOpcode() == PPC::LWZ ||
+            Mem.getOpcode() == PPC::LBZ || Mem.getOpcode() == PPC::LHZ;
         unsigned UpdateOpcode = 0;
         switch (Mem.getOpcode()) {
         case PPC::LVD:
@@ -812,6 +813,18 @@ public:
           break;
         case PPC::STVD:
           UpdateOpcode = PPC::STVDU;
+          break;
+        case PPC::LBZ:
+          UpdateOpcode = PPC::LBZU;
+          break;
+        case PPC::LHZ:
+          UpdateOpcode = PPC::LHZU;
+          break;
+        case PPC::STB:
+          UpdateOpcode = PPC::STBU;
+          break;
+        case PPC::STH:
+          UpdateOpcode = PPC::STHU;
           break;
         case PPC::LWZ:
           UpdateOpcode = PPC::LWZU;
