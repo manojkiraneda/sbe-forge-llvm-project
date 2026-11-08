@@ -85,6 +85,26 @@ public:
                 !Sel->getMetadata(LLVMContext::MD_unpredictable))
               Selects.push_back(Sel);
     for (SelectInst *Sel : Selects) {
+      bool LowNeeded = false, HighNeeded = false;
+      for (User *U : Sel->users()) {
+        if (auto *Trunc = dyn_cast<TruncInst>(U)) {
+          if (Trunc->getType()->getIntegerBitWidth() <= 32) {
+            LowNeeded = true;
+            continue;
+          }
+        }
+        if (auto *Shift = dyn_cast<BinaryOperator>(U))
+          if (Shift->getOpcode() == Instruction::LShr &&
+              Shift->getOperand(0) == Sel)
+            if (auto *Amt = dyn_cast<ConstantInt>(Shift->getOperand(1)))
+              if (Amt->getZExtValue() >= 32 && Amt->getZExtValue() < 64) {
+                HighNeeded = true;
+                continue;
+              }
+        LowNeeded = HighNeeded = true;
+      }
+      if (!LowNeeded || !HighNeeded)
+        continue;
       auto *T = dyn_cast<ConstantInt>(Sel->getTrueValue());
       auto *E = dyn_cast<ConstantInt>(Sel->getFalseValue());
       if (T && E &&
