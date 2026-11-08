@@ -1318,6 +1318,34 @@ bool PPCAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     }
     // Post-process instructions (typically extended mnemonics)
     processInstruction(Inst, Operands);
+    // The generic assembler accepts PPC64 rotate mnemonics even in a 32-bit
+    // object. On PPE42X these encodings operate on VDR tuples instead. Route
+    // both the ordinary mnemonics and expanded aliases through that register
+    // model, and enforce the extension even if a generic match was found.
+    if (getSTI().hasFeature(PPC::FeaturePPE42)) {
+      unsigned VDR = 0;
+      bool Insert = false;
+      switch (Inst.getOpcode()) {
+      case PPC::RLDICL: VDR = PPC::RLDICL_VDR; break;
+      case PPC::RLDICL_rec: VDR = PPC::RLDICL_VDR_rec; break;
+      case PPC::RLDICR: VDR = PPC::RLDICR_VDR; break;
+      case PPC::RLDICR_rec: VDR = PPC::RLDICR_VDR_rec; break;
+      case PPC::RLDIMI: VDR = PPC::RLDIMI_VDR; Insert = true; break;
+      case PPC::RLDIMI_rec: VDR = PPC::RLDIMI_VDR_rec; Insert = true; break;
+      }
+      if (VDR) {
+        if (!getSTI().hasFeature(PPC::FeaturePPE42XRotate))
+          return Error(IDLoc, "instruction requires PPE42X rotate support");
+        const MCRegisterInfo &MRI = *getContext().getRegisterInfo();
+        for (unsigned I = 0, E = Insert ? 3 : 2; I != E; ++I) {
+          unsigned Reg = MRI.getEncodingValue(Inst.getOperand(I).getReg());
+          if (Reg >= 32 || !VDRRegs[Reg])
+            return Error(IDLoc, "invalid PPE42 virtual-doubleword register");
+          Inst.getOperand(I).setReg(VDRRegs[Reg]);
+        }
+        Inst.setOpcode(VDR);
+      }
+    }
     Inst.setLoc(IDLoc);
     Out.emitInstruction(Inst, getSTI());
     return false;
