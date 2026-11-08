@@ -1133,7 +1133,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             return false;
         }
         if (J->modifiesRegister(PPC::CR0, TRI))
-          return J->definesRegister(PPC::CR0);
+          return J->definesRegister(PPC::CR0, TRI);
       }
       return true;
     };
