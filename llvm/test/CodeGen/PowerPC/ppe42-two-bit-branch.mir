@@ -1,0 +1,133 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-branch-select -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  define void @mixed_bits() { ret void }
+  define void @upper_bits() { ret void }
+  define void @three_bits() { ret void }
+  define void @source_changed() { ret void }
+  define void @masked_live() { ret void }
+  define void @flags_live() { ret void }
+  define void @rotated_bits() { ret void }
+...
+---
+name: mixed_bits
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: mixed_bits
+    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 30, %bb.1
+    ; CHECK: BNBWI 1, {{(killed )?}}$r3, 23, %bb.1
+    ; CHECK-NOT: CMPLWI
+    $r4 = ANDI_rec $r3, 258, implicit-def dead $cr0
+    $cr0 = CMPLWI $r4, 256
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: upper_bits
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: upper_bits
+    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 15, %bb.1
+    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 0, %bb.1
+    ; CHECK-NOT: CMPLWI
+    $r4 = ANDIS_rec $r3, 32769, implicit-def dead $cr0
+    $cr0 = CMPLWI $r4, 0
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: three_bits
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: three_bits
+    ; CHECK: CMPLWI
+    ; CHECK-NOT: BNBWI
+    $r4 = ANDI_rec $r3, 259, implicit-def dead $cr0
+    $cr0 = CMPLWI $r4, 256
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: source_changed
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: source_changed
+    ; CHECK: CMPLWI
+    ; CHECK-NOT: BNBWI
+    $r4 = ANDI_rec $r3, 258, implicit-def dead $cr0
+    $r3 = LI 0
+    $cr0 = CMPLWI $r4, 256
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: masked_live
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: masked_live
+    ; CHECK: CMPLWI
+    ; CHECK-NOT: BNBWI
+    $r4 = ANDI_rec $r3, 258, implicit-def dead $cr0
+    $cr0 = CMPLWI $r4, 256
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    liveins: $r4, $r5
+    STW $r4, 0, $r5
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: flags_live
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: flags_live
+    ; CHECK: CMPLWI
+    ; CHECK-NOT: BNBWI
+    $r4 = ANDI_rec $r3, 258, implicit-def dead $cr0
+    $cr0 = CMPLWI $r4, 256
+    BCn $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    liveins: $cr0
+    $r6 = MFCR implicit $cr0
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: rotated_bits
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: rotated_bits
+    ; CHECK: BNBWI 1, {{(killed )?}}$r3, 26, %bb.1
+    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 25, %bb.1
+    ; CHECK-NOT: CMPLWI
+    $r4 = RLWINM $r3, 7, 18, 19
+    $cr0 = CMPLWI $r4, 4096
+    BCC 68, $cr0, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...

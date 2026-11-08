@@ -3,6 +3,7 @@
 # RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
 
 --- |
+  define void @copy_then_update(ptr %p) { ret void }
   define void @lbz_post(ptr %p) { ret void }
   define void @lbz_pre(ptr %p) { ret void }
   define void @lhz_post(ptr %p) { ret void }
@@ -19,6 +20,23 @@
   define void @volatile_access(ptr %p) { ret void }
   define void @overlap(ptr %p) { ret void }
   define void @different_address(ptr %p) { ret void }
+...
+---
+name: copy_then_update
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: copy_then_update
+    ; CHECK-NOT: ADDI
+    ; CHECK-NOT: OR
+    ; CHECK: STBU killed $r4, 1, killed $r3
+    ; CHECK-NOT: ADDI
+    ; CHECK-NOT: OR
+    $r5 = ADDI $r3, 1
+    STB $r4, 1, $r3 :: (store (s8) into %ir.p)
+    $r3 = OR $r5, $r5
+    BLR implicit $lr, implicit undef $rm
 ...
 ---
 name: lbz_post
