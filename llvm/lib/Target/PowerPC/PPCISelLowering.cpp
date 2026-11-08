@@ -258,29 +258,17 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
 
   setTruncStoreAction(MVT::f64, MVT::f32, Expand);
 
-  // PowerPC has pre-inc load and store's.
+  // Immediate pre-increment forms are available on PPE42 too. Its address
+  // decomposition hook rejects the unsupported register-indexed update forms.
   setIndexedLoadAction(ISD::PRE_INC, MVT::i1, Legal);
-  // PPE42 omits all update-indexed load forms. Expand byte and halfword
-  // loads into an address update followed by the non-update indexed load.
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i8,
-                       Subtarget.isPPE42() ? Expand : Legal);
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i16,
-                       Subtarget.isPPE42() ? Expand : Legal);
-  // PPE42 does not implement the indexed word-load-with-update instruction
-  // (lwzux).  Expand it into address formation followed by lwzx.
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i32,
-                       Subtarget.isPPE42() ? Expand : Legal);
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i8, Legal);
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i16, Legal);
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i32, Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i64, Legal);
-  // PPE42 omits all update-indexed store forms as well. Expand scalar stores
-  // into an address update followed by the non-update indexed store.
-  setIndexedStoreAction(ISD::PRE_INC, MVT::i1,
-                        Subtarget.isPPE42() ? Expand : Legal);
-  setIndexedStoreAction(ISD::PRE_INC, MVT::i8,
-                        Subtarget.isPPE42() ? Expand : Legal);
-  setIndexedStoreAction(ISD::PRE_INC, MVT::i16,
-                        Subtarget.isPPE42() ? Expand : Legal);
-  setIndexedStoreAction(ISD::PRE_INC, MVT::i32,
-                        Subtarget.isPPE42() ? Expand : Legal);
+  setIndexedStoreAction(ISD::PRE_INC, MVT::i1, Legal);
+  setIndexedStoreAction(ISD::PRE_INC, MVT::i8, Legal);
+  setIndexedStoreAction(ISD::PRE_INC, MVT::i16, Legal);
+  setIndexedStoreAction(ISD::PRE_INC, MVT::i32, Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i64, Legal);
   if (!Subtarget.hasSPE()) {
     setIndexedLoadAction(ISD::PRE_INC, MVT::f32, Legal);
@@ -3104,10 +3092,8 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
                                                   SDValue &Offset,
                                                   ISD::MemIndexedMode &AM,
                                                   SelectionDAG &DAG) const {
-  // PPE42 does not implement the indexed update load/store instructions.
-  // Keep the address update separate so instruction selection cannot form
-  // lhzux/lwzux/etc. for this target.
-  if (DisablePPCPreinc || Subtarget.isPPE42()) return false;
+  if (DisablePPCPreinc)
+    return false;
 
   bool isLoad = true;
   SDValue Ptr;
@@ -3119,18 +3105,37 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     Alignment = LD->getAlign();
   } else if (StoreSDNode *ST = dyn_cast<StoreSDNode>(N)) {
     Ptr = ST->getBasePtr();
-    VT  = ST->getMemoryVT();
+    VT = ST->getMemoryVT();
     Alignment = ST->getAlign();
     isLoad = false;
   } else
     return false;
 
-  // PPE42 represents i64 values with VDR register pairs. Its update-form VDR
-  // loads and stores are not implemented by the backend yet, so forming a
-  // pre-indexed node would make instruction selection choose the PPC64
-  // LDU/STDU instructions and introduce the invalid G8RC register class.
-  if (Subtarget.isPPE42() && VT == MVT::i64)
-    return false;
+  if (Subtarget.isPPE42()) {
+    // Only immediate-offset integer updates are implemented. Register-indexed
+    // updates are unavailable, and i64 selection would introduce PPC64 G8RC
+    // registers instead of VDR pairs. Signed loads must retain their separate
+    // extension: in particular, PPE42 has no LHAU instruction.
+    if (VT != MVT::i1 && VT != MVT::i8 && VT != MVT::i16 && VT != MVT::i32)
+      return false;
+    unsigned Bytes = VT == MVT::i32 ? 4 : (VT == MVT::i16 ? 2 : 1);
+    if (Alignment < Align(Bytes))
+      return false;
+    if (auto *LD = dyn_cast<LoadSDNode>(N))
+      if (LD->getExtensionType() == ISD::SEXTLOAD || LD->isVolatile() ||
+          LD->isAtomic())
+        return false;
+    if (auto *ST = dyn_cast<StoreSDNode>(N))
+      if (ST->isVolatile() || ST->isAtomic())
+        return false;
+    if (!SelectAddressRegImm(Ptr, Offset, Base, DAG, std::nullopt))
+      return false;
+    auto *Disp = dyn_cast<ConstantSDNode>(Offset);
+    if (!Disp || !isInt<16>(Disp->getSExtValue()))
+      return false;
+    AM = ISD::PRE_INC;
+    return true;
+  }
 
   // Do not generate pre-inc forms for specific loads that feed scalar_to_vector
   // instructions because we can fold these into a more efficient instruction
