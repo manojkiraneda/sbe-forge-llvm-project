@@ -207,9 +207,9 @@ name: loop_exit_store
 tracksRegLiveness: true
 body: |
   ; CHECK-LABEL: name: loop_exit_store
-  ; CHECK: STVDU {{.*}}, %1
+  ; CHECK: %[[UPDATED:[0-9]+]]:{{[^ ]+}} = STVDU
   ; CHECK: bb.2:
-  ; CHECK: ADDI %2, 8
+  ; CHECK: ADDI %[[UPDATED]], 8
   bb.0:
     liveins: $r6, $r3_r4
     %0:gprc_nor0 = COPY $r6
