@@ -21,6 +21,10 @@ def FeaturePPE42 : SubtargetFeature<"ppe42", "IsPPE42", "true",
                                         "Enable PPE42 instructions">;
 def FeaturePPE42XStack : SubtargetFeature<"ppe42x-stack", "HasPPE42XStack",
                                             "true", "Enable PPE42 stack pair instructions">;
+def FeaturePPE42XRotate : SubtargetFeature<"ppe42x-rotate", "HasPPE42XRotate",
+    "true", "Enable PPE42X virtual-doubleword immediate rotates">;
+def HasPPE42XRotate : Predicate<"Subtarget->isPPE42() && Subtarget->hasPPE42XRotate()">,
+    AssemblerPredicate<(all_of FeaturePPE42, FeaturePPE42XRotate), "PPE42X rotate">;
 def NotPPE42 : Predicate<"!Subtarget->isPPE42()">,
               AssemblerPredicate<(all_of (not FeaturePPE42)), "non-PPE42">;
 def In64BitMode : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
@@ -105,7 +109,7 @@ include "GISel/PPCRegisterBanks.td"
 include "PPCProcessors.td"
 
 def : Processor<"ppe42", NoItineraries, [DirectivePPE42, FeatureMFTB,
-                                         FeaturePPE42, FeaturePPE42XStack]>;
+                                         FeaturePPE42, FeaturePPE42XStack, FeaturePPE42XRotate]>;
 
 //===----------------------------------------------------------------------===//
 // Calling Conventions

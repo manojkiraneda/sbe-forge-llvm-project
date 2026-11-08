@@ -1,0 +1,126 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -mattr=-ppe42x-rotate -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=BASE
+# BASE-NOT: RLDICL_VDR
+# BASE-NOT: RLDICR_VDR
+--- |
+  define void @add_chain() optsize { ret void }
+  define void @add_wrap() optsize { ret void }
+  define void @stack() optsize { ret void }
+  define void @rotate() optsize { ret void }
+  define void @rotate_record() optsize { ret void }
+  define void @shift_right() optsize { ret void }
+  define void @shift_left() optsize { ret void }
+  define void @shift_bad_pair() optsize { ret void }
+...
+---
+name: add_chain
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: add_chain
+  ; CHECK: $r5 = ADDIS {{.*}}$r6, -1
+  ; CHECK-NEXT: $r5 = ADDI {{.*}}$r5, 24576
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r5 = ADDI $r6, 24612
+    $r5 = ADDIS $r5, -1
+    $r5 = ADDI $r5, -36
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: add_wrap
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: add_wrap
+  ; CHECK: $r5 = ADDI {{.*}}$r6, -1
+  ; CHECK-NOT: ADDIS
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r5 = ADDIS $r6, -32768
+    $r5 = ADDIS $r5, -32768
+    $r5 = ADDI $r5, -1
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stack
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: stack
+  ; CHECK: $r1 = ADDI $r1, -16
+  ; CHECK-NEXT: $r1 = ADDI $r1, -16
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r1 = ADDI $r1, -16
+    $r1 = ADDI $r1, -16
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: rotate
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: rotate
+  ; CHECK: $r3 = RLWINM {{.*}}$r4, 12, 16, 19
+  ; CHECK-NOT: RLWINM
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r3 = RLWINM $r4, 0, 28, 31
+    $r3 = RLWINM $r3, 12, 0, 19
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: rotate_record
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: rotate_record
+  ; CHECK: RLWINM_rec
+  ; CHECK: RLWINM
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r3 = RLWINM_rec $r4, 0, 28, 31, implicit-def $cr0
+    $r3 = RLWINM $r3, 12, 0, 19
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shift_right
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: shift_right
+  ; CHECK: $r3_r4 = RLDICL_VDR {{.*}}$r5_r6, 59, 5
+  ; CHECK-NOT: RLWINM
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r4 = RLWINM $r6, 27, 0, 31
+    $r4 = RLWIMI $r4, $r5, 27, 0, 4
+    $r3 = RLWINM $r5, 27, 5, 31
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shift_left
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: shift_left
+  ; CHECK: $r3_r4 = RLDICR_VDR {{.*}}$r5_r6, 5, 58
+  ; CHECK-NOT: RLWINM
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r3 = RLWINM $r5, 5, 0, 31
+    $r3 = RLWIMI $r3, $r6, 5, 27, 31
+    $r4 = RLWINM $r6, 5, 0, 26
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shift_bad_pair
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: shift_bad_pair
+  ; CHECK: RLWINM
+  ; CHECK: RLWIMI
+  ; CHECK: RLWINM
+  bb.0:
+    liveins: $r0, $r1, $r3, $r4, $r5, $r6
+    $r4 = RLWINM $r6, 27, 0, 31
+    $r4 = RLWIMI $r4, $r5, 27, 0, 4
+    $r8 = RLWINM $r5, 27, 5, 31
+    BLR implicit $lr, implicit undef $rm
+...
