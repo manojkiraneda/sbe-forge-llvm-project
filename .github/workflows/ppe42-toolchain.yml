@@ -241,6 +241,7 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.mir \
             llvm/test/CodeGen/PowerPC/ppe42-update-copies.mir \
             llvm/test/MC/PowerPC/ppe42-vdr-rotate.s \
+            llvm/test/MC/PowerPC/ppe42-vdr-rotate-invalid.s \
             llvm/test/CodeGen/PowerPC/ppe42-extra-size-folds.mir \
             llvm/test/CodeGen/PowerPC/ppe42-wide-branch.ll \
             llvm/test/CodeGen/PowerPC/ppe42-scalar-updates.mir \
