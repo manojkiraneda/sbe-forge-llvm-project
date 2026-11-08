@@ -3139,6 +3139,11 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     auto *Disp = dyn_cast<ConstantSDNode>(Offset);
     if (!Disp || !isInt<16>(Disp->getSExtValue()))
       return false;
+    // Updating a shared object base only trades a foldable displacement for
+    // a preservation copy. Leave those accesses in fixed-base form. A true
+    // pointer induction value has a single local use of its old base.
+    if (!Base.hasOneUse())
+      return false;
     AM = ISD::PRE_INC;
     return true;
   }

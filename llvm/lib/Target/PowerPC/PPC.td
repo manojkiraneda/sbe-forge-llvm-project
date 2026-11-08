@@ -90,6 +90,8 @@ def FeaturePPE42     : SubtargetFeature<"ppe42","IsPPE42", "true",
                                         "Enable PPE42 instructions">;
 def FeaturePPE42XStack : SubtargetFeature<"ppe42x-stack", "HasPPE42XStack",
                                             "true", "Enable PPE42 stack pair instructions">;
+def FeaturePPE42XRotate : SubtargetFeature<"ppe42x-rotate", "HasPPE42XRotate",
+    "true", "Enable PPE42X virtual-doubleword immediate rotates">;
 def FeatureEFPU2 : SubtargetFeature<"efpu2", "HasEFPU2", "true",
                                         "Enable Embedded Floating-Point APU 2 instructions",
                                         [FeatureSPE]>;
@@ -592,7 +594,7 @@ def : ProcessorModel<"450", PPC440Model, [Directive440, FeatureISEL,
                                           FeatureICBT, FeatureBookE,
                                           FeatureMSYNC, FeatureMFTB]>;
 def : Processor<"ppe42", NoItineraries, [DirectivePPE42, FeatureMFTB,
-                                         FeaturePPE42, FeaturePPE42XStack]>;
+                                         FeaturePPE42, FeaturePPE42XStack, FeaturePPE42XRotate]>;
 def : Processor<"601", G3Itineraries, [Directive601, FeatureFPU]>;
 def : Processor<"602", G3Itineraries, [Directive602, FeatureFPU,
                                        FeatureMFTB]>;
