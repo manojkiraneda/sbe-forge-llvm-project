@@ -16,6 +16,7 @@
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -286,6 +287,185 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             .addImm(Right ? 32 + Rot : Rot)
             .addImm(Right ? 32 - Rot : 63 - Rot);
         I = MBB.erase(First, std::next(Third));
+        Changed = true;
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
+    // Fold literal construction exposed by late scheduling and copies. Only
+    // remove an intermediate register if it is dead after the entire prefix.
+    bool foldPPE42ConstantAddresses(MachineBasicBlock &MBB,
+                                    const PPCInstrInfo &TII,
+                                    const TargetRegisterInfo &TRI) {
+      if (!MBB.getParent()->getRegInfo().tracksLiveness())
+        return false;
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        auto First = I++;
+        if (First->getOpcode() != PPC::LI && First->getOpcode() != PPC::LIS)
+          continue;
+        DenseMap<Register, uint32_t> Values;
+        auto BestEnd = MBB.end();
+        Register BestDst;
+        uint32_t BestValue = 0;
+        unsigned BestSaving = 0, Count = 0;
+        for (auto J = First; J != MBB.end() && Count < 4; ++J) {
+          MachineInstr &MI = *J;
+          if (MI.isBundled() || MI.getFlags() || MI.peekDebugInstrNum() ||
+              !MI.getNumOperands() || !MI.getOperand(0).isReg())
+            break;
+          Register Dst = MI.getOperand(0).getReg();
+          if (!PPC::GPRCRegClass.contains(Dst) || Dst == PPC::R1 ||
+              Dst == PPC::R13)
+            break;
+          bool Valid = true;
+          for (unsigned Op = 1; Op < MI.getNumOperands(); ++Op) {
+            const MachineOperand &MO = MI.getOperand(Op);
+            if (MO.isImm())
+              continue;
+            if (!MO.isReg() || MO.isUndef() || MO.getSubReg() ||
+                !Values.count(MO.getReg()))
+              Valid = false;
+          }
+          if (!Valid)
+            break;
+          uint32_t Value;
+          auto Imm = [&](unsigned Op) { return MI.getOperand(Op).getImm(); };
+          auto Reg = [&](unsigned Op) {
+            return Values.lookup(MI.getOperand(Op).getReg());
+          };
+          unsigned Ops = MI.getNumOperands();
+          if (MI.getOpcode() == PPC::LI && Ops == 2)
+            Value = uint32_t(int32_t(int16_t(Imm(1))));
+          else if (MI.getOpcode() == PPC::LIS && Ops == 2)
+            Value = uint32_t(Imm(1)) << 16;
+          else if (Ops == 3 && MI.getOperand(2).isImm() &&
+                   (MI.getOpcode() == PPC::ORI || MI.getOpcode() == PPC::ORIS))
+            Value = Reg(1) | (uint32_t(Imm(2)) <<
+                              (MI.getOpcode() == PPC::ORIS ? 16 : 0));
+          else if (Ops == 3 && MI.getOperand(2).isImm() &&
+                   MI.getOperand(1).getReg() != PPC::R0 &&
+                   (MI.getOpcode() == PPC::ADDI || MI.getOpcode() == PPC::ADDIS))
+            Value = Reg(1) + (uint32_t(int32_t(int16_t(Imm(2)))) <<
+                              (MI.getOpcode() == PPC::ADDIS ? 16 : 0));
+          else if (MI.getOpcode() == PPC::RLWIMI && Ops == 6 &&
+                   MI.getOperand(3).isImm() && MI.getOperand(4).isImm() &&
+                   MI.getOperand(5).isImm()) {
+            uint32_t Mask = 0;
+            unsigned MB = Imm(4), ME = Imm(5);
+            for (unsigned Bit = 0; Bit < 32; ++Bit)
+              if (MB <= ME ? (Bit >= MB && Bit <= ME)
+                           : (Bit >= MB || Bit <= ME))
+                Mask |= uint32_t(1) << (31 - Bit);
+            Value = (Reg(1) & ~Mask) | (llvm::rotl(Reg(2), int(Imm(3))) & Mask);
+          } else
+            break;
+          Values[Dst] = Value;
+          ++Count;
+          unsigned Needed = isInt<16>(int32_t(Value)) || !(Value & 0xffff) ? 1 : 2;
+          if (Count <= Needed || Count - Needed <= BestSaving)
+            continue;
+          LiveRegUnits Live(TRI);
+          Live.addLiveOuts(MBB);
+          for (auto K = MBB.rbegin(); &*K != &MI; ++K)
+            Live.stepBackward(*K);
+          bool Dead = true;
+          for (const auto &KV : Values) {
+            if (KV.first == Dst)
+              continue;
+            Dead &= Live.available(KV.first);
+            // Physical debug uses are not represented in LiveRegUnits.
+            for (auto K = std::next(J); K != MBB.end(); ++K) {
+              if (K->isDebugInstr() && K->readsRegister(KV.first, &TRI))
+                Dead = false;
+              if (K->modifiesRegister(KV.first, &TRI))
+                break;
+            }
+          }
+          if (Dead) {
+            BestEnd = std::next(J);
+            BestDst = Dst;
+            BestValue = Value;
+            BestSaving = Count - Needed;
+          }
+        }
+        if (!BestSaving)
+          continue;
+        if (isInt<16>(int32_t(BestValue)))
+          BuildMI(MBB, First, First->getDebugLoc(), TII.get(PPC::LI), BestDst)
+              .addImm(int16_t(BestValue));
+        else {
+          BuildMI(MBB, First, First->getDebugLoc(), TII.get(PPC::LIS), BestDst)
+              .addImm(int16_t(BestValue >> 16));
+          if (BestValue & 0xffff)
+            BuildMI(MBB, First, First->getDebugLoc(), TII.get(PPC::ORI), BestDst)
+                .addReg(BestDst).addImm(BestValue & 0xffff);
+        }
+        I = MBB.erase(First, BestEnd);
+        Changed = true;
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
+    bool foldPPE42MemoryOffsets(MachineBasicBlock &MBB,
+                                const TargetRegisterInfo &TRI) {
+      if (!MBB.getParent()->getRegInfo().tracksLiveness())
+        return false;
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        auto Add = I++;
+        if (I == MBB.end() || Add->getOpcode() != PPC::ADDI ||
+            Add->getNumOperands() != 3 || !Add->getOperand(2).isImm() ||
+            Add->isBundled() || Add->getFlags() || Add->peekDebugInstrNum() ||
+            Add->getOperand(1).isUndef())
+          continue;
+        MachineInstr &Mem = *I;
+        switch (Mem.getOpcode()) {
+        case PPC::LBZ: case PPC::LHZ: case PPC::LWZ:
+        case PPC::STB: case PPC::STH: case PPC::STW:
+          break;
+        default:
+          continue;
+        }
+        Register Address = Add->getOperand(0).getReg();
+        Register Base = Add->getOperand(1).getReg();
+        if (Address == PPC::R0 || Address == PPC::R1 || Address == PPC::R13 ||
+            Base == PPC::R0 ||
+            Mem.isBundled() || Mem.getFlags() || Mem.peekDebugInstrNum() ||
+            Mem.getNumOperands() != 3 || !Mem.getOperand(1).isImm() ||
+            !Mem.getOperand(2).isReg() ||
+            Mem.getOperand(2).getReg() != Address ||
+            Mem.getOperand(2).isUndef() || Mem.memoperands_empty() ||
+            (Mem.mayStore() && Mem.getOperand(0).getReg() == Address))
+          continue;
+        int64_t Offset;
+        if (AddOverflow(Mem.getOperand(1).getImm(),
+                        Add->getOperand(2).getImm(), Offset) ||
+            !isInt<16>(Offset))
+          continue;
+        LiveRegUnits Live(TRI);
+        Live.addLiveOuts(MBB);
+        for (auto K = MBB.rbegin(); &*K != &Mem; ++K)
+          Live.stepBackward(*K);
+        if (!Mem.modifiesRegister(Address, &TRI) && !Live.available(Address))
+          continue;
+        // Do not invalidate a debug location for the removed address value.
+        bool DebugUse = false;
+        for (auto K = std::next(I); K != MBB.end(); ++K) {
+          if (K->isDebugInstr() && K->readsRegister(Address, &TRI))
+            DebugUse = true;
+          if (K->modifiesRegister(Address, &TRI))
+            break;
+        }
+        if (DebugUse)
+          continue;
+        Mem.getOperand(1).setImm(Offset);
+        Mem.getOperand(2).setReg(Base);
+        Add->eraseFromParent();
         Changed = true;
       }
       if (Changed)
@@ -1537,12 +1717,14 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         for (MachineBasicBlock &MBB : MF) {
           if (MF.getSubtarget<PPCSubtarget>().hasPPE42XRotate())
             Changed |= foldPPE42DoublewordShifts(MBB, *TII, *TRI);
+          Changed |= foldPPE42ConstantAddresses(MBB, *TII, *TRI);
           Changed |= foldPPE42ImmediateChains(MBB, *TII);
           Changed |= foldPPE42RotateMasks(MBB);
           Changed |= foldPPE42UpdateCopies(MBB, *TII, *TRI);
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
           Changed |= combinePPE42Updates(MBB, *TII, *TRI);
+          Changed |= foldPPE42MemoryOffsets(MBB, *TRI);
         }
       }
       return Changed;
