@@ -263,12 +263,16 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
   setIndexedLoadAction(ISD::PRE_INC, MVT::i1, Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i8, Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i16, Legal);
-  setIndexedLoadAction(ISD::PRE_INC, MVT::i32, Legal);
+  // Defer PPE42 word updates until after word-pair formation. Selecting one
+  // half of a legalized i64 access here would hide it from LVD/STVD pairing.
+  setIndexedLoadAction(ISD::PRE_INC, MVT::i32,
+                       Subtarget.isPPE42() ? Expand : Legal);
   setIndexedLoadAction(ISD::PRE_INC, MVT::i64, Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i1, Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i8, Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i16, Legal);
-  setIndexedStoreAction(ISD::PRE_INC, MVT::i32, Legal);
+  setIndexedStoreAction(ISD::PRE_INC, MVT::i32,
+                        Subtarget.isPPE42() ? Expand : Legal);
   setIndexedStoreAction(ISD::PRE_INC, MVT::i64, Legal);
   if (!Subtarget.hasSPE()) {
     setIndexedLoadAction(ISD::PRE_INC, MVT::f32, Legal);
@@ -3116,9 +3120,9 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     // updates are unavailable, and i64 selection would introduce PPC64 G8RC
     // registers instead of VDR pairs. Signed loads must retain their separate
     // extension: in particular, PPE42 has no LHAU instruction.
-    if (VT != MVT::i1 && VT != MVT::i8 && VT != MVT::i16 && VT != MVT::i32)
+    if (VT != MVT::i1 && VT != MVT::i8 && VT != MVT::i16)
       return false;
-    unsigned Bytes = VT == MVT::i32 ? 4 : (VT == MVT::i16 ? 2 : 1);
+    unsigned Bytes = VT == MVT::i16 ? 2 : 1;
     if (Alignment < Align(Bytes))
       return false;
     if (auto *LD = dyn_cast<LoadSDNode>(N))
