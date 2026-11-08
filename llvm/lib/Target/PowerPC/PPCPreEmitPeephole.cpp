@@ -288,12 +288,48 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         bool AddFirst = First.getOpcode() == PPC::ADDI;
         MachineInstr &Add = AddFirst ? First : *Next;
         MachineInstr &Mem = AddFirst ? *Next : First;
-        bool IsLoad = Mem.getOpcode() == PPC::LVD;
+        unsigned UpdateOpcode = 0;
+        bool IsLoad = false;
+        bool IsPair = false;
+        switch (Mem.getOpcode()) {
+        case PPC::LVD:
+          UpdateOpcode = PPC::LVDU;
+          IsPair = true;
+          IsLoad = true;
+          break;
+        case PPC::STVD:
+          UpdateOpcode = PPC::STVDU;
+          IsPair = true;
+          break;
+        case PPC::LBZ:
+          UpdateOpcode = PPC::LBZU;
+          IsLoad = true;
+          break;
+        case PPC::LHZ:
+          UpdateOpcode = PPC::LHZU;
+          IsLoad = true;
+          break;
+        case PPC::LWZ:
+          UpdateOpcode = PPC::LWZU;
+          IsLoad = true;
+          break;
+        case PPC::STB:
+          UpdateOpcode = PPC::STBU;
+          break;
+        case PPC::STH:
+          UpdateOpcode = PPC::STHU;
+          break;
+        case PPC::STW:
+          UpdateOpcode = PPC::STWU;
+          break;
+        default:
+          break;
+        }
         if (Add.getOpcode() != PPC::ADDI || Add.getNumOperands() != 3 ||
-            (!IsLoad && Mem.getOpcode() != PPC::STVD) ||
-            Mem.getNumOperands() != 3 || Mem.memoperands_empty() ||
-            !Add.getOperand(2).isImm() || !Mem.getOperand(1).isImm() ||
-            Add.getOperand(1).isUndef() || Mem.getOperand(2).isUndef() ||
+            !UpdateOpcode || Mem.getNumOperands() != 3 ||
+            Mem.memoperands_empty() || !Add.getOperand(2).isImm() ||
+            !Mem.getOperand(1).isImm() || Add.getOperand(1).isUndef() ||
+            Mem.getOperand(2).isUndef() ||
             (!IsLoad && Mem.getOperand(0).isUndef()) ||
             Mem.hasOrderedMemoryRef() ||
             Mem.getFlag(MachineInstr::FrameSetup) ||
@@ -302,7 +338,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             Add.getFlag(MachineInstr::FrameDestroy))
           continue;
         Register Base = Mem.getOperand(2).getReg();
-        int64_t Offset = Add.getOperand(2).getImm();
+        int64_t Offset = SignExtend64<16>(Add.getOperand(2).getImm());
         if (Base == PPC::R0 || Base == PPC::R1 || Base == PPC::R13 ||
             Add.getOperand(0).getReg() != Base ||
             Add.getOperand(1).getReg() != Base || !Offset ||
@@ -311,11 +347,11 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             TRI.regsOverlap(Base, Mem.getOperand(0).getReg()))
           continue;
         MachineInstrBuilder Update =
-            BuildMI(MBB, First, First.getDebugLoc(),
-                    TII.get(IsLoad ? PPC::LVDU : PPC::STVDU));
+            BuildMI(MBB, First, First.getDebugLoc(), TII.get(UpdateOpcode));
         if (IsLoad)
           Update.addReg(Mem.getOperand(0).getReg(),
-                        RegState::Define | RegState::EarlyClobber);
+                        RegState::Define |
+                            (IsPair ? RegState::EarlyClobber : 0));
         Update.addReg(Base, RegState::Define);
         if (!IsLoad)
           Update.addReg(Mem.getOperand(0).getReg());
