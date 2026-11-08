@@ -13,6 +13,7 @@
   define void @shift_right() optsize { ret void }
   define void @shift_left() optsize { ret void }
   define void @shift_bad_pair() optsize { ret void }
+  define void @shift_scheduled() optsize { ret void }
 ...
 ---
 name: add_chain
@@ -122,5 +123,19 @@ body: |
     $r4 = RLWINM $r6, 27, 0, 31
     $r4 = RLWIMI $r4, $r5, 27, 0, 4
     $r8 = RLWINM $r5, 27, 5, 31
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shift_scheduled
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: shift_scheduled
+  ; CHECK: $r3_r4 = RLDICL_VDR {{.*}}$r5_r6, 59, 5
+  ; CHECK-NOT: RLWINM
+  bb.0:
+    liveins: $r5, $r6
+    $r3 = RLWINM $r5, 27, 5, 31
+    $r4 = RLWINM $r6, 27, 0, 31
+    $r4 = RLWIMI $r4, $r5, 27, 0, 4
     BLR implicit $lr, implicit undef $rm
 ...
