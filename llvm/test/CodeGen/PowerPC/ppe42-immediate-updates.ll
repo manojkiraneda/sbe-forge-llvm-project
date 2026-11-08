@@ -191,3 +191,19 @@ define i32 @unaligned_word(ptr %p, ptr %out) optsize {
   store ptr %next, ptr %out, align 4
   ret i32 %v
 }
+
+; A field address is also passed out, but the original object base remains
+; live. Updating it would require a preservation copy.
+define void @shared_field_base(ptr %p, ptr %out, ptr %base_out, i32 %v) optsize {
+; ISEL-LABEL: name: shared_field_base
+; ISEL-NOT: STBU
+; ISEL: STB
+; ASM-LABEL: shared_field_base:
+; ASM: stb
+  %next = getelementptr i8, ptr %p, i32 5
+  %byte = trunc i32 %v to i8
+  store i8 %byte, ptr %next
+  store ptr %next, ptr %out
+  store ptr %p, ptr %base_out
+  ret void
+}

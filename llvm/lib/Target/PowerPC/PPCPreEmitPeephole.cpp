@@ -16,6 +16,7 @@
 #include "PPCInstrInfo.h"
 #include "PPCSubtarget.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
@@ -192,6 +193,192 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         recomputeLivenessFlags(*UpdateBB);
         Changed = true;
       }
+      return Changed;
+    }
+
+    // Recognize a split doubleword shift only after allocation has already
+    // provided legal VDR tuples. This removes three scalar operations without
+    // introducing tuple copies or extending any live range.
+    bool foldPPE42DoublewordShifts(MachineBasicBlock &MBB,
+                                   const PPCInstrInfo &TII,
+                                   const TargetRegisterInfo &TRI) {
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        auto A = I++;
+        if (I == MBB.end())
+          break;
+        auto B = I;
+        auto C = std::next(B);
+        if (C == MBB.end())
+          break;
+        if (A->getOpcode() != PPC::RLWINM || B->getOpcode() != PPC::RLWIMI ||
+            C->getOpcode() != PPC::RLWINM || A->isBundled() || B->isBundled() ||
+            C->isBundled() || A->getFlags() || B->getFlags() || C->getFlags() ||
+            A->getNumOperands() != 5 || B->getNumOperands() != 6 ||
+            C->getNumOperands() != 5)
+          continue;
+        bool Undef = false;
+        for (MachineInstr *MI : {&*A, &*B, &*C})
+          for (const MachineOperand &MO : MI->operands())
+            Undef |= MO.isReg() && MO.isUse() && MO.isUndef();
+        if (Undef)
+          continue;
+        Register Tmp = A->getOperand(0).getReg();
+        if (B->getOperand(0).getReg() != Tmp ||
+            B->getOperand(1).getReg() != Tmp ||
+            A->getOperand(2).getImm() != B->getOperand(3).getImm() ||
+            A->getOperand(2).getImm() != C->getOperand(2).getImm())
+          continue;
+        unsigned Rot = A->getOperand(2).getImm();
+        if (!Rot || Rot >= 32)
+          continue;
+        bool Right = B->getOperand(4).getImm() == 0 &&
+                     B->getOperand(5).getImm() == 31 - Rot &&
+                     C->getOperand(3).getImm() == 32 - Rot &&
+                     C->getOperand(4).getImm() == 31 &&
+                     A->getOperand(3).getImm() <= 32 - Rot &&
+                     A->getOperand(4).getImm() == 31;
+        bool Left = B->getOperand(4).getImm() == 32 - Rot &&
+                    B->getOperand(5).getImm() == 31 &&
+                    C->getOperand(3).getImm() == 0 &&
+                    C->getOperand(4).getImm() == 31 - Rot &&
+                    A->getOperand(3).getImm() == 0 &&
+                    A->getOperand(4).getImm() >= 31 - Rot;
+        if (!Right && !Left)
+          continue;
+        Register Hi =
+            Right ? B->getOperand(2).getReg() : A->getOperand(1).getReg();
+        Register Lo =
+            Right ? A->getOperand(1).getReg() : B->getOperand(2).getReg();
+        if (C->getOperand(1).getReg() != (Right ? Hi : Lo) ||
+            Tmp == B->getOperand(2).getReg())
+          continue;
+        Register Src =
+            TRI.getMatchingSuperReg(Hi, PPC::sub_gpr_hi, &PPC::VDRCRegClass);
+        Register DstHi = Right ? C->getOperand(0).getReg() : Tmp;
+        Register DstLo = Right ? Tmp : C->getOperand(0).getReg();
+        Register Dst =
+            TRI.getMatchingSuperReg(DstHi, PPC::sub_gpr_hi, &PPC::VDRCRegClass);
+        if (!Src || !Dst || TRI.getSubReg(Src, PPC::sub_gpr_lo) != Lo ||
+            TRI.getSubReg(Dst, PPC::sub_gpr_lo) != DstLo)
+          continue;
+        // The insert overwrites Tmp before the final scalar shift reads its
+        // source. Do not mistake such an overlapping computation for a shift
+        // of the original pair.
+        if (Tmp == C->getOperand(1).getReg())
+          continue;
+        BuildMI(MBB, A, A->getDebugLoc(),
+                TII.get(Right ? PPC::RLDICL_VDR : PPC::RLDICR_VDR), Dst)
+            .addReg(Src)
+            .addImm(Right ? 32 + Rot : Rot)
+            .addImm(Right ? 32 - Rot : 63 - Rot);
+        A->eraseFromParent();
+        B->eraseFromParent();
+        I = MBB.erase(C);
+        Changed = true;
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
+    // Reassociate only adjacent, non-recording instructions which overwrite
+    // their intermediate. No relocation, frame, debug, or flag state crosses
+    // the fold, and arithmetic is explicitly modulo 32 bits.
+    bool foldPPE42ImmediateChains(MachineBasicBlock &MBB,
+                                  const PPCInstrInfo &TII) {
+      bool Changed = false;
+      auto Safe = [](const MachineInstr &MI) {
+        return !MI.isBundled() && !MI.getFlags() &&
+               (MI.getOpcode() == PPC::ADDI || MI.getOpcode() == PPC::ADDIS) &&
+               MI.getNumOperands() == 3 && MI.getOperand(2).isImm() &&
+               !MI.getOperand(1).isUndef() &&
+               MI.getOperand(0).getReg() != PPC::R1 &&
+               MI.getOperand(1).getReg() != PPC::R0;
+      };
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        auto First = I++;
+        if (!Safe(*First))
+          continue;
+        Register Dst = First->getOperand(0).getReg();
+        Register Src = First->getOperand(1).getReg();
+        if (Dst == PPC::R0)
+          continue;
+        auto End = I;
+        uint32_t Sum = uint32_t(First->getOperand(2).getImm())
+                       << (First->getOpcode() == PPC::ADDIS ? 16 : 0);
+        unsigned Count = 1;
+        while (End != MBB.end() && Count < 3 && Safe(*End) &&
+               End->getOperand(0).getReg() == Dst &&
+               End->getOperand(1).getReg() == Dst) {
+          Sum += uint32_t(End->getOperand(2).getImm())
+                 << (End->getOpcode() == PPC::ADDIS ? 16 : 0);
+          ++End;
+          ++Count;
+        }
+        int16_t Low = int16_t(Sum);
+        int16_t High = int16_t((Sum - uint32_t(int32_t(Low))) >> 16);
+        unsigned Needed = High && Low ? 2 : 1;
+        if (Count <= Needed)
+          continue;
+        auto Emit = [&](unsigned Opcode, Register Input, int16_t Imm) {
+          BuildMI(MBB, First, First->getDebugLoc(), TII.get(Opcode), Dst)
+              .addReg(Input)
+              .addImm(Imm);
+        };
+        if (High)
+          Emit(PPC::ADDIS, Src, High);
+        if (Low || !High)
+          Emit(PPC::ADDI, High ? Dst : Src, Low);
+        I = MBB.erase(First, End);
+        Changed = true;
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
+    bool foldPPE42RotateMasks(MachineBasicBlock &MBB, const PPCInstrInfo &TII) {
+      auto Mask = [](unsigned MB, unsigned ME) {
+        uint32_t M = 0;
+        for (unsigned Bit = 0; Bit < 32; ++Bit)
+          if (MB <= ME ? (Bit >= MB && Bit <= ME) : (Bit >= MB || Bit <= ME))
+            M |= uint32_t(1) << (31 - Bit);
+        return M;
+      };
+      auto Safe = [](const MachineInstr &MI) {
+        return MI.getOpcode() == PPC::RLWINM && !MI.isBundled() &&
+               !MI.getFlags() && MI.getNumOperands() == 5 &&
+               !MI.getOperand(1).isUndef();
+      };
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        auto A = I++;
+        if (I == MBB.end() || !Safe(*A) || !Safe(*I) ||
+            A->getOperand(0).getReg() != I->getOperand(0).getReg() ||
+            A->getOperand(0).getReg() != I->getOperand(1).getReg())
+          continue;
+        unsigned Shift = I->getOperand(2).getImm();
+        uint32_t M = Mask(A->getOperand(3).getImm(), A->getOperand(4).getImm());
+        M = llvm::rotl<uint32_t>(M, Shift) &
+            Mask(I->getOperand(3).getImm(), I->getOperand(4).getImm());
+        if (!M)
+          continue;
+        bool Found = false;
+        for (unsigned MB = 0; MB < 32 && !Found; ++MB)
+          for (unsigned ME = 0; ME < 32; ++ME)
+            if (Mask(MB, ME) == M) {
+              I->getOperand(1).setReg(A->getOperand(1).getReg());
+              I->getOperand(2).setImm((A->getOperand(2).getImm() + Shift) & 31);
+              I->getOperand(3).setImm(MB);
+              I->getOperand(4).setImm(ME);
+              A->eraseFromParent();
+              Changed = Found = true;
+              break;
+            }
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
       return Changed;
     }
 
@@ -1337,6 +1524,10 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           !MF.getSubtarget<PPCSubtarget>().isLittleEndian()) {
         Changed |= simplifyPPE42ConditionalUpdates(MF);
         for (MachineBasicBlock &MBB : MF) {
+          if (MF.getSubtarget<PPCSubtarget>().hasPPE42XRotate())
+            Changed |= foldPPE42DoublewordShifts(MBB, *TII, *TRI);
+          Changed |= foldPPE42ImmediateChains(MBB, *TII);
+          Changed |= foldPPE42RotateMasks(MBB, *TII);
           Changed |= foldPPE42UpdateCopies(MBB, *TII, *TRI);
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
