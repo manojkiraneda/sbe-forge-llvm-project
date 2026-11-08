@@ -185,3 +185,11 @@ define i64 @select_one_word(i1 %cond) optsize {
   %r = select i1 %cond, i64 9, i64 12
   ret i64 %r
 }
+
+define i32 @select_low_only(i1 %cond, i64 %a, i64 %b) optsize {
+; CHECK-LABEL: define i32 @select_low_only
+; CHECK: select i1 %cond
+  %r = select i1 %cond, i64 %a, i64 %b
+  %low = trunc i64 %r to i32
+  ret i32 %low
+}
