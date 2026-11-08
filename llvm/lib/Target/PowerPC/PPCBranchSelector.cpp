@@ -1104,6 +1104,40 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
       }
     }
 
+    // BCC describes its input as a complete CR field, although an EQ/NE
+    // predicate only observes EQ. Inspect that predicate rather than treating
+    // the descriptor's conservative register use as a read of LT and GT.
+    auto OnlyEqualityUsers = [&](const MachineInstr &Cmp) {
+      const MachineBasicBlock &MBB = *Cmp.getParent();
+      if (!Fn.getRegInfo().tracksLiveness())
+        return false;
+      for (const MachineBasicBlock *Succ : MBB.successors())
+        for (const auto &LI : Succ->liveins())
+          if (TRI->regsOverlap(LI.PhysReg, PPC::CR0LT) ||
+              TRI->regsOverlap(LI.PhysReg, PPC::CR0GT))
+            return false;
+      for (auto J = std::next(Cmp.getIterator()); J != MBB.end(); ++J) {
+        if (J->isDebugInstr())
+          continue;
+        if (J->isInlineAsm() || J->isCall() || J->isBundled())
+          return false;
+        if (J->readsRegister(PPC::CR0, TRI)) {
+          bool Equality = false;
+          if (J->getOpcode() == PPC::BCC && J->getOperand(1).getReg() == PPC::CR0) {
+            unsigned Pred = PPC::getPredicateCondition(
+                static_cast<PPC::Predicate>(J->getOperand(0).getImm()));
+            Equality = Pred == PPC::PRED_EQ || Pred == PPC::PRED_NE;
+          } else if (J->getOpcode() == PPC::BC || J->getOpcode() == PPC::BCn)
+            Equality = J->getOperand(0).getReg() == PPC::CR0EQ;
+          if (!Equality)
+            return false;
+        }
+        if (J->modifiesRegister(PPC::CR0, TRI))
+          return J->definesRegister(PPC::CR0);
+      }
+      return true;
+    };
+
     // Prefer the fused branches above when possible. For the remaining zero
     // comparisons, reuse the producer's record form after register allocation.
     // This also handles a result overwritten between its compare and branch,
@@ -1119,7 +1153,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         // A record form compares signed. EQ and SO agree for unsigned inputs;
         // LT/GT require proof that the input's sign bit is clear.
         if (Cmp.getOpcode() == PPC::CMPLWI && !IsKnownNonNegative(Cmp) &&
-            (!IsDeadAfter(Cmp, PPC::CR0LT) || !IsDeadAfter(Cmp, PPC::CR0GT)))
+            (!IsDeadAfter(Cmp, PPC::CR0LT) || !IsDeadAfter(Cmp, PPC::CR0GT)) &&
+            !OnlyEqualityUsers(Cmp))
           continue;
         Register R = Cmp.getOperand(1).getReg();
         auto P = Cmp.getIterator();
