@@ -343,7 +343,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             Value = uint32_t(Imm(1)) << 16;
           else if (Ops == 3 && MI.getOperand(2).isImm() &&
                    (MI.getOpcode() == PPC::ORI || MI.getOpcode() == PPC::ORIS))
-            Value = Reg(1) | (uint32_t(Imm(2)) <<
+            Value = Reg(1) | (uint32_t(uint16_t(Imm(2))) <<
                               (MI.getOpcode() == PPC::ORIS ? 16 : 0));
           else if (Ops == 3 && MI.getOperand(2).isImm() &&
                    MI.getOperand(1).getReg() != PPC::R0 &&
@@ -443,8 +443,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             (Mem.mayStore() && Mem.getOperand(0).getReg() == Address))
           continue;
         int64_t Offset;
-        if (AddOverflow(Mem.getOperand(1).getImm(),
-                        Add->getOperand(2).getImm(), Offset) ||
+        if (AddOverflow(SignExtend64<16>(Mem.getOperand(1).getImm()),
+                        SignExtend64<16>(Add->getOperand(2).getImm()), Offset) ||
             !isInt<16>(Offset))
           continue;
         LiveRegUnits Live(TRI);
@@ -496,13 +496,13 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         if (Dst == PPC::R0)
           continue;
         auto End = I;
-        uint32_t Sum = uint32_t(First->getOperand(2).getImm())
+        uint32_t Sum = uint32_t(int32_t(int16_t(First->getOperand(2).getImm())))
                        << (First->getOpcode() == PPC::ADDIS ? 16 : 0);
         unsigned Count = 1;
         while (End != MBB.end() && Count < 3 && Safe(*End) &&
                End->getOperand(0).getReg() == Dst &&
                End->getOperand(1).getReg() == Dst) {
-          Sum += uint32_t(End->getOperand(2).getImm())
+          Sum += uint32_t(int32_t(int16_t(End->getOperand(2).getImm())))
                  << (End->getOpcode() == PPC::ADDIS ? 16 : 0);
           ++End;
           ++Count;
