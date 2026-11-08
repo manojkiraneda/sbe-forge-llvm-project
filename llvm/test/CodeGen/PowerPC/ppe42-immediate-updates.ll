@@ -2,6 +2,7 @@
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -stop-after=finalize-isel %s -o - | FileCheck %s --check-prefix=ISEL --implicit-check-not=:g8rc
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -stop-after=ppc-ppe42-store-pairs %s -o - | FileCheck %s --check-prefix=PAIRED
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -filetype=obj %s -o %t.o
+; RUN: llvm-nm --print-size --radix=d %t.o | FileCheck %s --check-prefix=SIZE
 ;
 ; Immediate updates are legal; register-indexed updates and signed halfword
 ; update loads are not. Check selection before the late update peepholes.
@@ -244,6 +245,7 @@ done:
 define ptr @copy_end_rotated(ptr %dst, ptr %src) optsize {
 ; ASM-LABEL: copy_end_rotated:
 ; ASM: stbu
+; SIZE: {{[0-9]+}} {{0*([0-9]|[1-3][0-9]|40)}} T copy_end_rotated
 entry:
   %first = load i8, ptr %src
   %empty = icmp eq i8 %first, 0
