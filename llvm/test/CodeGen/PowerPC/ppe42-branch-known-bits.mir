@@ -3,12 +3,28 @@
 # RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-branch-select -verify-machineinstrs -filetype=obj %t.mir -o %t.o
 
 --- |
+  define void @updated_byte(ptr %p) { ret void }
   define void @predecessor_byte(ptr %p) { ret void }
   define void @safe_join(ptr %p) { ret void }
   define void @unsafe_join(ptr %p) { ret void }
   define void @logical_chain(ptr %p) { ret void }
   define void @sign_set(ptr %p) { ret void }
   define void @loop_unknown(ptr %p) { ret void }
+...
+---
+name: updated_byte
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r4
+    ; CHECK-LABEL: name: updated_byte
+    ; CHECK: CMPWIBC 1, 1, $r3, 7, %bb.1
+    $r3, $r4 = LBZU 1, $r4 :: (load (s8) from %ir.p)
+    $cr0 = CMPLWI $r3, 7
+    BC $cr0gt, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
 ...
 ---
 name: predecessor_byte
