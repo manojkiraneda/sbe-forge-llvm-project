@@ -1,0 +1,54 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o - | FileCheck %s
+--- |
+  define void @hoisted_exit(ptr %p) optsize { ret void }
+  define void @early_exit_use(ptr %p) optsize { ret void }
+...
+---
+name: hoisted_exit
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: hoisted_exit
+  ; CHECK: %[[NEXT:[0-9]+]]:{{[^ ]+}} = STBU
+  ; CHECK-NEXT: %{{[0-9]+}}:gprc = ADDI %[[NEXT]], 1
+  bb.0:
+    liveins: $r3, $r4
+    %0:gprc_nor0 = COPY $r3
+    %1:gprc = COPY $r4
+    B %bb.1
+  bb.1:
+    %2:gprc_nor0 = PHI %0, %bb.0, %3, %bb.1
+    %3:gprc_and_gprc_nor0 = ADDI %2, 1
+    %4:gprc = nuw nsw ADDI %2, 2
+    STB %1, 1, %2 :: (store (s8) into %ir.p)
+    %5:crrc = CMPLWI %1, 0
+    BCC 68, killed %5, %bb.1
+    B %bb.2
+  bb.2:
+    $r3 = COPY %4
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: early_exit_use
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: early_exit_use
+  ; CHECK-NOT: STBU
+  ; CHECK: STB
+  bb.0:
+    liveins: $r3, $r4
+    %0:gprc_nor0 = COPY $r3
+    %1:gprc = COPY $r4
+    B %bb.1
+  bb.1:
+    %2:gprc_nor0 = PHI %0, %bb.0, %3, %bb.1
+    %3:gprc_and_gprc_nor0 = ADDI %2, 1
+    %4:gprc = nuw nsw ADDI %2, 2
+    STW %4, 16, %0 :: (store (s32) into %ir.p)
+    STB %1, 1, %2 :: (store (s8) into %ir.p)
+    %5:crrc = CMPLWI %1, 0
+    BCC 68, killed %5, %bb.1
+    B %bb.2
+  bb.2:
+    $r3 = COPY %4
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
