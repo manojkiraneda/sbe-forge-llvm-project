@@ -180,8 +180,10 @@ body: |
   bb.0:
     liveins: $r13, $r3, $r4
     ; CHECK-LABEL: name: derived_unaligned
-    ; CHECK: STW $r4, 4, $r5
-    ; CHECK: STW $r3, 564, $r13
+    ; CHECK-NOT: STVD
+    ; CHECK: STW {{(killed )?}}$r4, 568, $r13
+    ; CHECK: STW {{(killed )?}}$r3, 564, $r13
+    ; CHECK-NOT: STVD
     $r5 = ADDI $r13, 564
     STW $r4, 4, $r5 :: (store (s32) into %ir.p + 4, align 4)
     STW $r3, 564, $r13 :: (store (s32) into %ir.p, align 4)
