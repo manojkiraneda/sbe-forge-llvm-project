@@ -113,6 +113,11 @@ def RLDIMI_VDR : MDForm_1<30, 3, (outs vdrc:$RA),
   let DecoderNamespace = "PPE42";
 }
 
+let Defs = [CR0], RC = 1 in
+def RLDIMI_VDR_rec : MDForm_1<30, 3, (outs vdrc:$RA),
+    (ins vdrc:$RTi, vdrc:$RS, u6imm:$SH, u6imm:$MBE),
+    "rldimi. $RA, $RS, $SH, $MBE", IIC_IntRotateDI, []>,
+    RegConstraint<"$RTi = $RA">, NoEncode<"$RTi">;
 } // PPE42X immediate rotates
 
 let hasSideEffects = 0, Predicates = [IsPPE42] in {
