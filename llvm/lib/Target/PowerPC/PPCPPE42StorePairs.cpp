@@ -843,11 +843,49 @@ public:
             (Offset ? (Offset != Increment || MemBase != Base)
                     : MemBase != Address))
           continue;
-        // The old pointer must die here. Debug uses do not require a copy.
-        if (llvm::any_of(MRI.use_nodbg_instructions(Base),
-                         [&](MachineInstr &Use) {
-                           return &Use != Add && &Use != &Mem;
-                         }))
+        // Usually the old pointer must die here. In a single-block induction
+        // loop, an exit's existing base+K can instead use next+(K-increment).
+        // This removes the old pointer's exit live range without adding an
+        // instruction or changing the memory address.
+        SmallVector<std::pair<MachineInstr *, int64_t>, 2> ExitAdjustments;
+        MachineInstr *BaseDef =
+            MRI.hasOneDef(Base) ? MRI.getVRegDef(Base) : nullptr;
+        bool Induction = BaseDef && BaseDef->isPHI() &&
+                         BaseDef->getParent() == &MBB && MBB.isSuccessor(&MBB);
+        if (Induction) {
+          bool HasBackedge = false;
+          for (unsigned Op = 1; Op < BaseDef->getNumOperands(); Op += 2)
+            if (BaseDef->getOperand(Op + 1).getMBB() == &MBB) {
+              HasBackedge = true;
+              Induction &= BaseDef->getOperand(Op).getReg() == Address;
+            }
+          Induction &= HasBackedge;
+        }
+        bool ExitUsesSafe = true;
+        for (MachineInstr &Use : MRI.use_nodbg_instructions(Base)) {
+          if (&Use == Add || &Use == &Mem)
+            continue;
+          MachineBasicBlock *Exit = Use.getParent();
+          if (!Induction || Exit == &MBB || Exit->pred_size() != 1 ||
+              *Exit->pred_begin() != &MBB || Exit->isEHPad() ||
+              Use.getOpcode() != PPC::ADDI || Use.getNumOperands() != 3 ||
+              Use.getOperand(1).getReg() != Base ||
+              Use.getOperand(1).getSubReg() || Use.getOperand(1).isUndef() ||
+              !Use.getOperand(2).isImm() ||
+              Use.getFlag(MachineInstr::FrameSetup) ||
+              Use.getFlag(MachineInstr::FrameDestroy)) {
+            ExitUsesSafe = false;
+            break;
+          }
+          int64_t NewOffset =
+              SignExtend64<16>(Use.getOperand(2).getImm()) - Increment;
+          if (!isInt<16>(NewOffset)) {
+            ExitUsesSafe = false;
+            break;
+          }
+          ExitAdjustments.emplace_back(&Use, NewOffset);
+        }
+        if (!ExitUsesSafe)
           continue;
         // Moving the address definition to Mem must not move it past a use.
         // Also reject a store of the address itself: that would be a cycle.
@@ -883,6 +921,12 @@ public:
           Update.add(Mem.getOperand(0));
         Update.addImm(Increment).addReg(Base).cloneMemRefs(Mem);
         Update.setMIFlags(Mem.getFlags());
+        for (auto [Use, NewOffset] : ExitAdjustments) {
+          Use->getOperand(1).setReg(Address);
+          Use->getOperand(2).setImm(NewOffset);
+          Use->clearFlag(MachineInstr::NoSWrap);
+          Use->clearFlag(MachineInstr::NoUWrap);
+        }
         MRI.clearKillFlags(Base);
         MRI.clearKillFlags(Address);
         // Debug references between the old ADDI and Mem no longer have a
