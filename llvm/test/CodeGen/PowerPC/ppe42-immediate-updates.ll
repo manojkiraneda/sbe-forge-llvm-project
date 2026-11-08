@@ -1,5 +1,5 @@
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM --implicit-check-not=lbzux --implicit-check-not=lhzux --implicit-check-not=lwzux --implicit-check-not=stbux --implicit-check-not=sthux --implicit-check-not=stwux --implicit-check-not=lhau
-; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -stop-after=finalize-isel %s -o - | FileCheck %s --check-prefix=ISEL
+; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -stop-after=finalize-isel %s -o - | FileCheck %s --check-prefix=ISEL --implicit-check-not=:g8rc
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -filetype=obj %s -o %t.o
 ;
 ; Immediate updates are legal; register-indexed updates and signed halfword
@@ -152,6 +152,35 @@ define i32 @large_displacement(ptr %p, ptr %out) optsize {
 ; ASM: blr
   %next = getelementptr i32, ptr %p, i32 8192
   %v = load i32, ptr %next, align 4
+  store ptr %next, ptr %out, align 4
+  ret i32 %v
+}
+
+define i64 @wide_result(ptr %p, ptr %out) optsize {
+; ASM-LABEL: wide_result:
+; ASM: blr
+  %next = getelementptr i32, ptr %p, i32 1
+  %v = load i32, ptr %next, align 4
+  store ptr %next, ptr %out, align 4
+  %wide = zext i32 %v to i64
+  ret i64 %wide
+}
+
+define ptr @wide_truncation(ptr %p, i64 %v) optsize {
+; ASM-LABEL: wide_truncation:
+; ASM: blr
+  %next = getelementptr i32, ptr %p, i32 1
+  %low = trunc i64 %v to i32
+  store i32 %low, ptr %next, align 4
+  ret ptr %next
+}
+
+define i32 @unaligned_word(ptr %p, ptr %out) optsize {
+; ASM-LABEL: unaligned_word:
+; ASM-NOT: lwzu
+; ASM: blr
+  %next = getelementptr i8, ptr %p, i32 1
+  %v = load i32, ptr %next, align 1
   store ptr %next, ptr %out, align 4
   ret i32 %v
 }
