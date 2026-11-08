@@ -35,8 +35,8 @@ body: |
   bb.0:
     liveins: $r3, $r5
     ; CHECK-LABEL: name: upper_bits
-    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 15, %bb.1
-    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 0, %bb.1
+    ; CHECK: ANDIS_rec
+    ; CHECK: CMPWIBC 0, 2, $r4, 0, %bb.1
     ; CHECK-NOT: CMPLWI
     $r4 = ANDIS_rec $r3, 32769, implicit-def dead $cr0
     $cr0 = CMPLWI $r4, 0
@@ -121,8 +121,8 @@ body: |
   bb.0:
     liveins: $r3, $r5
     ; CHECK-LABEL: name: rotated_bits
-    ; CHECK: BNBWI 1, {{(killed )?}}$r3, 26, %bb.1
-    ; CHECK: BNBWI 0, {{(killed )?}}$r3, 25, %bb.1
+    ; CHECK: RLWINM $r3, 27, 30, 31
+    ; CHECK: CMPWIBC 0, 2, $r4, 1, %bb.1
     ; CHECK-NOT: CMPLWI
     $r4 = RLWINM $r3, 7, 18, 19
     $cr0 = CMPLWI $r4, 4096

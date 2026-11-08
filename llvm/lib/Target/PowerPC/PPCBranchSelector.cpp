@@ -595,9 +595,11 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           };
           switch (Def.getOpcode()) {
           case PPC::LBZ:
+          case PPC::LBZU:
           case PPC::LBZX:
             return 0xffffff00u;
           case PPC::LHZ:
+          case PPC::LHZU:
           case PPC::LHZX:
             return 0xffff0000u;
           case PPC::LI:
@@ -1039,9 +1041,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             continue;
           ++Seen;
           if (MI.modifiesRegister(R, TRI)) {
-            if ((MI.getOpcode() == PPC::ANDI_rec ||
-                 MI.getOpcode() == PPC::ANDIS_rec ||
-                 MI.getOpcode() == PPC::RLWINM) &&
+            if (MI.getOpcode() == PPC::ANDI_rec &&
                 MI.getOperand(0).getReg() == R && !MI.isBundled() &&
                 !MI.peekDebugInstrNum())
               Mask = &MI;
@@ -1055,19 +1055,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         }
         if (!Mask)
           continue;
-        uint32_t Bits;
-        unsigned Rotate = 0;
-        if (Mask->getOpcode() == PPC::RLWINM) {
-          unsigned MB = Mask->getOperand(3).getImm();
-          unsigned ME = Mask->getOperand(4).getImm();
-          Bits = MB <= ME ? (UINT32_MAX >> MB) & (UINT32_MAX << (31 - ME))
-                          : (UINT32_MAX >> MB) | (UINT32_MAX << (31 - ME));
-          Rotate = Mask->getOperand(2).getImm();
-        } else {
-          Bits = uint32_t(Mask->getOperand(2).getImm()) & 0xffff;
-          if (Mask->getOpcode() == PPC::ANDIS_rec)
-            Bits <<= 16;
-        }
+        uint32_t Bits = uint32_t(Mask->getOperand(2).getImm()) & 0xffff;
         uint32_t Expected = Cmp->getOperand(2).getImm();
         if (Cmp->getOpcode() == PPC::CMPWI)
           Expected = SignExtend64<16>(Expected);
@@ -1096,7 +1084,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
               .addImm(bool(Expected & BitMask))
               .addReg(Src, N == 1 && IsDeadAfter(Br, Src) ? RegState::Kill : 0)
-              .addImm((31 - Bit + Rotate) % 32)
+              .addImm(31 - Bit)
               .addMBB(Dest);
           Bits &= ~BitMask;
         }
