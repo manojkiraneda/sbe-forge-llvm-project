@@ -1,0 +1,243 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+
+--- |
+  define void @lbz_post(ptr %p) { ret void }
+  define void @lbz_pre(ptr %p) { ret void }
+  define void @lhz_post(ptr %p) { ret void }
+  define void @lhz_pre(ptr %p) { ret void }
+  define void @lwz_post(ptr %p) { ret void }
+  define void @lwz_pre(ptr %p) { ret void }
+  define void @stb_post(ptr %p) { ret void }
+  define void @stb_pre(ptr %p) { ret void }
+  define void @sth_post(ptr %p) { ret void }
+  define void @sth_pre(ptr %p) { ret void }
+  define void @stw_post(ptr %p) { ret void }
+  define void @stw_pre(ptr %p) { ret void }
+  define void @encoded_negative(ptr %p) { ret void }
+  define void @volatile_access(ptr %p) { ret void }
+  define void @overlap(ptr %p) { ret void }
+  define void @different_address(ptr %p) { ret void }
+...
+---
+name: lbz_post
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: lbz_post
+    ; CHECK-NOT: ADDI
+    ; CHECK: LBZU {{.*}}4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r4 = LBZ 4, $r3 :: (load (s8) from %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: lbz_pre
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: lbz_pre
+    ; CHECK-NOT: ADDI
+    ; CHECK: LBZU {{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, -4
+    $r4 = LBZ 0, $r3 :: (load (s8) from %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: lhz_post
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: lhz_post
+    ; CHECK-NOT: ADDI
+    ; CHECK: LHZU {{.*}}4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r4 = LHZ 4, $r3 :: (load (s16) from %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: lhz_pre
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: lhz_pre
+    ; CHECK-NOT: ADDI
+    ; CHECK: LHZU {{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, -4
+    $r4 = LHZ 0, $r3 :: (load (s16) from %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: lwz_post
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: lwz_post
+    ; CHECK-NOT: ADDI
+    ; CHECK: LWZU {{.*}}4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r4 = LWZ 4, $r3 :: (load (s32) from %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: lwz_pre
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: lwz_pre
+    ; CHECK-NOT: ADDI
+    ; CHECK: LWZU {{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, -4
+    $r4 = LWZ 0, $r3 :: (load (s32) from %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stb_post
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: stb_post
+    ; CHECK-NOT: ADDI
+    ; CHECK: STBU {{.*}}{{.*}}4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    STB $r4, 4, $r3 :: (store (s8) into %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stb_pre
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: stb_pre
+    ; CHECK-NOT: ADDI
+    ; CHECK: STBU {{.*}}{{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, -4
+    STB $r4, 0, $r3 :: (store (s8) into %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sth_post
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: sth_post
+    ; CHECK-NOT: ADDI
+    ; CHECK: STHU {{.*}}{{.*}}4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    STH $r4, 4, $r3 :: (store (s16) into %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: sth_pre
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: sth_pre
+    ; CHECK-NOT: ADDI
+    ; CHECK: STHU {{.*}}{{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, -4
+    STH $r4, 0, $r3 :: (store (s16) into %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stw_post
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: stw_post
+    ; CHECK-NOT: ADDI
+    ; CHECK: STWU {{.*}}{{.*}}4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    STW $r4, 4, $r3 :: (store (s32) into %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: stw_pre
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: stw_pre
+    ; CHECK-NOT: ADDI
+    ; CHECK: STWU {{.*}}{{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, -4
+    STW $r4, 0, $r3 :: (store (s32) into %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: encoded_negative
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: encoded_negative
+    ; CHECK-NOT: ADDI
+    ; CHECK: LWZU {{.*}}-4, {{(killed )?}}$r3
+    ; CHECK-NOT: ADDI
+    $r3 = ADDI $r3, 65532
+    $r4 = LWZ 0, $r3 :: (load (s32) from %ir.p)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: volatile_access
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: volatile_access
+    ; CHECK: LWZ 
+    ; CHECK: ADDI
+    $r4 = LWZ 4, $r3 :: (volatile load (s32) from %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: overlap
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: overlap
+    ; CHECK: LWZ 
+    ; CHECK: ADDI
+    $r3 = LWZ 4, $r3 :: (load (s32) from %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: different_address
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r4
+    ; CHECK-LABEL: name: different_address
+    ; CHECK: STW 
+    ; CHECK: ADDI
+    STW $r4, 8, $r3 :: (store (s32) into %ir.p)
+    $r3 = ADDI $r3, 4
+    BLR implicit $lr, implicit undef $rm
+...

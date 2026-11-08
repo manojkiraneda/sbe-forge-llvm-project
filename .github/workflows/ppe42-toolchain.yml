@@ -240,6 +240,9 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-late-size-patterns.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.mir \
             llvm/test/CodeGen/PowerPC/ppe42-update-copies.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-scalar-updates.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-late-record-compare.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-branch-known-bits.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill-large.mir \
             llvm/test/CodeGen/PowerPC/ppe42-cr-spill.ll \
             llvm/test/CodeGen/PowerPC/ppe42-const-spill.mir \
