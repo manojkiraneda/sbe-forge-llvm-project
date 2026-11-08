@@ -12,6 +12,22 @@
   define void @overflow_changed() { ret void }
   define void @existing_record() { ret void }
   define void @signed_arithmetic() { ret void }
+  define void @record_and() { ret void }
+  define void @record_andc() { ret void }
+  define void @record_or() { ret void }
+  define void @record_orc() { ret void }
+  define void @record_xor() { ret void }
+  define void @record_eqv() { ret void }
+  define void @record_nand() { ret void }
+  define void @record_nor() { ret void }
+  define void @record_subf() { ret void }
+  define void @record_neg() { ret void }
+  define void @record_slw() { ret void }
+  define void @record_sraw() { ret void }
+  define void @record_srawi() { ret void }
+  define void @record_cntlzw() { ret void }
+  define void @record_extsb() { ret void }
+  define void @record_rlwnm() { ret void }
 ...
 ---
 name: mask_overwritten
@@ -175,6 +191,294 @@ body: |
     $cr0 = CMPWI $r4, 0
     $r4 = LI 9
     BC $cr0lt, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_and
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_and
+    ; CHECK: AND_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = AND $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_andc
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_andc
+    ; CHECK: ANDC_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = ANDC $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_or
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_or
+    ; CHECK: OR_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = OR $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_orc
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_orc
+    ; CHECK: ORC_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = ORC $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_xor
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_xor
+    ; CHECK: XOR_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = XOR $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_eqv
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_eqv
+    ; CHECK: EQV_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = EQV $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_nand
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_nand
+    ; CHECK: NAND_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = NAND $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_nor
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_nor
+    ; CHECK: NOR_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = NOR $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_subf
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_subf
+    ; CHECK: SUBF_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = SUBF $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_neg
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_neg
+    ; CHECK: NEG_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = NEG $r3
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_slw
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_slw
+    ; CHECK: SLW_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = SLW $r3, $r5
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_sraw
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_sraw
+    ; CHECK: SRAW_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = SRAW $r3, $r5, implicit-def $carry
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_srawi
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_srawi
+    ; CHECK: SRAWI_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = SRAWI $r3, 3, implicit-def $carry
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_cntlzw
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_cntlzw
+    ; CHECK: CNTLZW_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = CNTLZW $r3
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_extsb
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_extsb
+    ; CHECK: EXTSB_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = EXTSB $r3
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: record_rlwnm
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r3, $r5
+    ; CHECK-LABEL: name: record_rlwnm
+    ; CHECK: RLWNM_rec {{.*}}implicit-def $cr0
+    ; CHECK-NOT: CMPWI
+    ; CHECK: $r4 = LI 9
+    $r4 = RLWNM $r3, $r5, 1, 31
+    $cr0 = CMPWI $r4, 0
+    $r4 = LI 9
+    BC $cr0eq, %bb.1
     BLR implicit $lr, implicit undef $rm
   bb.1:
     BLR implicit $lr, implicit undef $rm
