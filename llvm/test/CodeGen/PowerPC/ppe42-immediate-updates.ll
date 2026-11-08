@@ -238,3 +238,28 @@ done:
   store i8 0, ptr %result
   ret ptr %result
 }
+
+; The exit merges the initial pointer with the loop's one-past pointer. The
+; exit address calculation may be hoisted before the store during lowering.
+define ptr @copy_end_rotated(ptr %dst, ptr %src) optsize {
+; ASM-LABEL: copy_end_rotated:
+; ASM: stbu
+entry:
+  %first = load i8, ptr %src
+  %empty = icmp eq i8 %first, 0
+  br i1 %empty, label %done, label %loop
+loop:
+  %d = phi ptr [ %dst, %entry ], [ %nextd, %loop ]
+  %s = phi ptr [ %src, %entry ], [ %nexts, %loop ]
+  %v = phi i8 [ %first, %entry ], [ %nextv, %loop ]
+  %nextd = getelementptr inbounds i8, ptr %d, i32 1
+  %nexts = getelementptr inbounds i8, ptr %s, i32 1
+  store i8 %v, ptr %d
+  %nextv = load i8, ptr %nexts
+  %more = icmp ne i8 %nextv, 0
+  br i1 %more, label %loop, label %done
+done:
+  %result = phi ptr [ %dst, %entry ], [ %nextd, %loop ]
+  store i8 0, ptr %result
+  ret ptr %result
+}
