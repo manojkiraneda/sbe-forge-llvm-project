@@ -1717,13 +1717,16 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         for (MachineBasicBlock &MBB : MF) {
           if (MF.getSubtarget<PPCSubtarget>().hasPPE42XRotate())
             Changed |= foldPPE42DoublewordShifts(MBB, *TII, *TRI);
-          Changed |= foldPPE42ConstantAddresses(MBB, *TII, *TRI);
           Changed |= foldPPE42ImmediateChains(MBB, *TII);
           Changed |= foldPPE42RotateMasks(MBB);
           Changed |= foldPPE42UpdateCopies(MBB, *TII, *TRI);
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
           Changed |= combinePPE42Updates(MBB, *TII, *TRI);
+          // A scalar constant that looks dead can still provide the other
+          // half of an equal-value store pair. Preserve it until pairing has
+          // consumed both halves.
+          Changed |= foldPPE42ConstantAddresses(MBB, *TII, *TRI);
           Changed |= foldPPE42MemoryOffsets(MBB, *TRI);
         }
       }
