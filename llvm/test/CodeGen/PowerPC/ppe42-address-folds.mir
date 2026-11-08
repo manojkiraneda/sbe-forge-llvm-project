@@ -1,0 +1,159 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-pre-emit-peephole -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+--- |
+  define void @literal_add(ptr %p) optsize { ret void }
+  define void @literal_carry(ptr %p) optsize { ret void }
+  define void @literal_insert(ptr %p) optsize { ret void }
+  define void @literal_live(ptr %p) optsize { ret void }
+  define void @offset_load(ptr %p) optsize { ret void }
+  define void @offset_store(ptr %p) optsize { ret void }
+  define void @address_live(ptr %p) optsize { ret void }
+  define void @store_address(ptr %p) optsize { ret void }
+  define void @offset_overflow(ptr %p) optsize { ret void }
+  define void @frame_address(ptr %p) optsize { ret void }
+...
+---
+name: literal_add
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: literal_add
+  ; CHECK: $r3 = LIS -16378
+  ; CHECK-NEXT: $r3 = ORI {{.*}}$r3, 1424
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = LIS -16378
+    $r3 = ORI $r3, 1376
+    $r3 = ADDI $r3, 48
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: literal_carry
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: literal_carry
+  ; CHECK: $r3 = LIS 2
+  ; CHECK-NOT: ORI
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = LIS 1
+    $r3 = ORI $r3, 65535
+    $r3 = ADDI $r3, 1
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: literal_insert
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: literal_insert
+  ; CHECK: $r3 = LIS -16378
+  ; CHECK-NEXT: $r3 = ORI {{.*}}$r3, 1400
+  ; CHECK-NOT: RLWIMI
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = LIS -16378
+    $r4 = ORI $r3, 1376
+    $r3 = LI 24
+    $r3 = RLWIMI $r3, $r4, 0, 29, 26
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: literal_live
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: literal_live
+  ; CHECK: $r4 = ORI
+  ; CHECK: RLWIMI
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = LIS -16378
+    $r4 = ORI $r3, 1376
+    $r3 = LI 24
+    $r3 = RLWIMI $r3, $r4, 0, 29, 26
+    BLR implicit $lr, implicit undef $rm, implicit $r3, implicit $r4
+...
+---
+name: offset_load
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: offset_load
+  ; CHECK-NOT: ADDI
+  ; CHECK: LBZ 528, {{(killed )?}}$r3
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = ADDI $r3, 508
+    $r4 = LBZ 20, $r3 :: (load (s8) from %ir.p)
+    $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: offset_store
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: offset_store
+  ; CHECK-NOT: ADDI
+  ; CHECK: STW {{.*}}$r3, 568, {{(killed )?}}$r7
+  bb.0:
+    liveins: $r3, $r7
+    $r6 = ADDI $r7, 528
+    STW $r3, 40, $r6 :: (store (s32) into %ir.p)
+    $r6 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: address_live
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: address_live
+  ; CHECK: ADDI
+  ; CHECK: LBZ 20,
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = ADDI $r3, 508
+    $r4 = LBZ 20, $r3 :: (load (s8) from %ir.p)
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: store_address
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: store_address
+  ; CHECK: ADDI
+  ; CHECK: STW {{.*}}$r3, 20,
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = ADDI $r3, 508
+    STW $r3, 20, $r3 :: (store (s32) into %ir.p)
+    $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: offset_overflow
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: offset_overflow
+  ; CHECK: ADDI
+  ; CHECK: LBZ 20,
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = ADDI $r3, 32760
+    $r4 = LBZ 20, $r3 :: (load (s8) from %ir.p)
+    $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: frame_address
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: frame_address
+  ; CHECK: frame-setup ADDI
+  ; CHECK: LBZ 20,
+  bb.0:
+    liveins: $r3, $r7
+    $r3 = frame-setup ADDI $r3, 508
+    $r4 = LBZ 20, $r3 :: (load (s8) from %ir.p)
+    $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...

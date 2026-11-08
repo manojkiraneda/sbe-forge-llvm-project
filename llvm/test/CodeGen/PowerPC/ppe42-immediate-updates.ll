@@ -207,3 +207,34 @@ define void @shared_field_base(ptr %p, ptr %out, ptr %base_out, i32 %v) optsize 
   store ptr %p, ptr %base_out
   ret void
 }
+
+; The store address is also the induction backedge. Its old value has an exit
+; use, which must not disable the update as though this were a fixed base.
+define ptr @copy_end(ptr %dst, ptr %src) optsize {
+; ASM-LABEL: copy_end:
+; ASM: stbu
+entry:
+  %first = load i8, ptr %src
+  %empty = icmp eq i8 %first, 0
+  br i1 %empty, label %done, label %start
+start:
+  %before = getelementptr i8, ptr %dst, i32 -1
+  br label %loop
+loop:
+  %d = phi ptr [ %before, %start ], [ %nextd, %loop ]
+  %s = phi ptr [ %src, %start ], [ %nexts, %loop ]
+  %v = phi i8 [ %first, %start ], [ %nextv, %loop ]
+  %nextd = getelementptr i8, ptr %d, i32 1
+  store i8 %v, ptr %nextd
+  %nexts = getelementptr i8, ptr %s, i32 1
+  %nextv = load i8, ptr %nexts
+  %more = icmp ne i8 %nextv, 0
+  br i1 %more, label %loop, label %exit
+exit:
+  %end = getelementptr i8, ptr %d, i32 2
+  br label %done
+done:
+  %result = phi ptr [ %dst, %entry ], [ %end, %exit ]
+  store i8 0, ptr %result
+  ret ptr %result
+}
