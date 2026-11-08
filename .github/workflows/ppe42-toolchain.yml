@@ -243,6 +243,8 @@ jobs:
             llvm/test/MC/PowerPC/ppe42-vdr-rotate.s \
             llvm/test/MC/PowerPC/ppe42-vdr-rotate-invalid.s \
             llvm/test/CodeGen/PowerPC/ppe42-extra-size-folds.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-address-folds.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-generic-cr-equality.mir \
             llvm/test/CodeGen/PowerPC/ppe42-wide-branch.ll \
             llvm/test/CodeGen/PowerPC/ppe42-scalar-updates.mir \
             llvm/test/CodeGen/PowerPC/ppe42-immediate-updates.ll \

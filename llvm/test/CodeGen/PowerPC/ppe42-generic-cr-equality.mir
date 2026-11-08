@@ -1,0 +1,100 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-branch-select -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-after=ppc-branch-select -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+--- |
+  define void @generic_eq() { ret void }
+  define void @generic_ne() { ret void }
+  define void @generic_lt() { ret void }
+  define void @successor_lt() { ret void }
+  define void @assembly_barrier() { ret void }
+...
+---
+name: generic_eq
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: generic_eq
+  ; CHECK: AND_rec
+  ; CHECK-NOT: CMPLWI
+  bb.0:
+    liveins: $r3, $r5
+    $r4 = AND $r3, $r5
+    $cr0 = CMPLWI $r4, 0
+    $r4 = LI 9
+    BCC 76, $cr0, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: generic_ne
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: generic_ne
+  ; CHECK: AND_rec
+  ; CHECK-NOT: CMPLWI
+  bb.0:
+    liveins: $r3, $r5
+    $r4 = AND $r3, $r5
+    $cr0 = CMPLWI $r4, 0
+    $r4 = LI 9
+    BCC 68, $cr0, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: generic_lt
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: generic_lt
+  ; CHECK: AND 
+  ; CHECK: CMPLWI
+  bb.0:
+    liveins: $r3, $r5
+    $r4 = AND $r3, $r5
+    $cr0 = CMPLWI $r4, 0
+    $r4 = LI 9
+    BCC 12, $cr0, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: successor_lt
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: successor_lt
+  ; CHECK: AND 
+  ; CHECK: CMPLWI
+  bb.0:
+    liveins: $r3, $r5
+    $r4 = AND $r3, $r5
+    $cr0 = CMPLWI $r4, 0
+    $r4 = LI 9
+    BCC 76, $cr0, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    liveins: $cr0lt
+    BC $cr0lt, %bb.2
+    BLR implicit $lr, implicit undef $rm
+  bb.2:
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: assembly_barrier
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: assembly_barrier
+  ; CHECK: AND 
+  ; CHECK: CMPLWI
+  bb.0:
+    liveins: $r3, $r5
+    $r4 = AND $r3, $r5
+    $cr0 = CMPLWI $r4, 0
+    INLINEASM &"", 1
+    $r4 = LI 9
+    BCC 76, $cr0, %bb.1
+    BLR implicit $lr, implicit undef $rm
+  bb.1:
+    BLR implicit $lr, implicit undef $rm
+...
