@@ -3122,11 +3122,13 @@ bool PPCTargetLowering::getPreIndexedAddressParts(SDNode *N, SDValue &Base,
     if (Alignment < Align(Bytes))
       return false;
     if (auto *LD = dyn_cast<LoadSDNode>(N))
-      if (LD->getExtensionType() == ISD::SEXTLOAD || LD->isVolatile() ||
+      if (LD->getValueType(0) != MVT::i32 ||
+          LD->getExtensionType() == ISD::SEXTLOAD || LD->isVolatile() ||
           LD->isAtomic())
         return false;
     if (auto *ST = dyn_cast<StoreSDNode>(N))
-      if (ST->isVolatile() || ST->isAtomic())
+      if (ST->getValue().getValueType() != MVT::i32 || ST->isVolatile() ||
+          ST->isAtomic())
         return false;
     if (!SelectAddressRegImm(Ptr, Offset, Base, DAG, std::nullopt))
       return false;
