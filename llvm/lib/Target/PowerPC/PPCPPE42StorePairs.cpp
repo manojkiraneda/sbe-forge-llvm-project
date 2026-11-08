@@ -881,6 +881,7 @@ public:
         // This removes the old pointer's exit live range without adding an
         // instruction or changing the memory address.
         SmallVector<std::pair<MachineInstr *, int64_t>, 2> ExitAdjustments;
+        SmallVector<MachineInstr *, 2> MoveAfterMemory;
         MachineInstr *BaseDef =
             MRI.hasOneDef(Base) ? MRI.getVRegDef(Base) : nullptr;
         bool Induction = BaseDef && BaseDef->isPHI() &&
@@ -899,8 +900,10 @@ public:
           if (&Use == Add || &Use == &Mem)
             continue;
           MachineBasicBlock *Exit = Use.getParent();
-          if (!Induction || Exit == &MBB || Exit->pred_size() != 1 ||
-              *Exit->pred_begin() != &MBB || Exit->isEHPad() ||
+          bool Local = Exit == &MBB;
+          if (!Induction ||
+              (!Local && (Exit->pred_size() != 1 || *Exit->pred_begin() != &MBB)) ||
+              Exit->isEHPad() || Use.peekDebugInstrNum() ||
               Use.getOpcode() != PPC::ADDI || Use.getNumOperands() != 3 ||
               Use.getOperand(1).getReg() != Base ||
               Use.getOperand(1).getSubReg() || Use.getOperand(1).isUndef() ||
@@ -915,6 +918,28 @@ public:
           if (!isInt<16>(NewOffset)) {
             ExitUsesSafe = false;
             break;
+          }
+          if (Local) {
+            // CodeGenPrepare can hoist an exit's base+K into the loop. Its
+            // value can still use the updated pointer, provided no local use
+            // needs it before the memory operation defines that pointer.
+            Register Extra = Use.getOperand(0).getReg();
+            bool BeforeMemory = true, Move = false;
+            for (MachineInstr &MI : MBB) {
+              if (&MI == &Use)
+                Move = BeforeMemory;
+              if (&MI == &Mem) {
+                BeforeMemory = false;
+                if (MI.readsVirtualRegister(Extra))
+                  ExitUsesSafe = false;
+              } else if (BeforeMemory && !MI.isPHI() &&
+                         MI.readsVirtualRegister(Extra))
+                ExitUsesSafe = false;
+            }
+            if (!ExitUsesSafe)
+              break;
+            if (Move)
+              MoveAfterMemory.push_back(&Use);
           }
           ExitAdjustments.emplace_back(&Use, NewOffset);
         }
@@ -960,6 +985,8 @@ public:
           Use->clearFlag(MachineInstr::NoSWrap);
           Use->clearFlag(MachineInstr::NoUWrap);
         }
+        for (MachineInstr *Use : MoveAfterMemory)
+          MBB.splice(std::next(Mem.getIterator()), &MBB, Use->getIterator());
         MRI.clearKillFlags(Base);
         MRI.clearKillFlags(Address);
         // Debug references between the old ADDI and Mem no longer have a
