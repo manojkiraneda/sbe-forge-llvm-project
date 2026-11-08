@@ -794,17 +794,37 @@ public:
     }
     // i64 is split before selection on PPE42, so DAG pre-indexing cannot form
     // VDR updates. Once the scalar halves have been paired, fold a shared
-    // address increment into the existing memory instruction instead. Do not
+    // address increment into the existing memory instruction instead. Scalar
+    // word updates also run here, after pairing has had its opportunity. Do not
     // move the memory access, or extend the lifetime of the original pointer:
     // a two-address update would otherwise need a compensating copy.
     for (MachineBasicBlock &MBB : MF) {
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &Mem = *I++;
-        bool IsLoad = Mem.getOpcode() == PPC::LVD;
-        if ((!IsLoad && Mem.getOpcode() != PPC::STVD) ||
-            Mem.getNumOperands() != 3 || !Mem.getOperand(1).isImm() ||
-            !Mem.getOperand(2).isReg() || Mem.getOperand(2).getSubReg() ||
-            Mem.hasOrderedMemoryRef() ||
+        bool IsPair =
+            Mem.getOpcode() == PPC::LVD || Mem.getOpcode() == PPC::STVD;
+        bool IsLoad =
+            Mem.getOpcode() == PPC::LVD || Mem.getOpcode() == PPC::LWZ;
+        unsigned UpdateOpcode = 0;
+        switch (Mem.getOpcode()) {
+        case PPC::LVD:
+          UpdateOpcode = PPC::LVDU;
+          break;
+        case PPC::STVD:
+          UpdateOpcode = PPC::STVDU;
+          break;
+        case PPC::LWZ:
+          UpdateOpcode = PPC::LWZU;
+          break;
+        case PPC::STW:
+          UpdateOpcode = PPC::STWU;
+          break;
+        default:
+          break;
+        }
+        if (!UpdateOpcode || Mem.getNumOperands() != 3 ||
+            !Mem.getOperand(1).isImm() || !Mem.getOperand(2).isReg() ||
+            Mem.getOperand(2).getSubReg() || Mem.hasOrderedMemoryRef() ||
             Mem.getFlag(MachineInstr::FrameSetup) ||
             Mem.getFlag(MachineInstr::FrameDestroy))
           continue;
@@ -911,11 +931,11 @@ public:
           continue;
 
         MachineInstrBuilder Update =
-            BuildMI(MBB, Mem, Mem.getDebugLoc(),
-                    TII.get(IsLoad ? PPC::LVDU : PPC::STVDU));
+            BuildMI(MBB, Mem, Mem.getDebugLoc(), TII.get(UpdateOpcode));
         if (IsLoad)
           Update.addReg(Mem.getOperand(0).getReg(),
-                        RegState::Define | RegState::EarlyClobber);
+                        RegState::Define |
+                            (IsPair ? RegState::EarlyClobber : 0));
         Update.addReg(Address, RegState::Define);
         if (!IsLoad)
           Update.add(Mem.getOperand(0));
