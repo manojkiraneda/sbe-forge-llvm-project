@@ -681,8 +681,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         if (!CmpPtr || !IsDeadAfter(Br, PPC::CR0))
           continue;
         MachineInstr &Cmp = *CmpPtr;
-        if ((Cmp.getOpcode() != PPC::CMPLWI && Cmp.getOpcode() != PPC::CMPWI) ||
-            Cmp.getOperand(2).getImm() != 0)
+        if (Cmp.getOpcode() != PPC::CMPLWI && Cmp.getOpcode() != PPC::CMPWI)
           continue;
 
         Register MaskReg = Cmp.getOperand(1).getReg();
@@ -713,6 +712,12 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         MachineInstr &Mask = *MaskPtr;
         if (Mask.getOperand(3).getImm() != Mask.getOperand(4).getImm())
           continue;
+        uint32_t Expected = Cmp.getOperand(2).getImm();
+        if (Cmp.getOpcode() == PPC::CMPWI)
+          Expected = SignExtend64<16>(Expected);
+        uint32_t BitValue = uint32_t(1) << (31 - Mask.getOperand(3).getImm());
+        if (Expected && Expected != BitValue)
+          continue;
         Register SrcReg = Mask.getOperand(1).getReg();
         // The bit test executes at the branch. Its original source must still
         // be available there, and no instruction may observe the removed mask.
@@ -741,6 +746,8 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             (Mask.getOperand(3).getImm() + Mask.getOperand(2).getImm()) % 32;
         unsigned PX = IsBitBranch ? Br.getOpcode() == PPC::BC
                                   : PredicateCondition(Br) == PPC::PRED_EQ;
+        if (Expected)
+          PX ^= 1;
         BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
             .addImm(PX)
             .addReg(SrcReg, IsDeadAfter(Br, SrcReg) ? RegState::Kill : 0)
