@@ -1,5 +1,6 @@
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=ASM --implicit-check-not=lbzux --implicit-check-not=lhzux --implicit-check-not=lwzux --implicit-check-not=stbux --implicit-check-not=sthux --implicit-check-not=stwux --implicit-check-not=lhau
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -stop-after=finalize-isel %s -o - | FileCheck %s --check-prefix=ISEL --implicit-check-not=:g8rc
+; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -stop-after=ppc-ppe42-store-pairs %s -o - | FileCheck %s --check-prefix=PAIRED
 ; RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -verify-machineinstrs -filetype=obj %s -o %t.o
 ;
 ; Immediate updates are legal; register-indexed updates and signed halfword
@@ -33,7 +34,10 @@ define i32 @load_u32(ptr %p, ptr %out) optsize {
 ; ASM-LABEL: load_u32:
 ; ASM: lwzu {{[0-9]+}}, 4(
 ; ISEL-LABEL: name: load_u32
-; ISEL: LWZU 4,
+; ISEL-NOT: LWZU
+; ISEL: LWZ
+; PAIRED-LABEL: name: load_u32
+; PAIRED: LWZU 4,
   %next = getelementptr i32, ptr %p, i32 1
   %v = load i32, ptr %next, align 4
   store ptr %next, ptr %out, align 4
@@ -66,7 +70,10 @@ define ptr @store_u32(ptr %p, i32 %v) optsize {
 ; ASM-LABEL: store_u32:
 ; ASM: stwu {{[0-9]+}}, 4(
 ; ISEL-LABEL: name: store_u32
-; ISEL: STWU {{.*}}4,
+; ISEL-NOT: STWU
+; ISEL: STW
+; PAIRED-LABEL: name: store_u32
+; PAIRED: STWU {{.*}}4,
   %next = getelementptr i32, ptr %p, i32 1
   store i32 %v, ptr %next, align 4
   ret ptr %next
