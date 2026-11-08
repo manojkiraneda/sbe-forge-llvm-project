@@ -204,13 +204,24 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
                                    const TargetRegisterInfo &TRI) {
       bool Changed = false;
       for (auto I = MBB.begin(); I != MBB.end();) {
-        auto A = I++;
+        auto First = I++;
         if (I == MBB.end())
           break;
-        auto B = I;
-        auto C = std::next(B);
-        if (C == MBB.end())
+        auto Second = I;
+        auto Third = std::next(Second);
+        if (Third == MBB.end())
           break;
+        auto A = First, B = Second, C = Third;
+        if (Third->getOpcode() == PPC::RLWIMI) {
+          B = Third;
+          if (First->getNumOperands() && First->getOperand(0).isReg() &&
+              First->getOperand(0).getReg() == B->getOperand(0).getReg())
+            C = Second;
+          else {
+            A = Second;
+            C = First;
+          }
+        }
         if (A->getOpcode() != PPC::RLWINM || B->getOpcode() != PPC::RLWIMI ||
             C->getOpcode() != PPC::RLWINM || A->isBundled() || B->isBundled() ||
             C->isBundled() || A->getFlags() || B->getFlags() || C->getFlags() ||
@@ -259,22 +270,22 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         Register DstLo = Right ? Tmp : C->getOperand(0).getReg();
         Register Dst =
             TRI.getMatchingSuperReg(DstHi, PPC::sub_gpr_hi, &PPC::VDRCRegClass);
-        if (!Src || !Dst || TRI.getSubReg(Src, PPC::sub_gpr_lo) != Lo ||
-            TRI.getSubReg(Dst, PPC::sub_gpr_lo) != DstLo)
+        if (!Src || !Dst || Register(TRI.getSubReg(Src, PPC::sub_gpr_lo)) != Lo ||
+            Register(TRI.getSubReg(Dst, PPC::sub_gpr_lo)) != DstLo)
           continue;
         // The insert overwrites Tmp before the final scalar shift reads its
         // source. Do not mistake such an overlapping computation for a shift
         // of the original pair.
-        if (Tmp == C->getOperand(1).getReg())
+        if (Tmp == C->getOperand(1).getReg() ||
+            (C != Third && (C->getOperand(0).getReg() == Hi ||
+                            C->getOperand(0).getReg() == Lo)))
           continue;
-        BuildMI(MBB, A, A->getDebugLoc(),
+        BuildMI(MBB, First, First->getDebugLoc(),
                 TII.get(Right ? PPC::RLDICL_VDR : PPC::RLDICR_VDR), Dst)
             .addReg(Src)
             .addImm(Right ? 32 + Rot : Rot)
             .addImm(Right ? 32 - Rot : 63 - Rot);
-        A->eraseFromParent();
-        B->eraseFromParent();
-        I = MBB.erase(C);
+        I = MBB.erase(First, std::next(Third));
         Changed = true;
       }
       if (Changed)
@@ -338,7 +349,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       return Changed;
     }
 
-    bool foldPPE42RotateMasks(MachineBasicBlock &MBB, const PPCInstrInfo &TII) {
+    bool foldPPE42RotateMasks(MachineBasicBlock &MBB) {
       auto Mask = [](unsigned MB, unsigned ME) {
         uint32_t M = 0;
         for (unsigned Bit = 0; Bit < 32; ++Bit)
@@ -1527,7 +1538,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           if (MF.getSubtarget<PPCSubtarget>().hasPPE42XRotate())
             Changed |= foldPPE42DoublewordShifts(MBB, *TII, *TRI);
           Changed |= foldPPE42ImmediateChains(MBB, *TII);
-          Changed |= foldPPE42RotateMasks(MBB, *TII);
+          Changed |= foldPPE42RotateMasks(MBB);
           Changed |= foldPPE42UpdateCopies(MBB, *TII, *TRI);
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
