@@ -12,6 +12,9 @@
   define void @store_address(ptr %p) optsize { ret void }
   define void @offset_overflow(ptr %p) optsize { ret void }
   define void @frame_address(ptr %p) optsize { ret void }
+  define void @encoded_offset(ptr %p) optsize { ret void }
+  define void @encoded_overflow(ptr %p) optsize { ret void }
+  define void @encoded_chain(ptr %p) optsize { ret void }
 ...
 ---
 name: literal_add
@@ -155,5 +158,46 @@ body: |
     $r3 = frame-setup ADDI $r3, 508
     $r4 = LBZ 20, $r3 :: (load (s8) from %ir.p)
     $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: encoded_offset
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: encoded_offset
+  ; CHECK-NOT: ADDI
+  ; CHECK: LBZ 12,
+  bb.0:
+    liveins: $r3, $r4
+    $r3 = ADDI $r3, 65528
+    $r4 = LBZ 20, $r3 :: (load (s8) from %ir.p)
+    $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: encoded_overflow
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: encoded_overflow
+  ; CHECK: ADDI
+  ; CHECK: LBZ -32768,
+  bb.0:
+    liveins: $r3, $r4
+    $r3 = ADDI $r3, 65535
+    $r4 = LBZ -32768, $r3 :: (load (s8) from %ir.p)
+    $r3 = LI 0
+    BLR implicit $lr, implicit undef $rm, implicit $r3
+...
+---
+name: encoded_chain
+tracksRegLiveness: true
+body: |
+  ; CHECK-LABEL: name: encoded_chain
+  ; CHECK: $r3 = ADDI {{.*}}$r4, -4
+  ; CHECK-NOT: ADDI
+  bb.0:
+    liveins: $r3, $r4
+    $r3 = ADDI $r4, 65528
+    $r3 = ADDI $r3, 4
     BLR implicit $lr, implicit undef $rm, implicit $r3
 ...
