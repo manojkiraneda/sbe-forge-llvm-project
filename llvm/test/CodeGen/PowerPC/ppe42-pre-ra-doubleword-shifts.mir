@@ -1,0 +1,160 @@
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o %t.mir
+# RUN: FileCheck %s < %t.mir
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs -filetype=obj %t.mir -o %t.o
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -start-before=phi-node-elimination -verify-machineinstrs %t.mir -o - | FileCheck %s --check-prefix=ASM
+# RUN: llc -mtriple=powerpc-none-eabi -mcpu=ppe42 -mattr=-ppe42x-rotate -run-pass=ppc-ppe42-store-pairs -verify-machineinstrs %s -o - | FileCheck %s --check-prefix=DISABLED
+
+--- |
+  define void @right(ptr %p) optsize { ret void }
+  define void @left(ptr %p) optsize { ret void }
+  define void @reordered(ptr %p) optsize { ret void }
+  define void @shared_input(ptr %p) optsize { ret void }
+  define void @shared_intermediate(ptr %p) optsize { ret void }
+  define void @wrong_mask(ptr %p) optsize { ret void }
+...
+---
+name: right
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6, $r8
+    ; CHECK-LABEL: name: right
+    ; CHECK: = RLDICL_VDR
+    ; CHECK-NOT: RLWIMI
+    ; DISABLED-LABEL: name: right
+    ; DISABLED-NOT: RLDIC
+    ; DISABLED: RLWIMI
+    ; ASM-LABEL: right:
+    ; ASM: rldicl
+    %0:gprc_nor0 = COPY $r5
+    %1:gprc_nor0 = COPY $r6
+    %2:gprc = ADDI %0, -1
+    %3:gprc = ADDI %1, -1
+    %4:gprc = RLWINM %3, 27, 0, 31
+    %5:gprc = RLWIMI %4, %2, 27, 0, 4
+    %6:gprc = RLWINM %2, 27, 5, 31
+    STW %6, 0, $r8 :: (store (s32) into %ir.p, align 8)
+    STW %5, 4, $r8 :: (store (s32) into %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: left
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6, $r8
+    ; CHECK-LABEL: name: left
+    ; CHECK: = RLDICR_VDR
+    ; CHECK-NOT: RLWIMI
+    ; DISABLED-LABEL: name: left
+    ; DISABLED-NOT: RLDIC
+    ; DISABLED: RLWIMI
+    ; ASM-LABEL: left:
+    ; ASM: rldicr
+    %0:gprc_nor0 = COPY $r5
+    %1:gprc_nor0 = COPY $r6
+    %2:gprc = ADDI %0, -1
+    %3:gprc = ADDI %1, -1
+    %4:gprc = RLWINM %2, 5, 0, 31
+    %5:gprc = RLWIMI %4, %3, 5, 27, 31
+    %6:gprc = RLWINM %3, 5, 0, 26
+    STW %5, 0, $r8 :: (store (s32) into %ir.p, align 8)
+    STW %6, 4, $r8 :: (store (s32) into %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: reordered
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6, $r8
+    ; CHECK-LABEL: name: reordered
+    ; CHECK: = RLDICL_VDR
+    ; CHECK-NOT: RLWIMI
+    ; DISABLED-LABEL: name: reordered
+    ; DISABLED-NOT: RLDIC
+    ; DISABLED: RLWIMI
+    ; ASM-LABEL: reordered:
+    ; ASM: rldicl
+    %0:gprc_nor0 = COPY $r5
+    %1:gprc_nor0 = COPY $r6
+    %2:gprc = ADDI %0, -1
+    %3:gprc = ADDI %1, -1
+    %6:gprc = RLWINM %2, 27, 5, 31
+    %4:gprc = RLWINM %3, 27, 0, 31
+    %5:gprc = RLWIMI %4, %2, 27, 0, 4
+    STW %6, 0, $r8 :: (store (s32) into %ir.p, align 8)
+    STW %5, 4, $r8 :: (store (s32) into %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shared_input
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6, $r8
+    ; CHECK-LABEL: name: shared_input
+    ; CHECK-NOT: RLDIC
+    ; CHECK: RLWIMI
+    ; DISABLED-LABEL: name: shared_input
+    ; DISABLED-NOT: RLDIC
+    ; DISABLED: RLWIMI
+    %0:gprc_nor0 = COPY $r5
+    %1:gprc_nor0 = COPY $r6
+    %2:gprc = ADDI %0, -1
+    %3:gprc = ADDI %1, -1
+    %4:gprc = RLWINM %3, 27, 0, 31
+    %5:gprc = RLWIMI %4, %2, 27, 0, 4
+    %6:gprc = RLWINM %2, 27, 5, 31
+    STW %2, 8, $r8 :: (store (s32) into %ir.p + 8)
+    STW %6, 0, $r8 :: (store (s32) into %ir.p, align 8)
+    STW %5, 4, $r8 :: (store (s32) into %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: shared_intermediate
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6, $r8
+    ; CHECK-LABEL: name: shared_intermediate
+    ; CHECK-NOT: RLDIC
+    ; CHECK: RLWIMI
+    ; DISABLED-LABEL: name: shared_intermediate
+    ; DISABLED-NOT: RLDIC
+    ; DISABLED: RLWIMI
+    %0:gprc_nor0 = COPY $r5
+    %1:gprc_nor0 = COPY $r6
+    %2:gprc = ADDI %0, -1
+    %3:gprc = ADDI %1, -1
+    %4:gprc = RLWINM %3, 27, 0, 31
+    %5:gprc = RLWIMI %4, %2, 27, 0, 4
+    %6:gprc = RLWINM %2, 27, 5, 31
+    STW %4, 8, $r8 :: (store (s32) into %ir.p + 8)
+    STW %6, 0, $r8 :: (store (s32) into %ir.p, align 8)
+    STW %5, 4, $r8 :: (store (s32) into %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...
+---
+name: wrong_mask
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r5, $r6, $r8
+    ; CHECK-LABEL: name: wrong_mask
+    ; CHECK-NOT: RLDIC
+    ; CHECK: RLWIMI
+    ; DISABLED-LABEL: name: wrong_mask
+    ; DISABLED-NOT: RLDIC
+    ; DISABLED: RLWIMI
+    %0:gprc_nor0 = COPY $r5
+    %1:gprc_nor0 = COPY $r6
+    %2:gprc = ADDI %0, -1
+    %3:gprc = ADDI %1, -1
+    %4:gprc = RLWINM %3, 27, 0, 31
+    %5:gprc = RLWIMI %4, %2, 27, 0, 4
+    %6:gprc = RLWINM %2, 27, 6, 31
+    STW %6, 0, $r8 :: (store (s32) into %ir.p, align 8)
+    STW %5, 4, $r8 :: (store (s32) into %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm
+...

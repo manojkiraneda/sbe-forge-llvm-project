@@ -33,6 +33,126 @@ public:
     return "PPE42 virtual doubleword load and store pairs";
   }
 
+  // Form the tuple while scalar values are still SSA. Waiting until after
+  // allocation can leave the high/low words in reverse physical order. Limit
+  // new input tuples to values consumed entirely by this shift, so coalescing
+  // does not extend a shared value's live range or require preserving copies.
+  bool combineDoublewordShifts(MachineFunction &MF) {
+    MachineRegisterInfo &MRI = MF.getRegInfo();
+    const auto &ST = MF.getSubtarget<PPCSubtarget>();
+    const auto &TII = *ST.getInstrInfo();
+    bool Changed = false;
+    for (MachineBasicBlock &MBB : MF)
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        auto First = I++;
+        auto Second = I;
+        if (Second == MBB.end())
+          break;
+        auto Third = std::next(Second);
+        if (Third == MBB.end())
+          break;
+        auto A = First, B = Second, C = Third;
+        if (Third->getOpcode() == PPC::RLWIMI) {
+          B = Third;
+          if (B->getOperand(1).getReg() == First->getOperand(0).getReg())
+            C = Second;
+          else {
+            A = Second;
+            C = First;
+          }
+        }
+        if (A->getOpcode() != PPC::RLWINM || B->getOpcode() != PPC::RLWIMI ||
+            C->getOpcode() != PPC::RLWINM || A->getNumOperands() != 5 ||
+            B->getNumOperands() != 6 || C->getNumOperands() != 5)
+          continue;
+        bool Safe = true;
+        for (MachineInstr *MI : {&*A, &*B, &*C}) {
+          Safe &= !MI->getFlags() && !MI->isBundled();
+          for (const MachineOperand &MO : MI->operands())
+            Safe &= MO.isReg() ? MO.getReg().isVirtual() && !MO.getSubReg() &&
+                                     !MO.isUndef()
+                               : MO.isImm();
+        }
+        if (!Safe || A->getOperand(0).getReg() != B->getOperand(1).getReg() ||
+            !MRI.hasOneNonDBGUse(A->getOperand(0).getReg()))
+          continue;
+        unsigned Rot = A->getOperand(2).getImm();
+        if (!Rot || Rot >= 32 || Rot != B->getOperand(3).getImm() ||
+            Rot != C->getOperand(2).getImm())
+          continue;
+        bool Right = B->getOperand(4).getImm() == 0 &&
+                     B->getOperand(5).getImm() == 31 - Rot &&
+                     C->getOperand(3).getImm() == 32 - Rot &&
+                     C->getOperand(4).getImm() == 31 &&
+                     A->getOperand(3).getImm() <= 32 - Rot &&
+                     A->getOperand(4).getImm() == 31;
+        bool Left = B->getOperand(4).getImm() == 32 - Rot &&
+                    B->getOperand(5).getImm() == 31 &&
+                    C->getOperand(3).getImm() == 0 &&
+                    C->getOperand(4).getImm() == 31 - Rot &&
+                    A->getOperand(3).getImm() == 0 &&
+                    A->getOperand(4).getImm() >= 31 - Rot;
+        if (!Right && !Left)
+          continue;
+        Register Hi =
+            Right ? B->getOperand(2).getReg() : A->getOperand(1).getReg();
+        Register Lo =
+            Right ? A->getOperand(1).getReg() : B->getOperand(2).getReg();
+        if (Hi == Lo || C->getOperand(1).getReg() != (Right ? Hi : Lo))
+          continue;
+        for (Register Input : {Hi, Lo}) {
+          MachineInstr *Def = MRI.getVRegDef(Input);
+          bool Before = false;
+          for (auto K = MBB.begin(); K != First; ++K)
+            Before |= &*K == Def;
+          Safe &= Before && MRI.hasOneDef(Input) &&
+                  MRI.getRegClass(Input) == &PPC::GPRCRegClass;
+          for (MachineInstr &Use : MRI.use_nodbg_instructions(Input))
+            Safe &= &Use == &*A || &Use == &*B || &Use == &*C;
+        }
+        Register OutHi = (Right ? C : B)->getOperand(0).getReg();
+        Register OutLo = (Right ? B : C)->getOperand(0).getReg();
+        for (Register Output : {OutHi, OutLo}) {
+          Safe &= MRI.hasOneDef(Output) &&
+                  MRI.getRegClass(Output) == &PPC::GPRCRegClass;
+          for (MachineOperand &Use : MRI.use_operands(Output))
+            Safe &= !Use.getSubReg();
+        }
+        if (!Safe)
+          continue;
+        Register Src = MRI.createVirtualRegister(&PPC::VDRCRegClass);
+        Register Dst = MRI.createVirtualRegister(&PPC::VDRCRegClass);
+        BuildMI(MBB, First, First->getDebugLoc(),
+                TII.get(TargetOpcode::REG_SEQUENCE), Src)
+            .addReg(Hi)
+            .addImm(PPC::sub_gpr_hi)
+            .addReg(Lo)
+            .addImm(PPC::sub_gpr_lo);
+        BuildMI(MBB, First, First->getDebugLoc(),
+                TII.get(Right ? PPC::RLDICL_VDR : PPC::RLDICR_VDR), Dst)
+            .addReg(Src)
+            .addImm(Right ? 32 + Rot : Rot)
+            .addImm(Right ? 32 - Rot : 63 - Rot);
+        for (auto [Output, Sub] : {std::pair(OutHi, PPC::sub_gpr_hi),
+                                   std::pair(OutLo, PPC::sub_gpr_lo)})
+          for (MachineOperand &Use :
+               make_early_inc_range(MRI.use_operands(Output))) {
+            Use.setReg(Dst);
+            Use.setSubReg(Sub);
+            Use.setIsKill(false);
+          }
+        MRI.markUsesInDebugValueAsUndef(A->getOperand(0).getReg());
+        MRI.clearKillFlags(Hi);
+        MRI.clearKillFlags(Lo);
+        I = std::next(Third);
+        A->eraseFromParent();
+        B->eraseFromParent();
+        C->eraseFromParent();
+        Changed = true;
+      }
+    return Changed;
+  }
+
   bool runOnMachineFunction(MachineFunction &MF) override {
     const auto &ST = MF.getSubtarget<PPCSubtarget>();
     if (!ST.isPPE42() || !MF.getFunction().hasOptSize())
@@ -41,7 +161,8 @@ public:
     MachineRegisterInfo &MRI = MF.getRegInfo();
     const auto &TII = *ST.getInstrInfo();
     const auto &TRI = *ST.getRegisterInfo();
-    bool Changed = false;
+    bool Changed = !ST.isLittleEndian() && ST.hasPPE42XRotate() &&
+                   combineDoublewordShifts(MF);
     // R13 is an ABI-invariant SDA base. Fold an SSA address into each memory
     // operand before allocation can spill the cached pointer across calls.
     // Do not infer this invariant for functions explicitly changing R13.
