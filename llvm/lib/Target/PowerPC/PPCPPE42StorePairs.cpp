@@ -53,6 +53,14 @@ public:
           break;
         auto A = First, B = Second, C = Third;
         if (Third->getOpcode() == PPC::RLWIMI) {
+          // This window can start at any instruction, including inline asm
+          // whose first operand is a symbol rather than a register. Establish
+          // the candidate opcodes before inspecting their register operands.
+          if (First->getOpcode() != PPC::RLWINM ||
+              Second->getOpcode() != PPC::RLWINM ||
+              First->getNumOperands() != 5 ||
+              Second->getNumOperands() != 5 || Third->getNumOperands() != 6)
+            continue;
           B = Third;
           if (B->getOperand(1).getReg() == First->getOperand(0).getReg())
             C = Second;
