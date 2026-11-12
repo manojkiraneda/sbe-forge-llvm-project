@@ -47,7 +47,7 @@ name: generic_lt
 tracksRegLiveness: true
 body: |
   ; CHECK-LABEL: name: generic_lt
-  ; CHECK: AND 
+  ; CHECK: AND
   ; CHECK: CMPLWI
   bb.0:
     liveins: $r3, $r5
@@ -64,7 +64,7 @@ name: successor_lt
 tracksRegLiveness: true
 body: |
   ; CHECK-LABEL: name: successor_lt
-  ; CHECK: AND 
+  ; CHECK: AND
   ; CHECK: CMPLWI
   bb.0:
     liveins: $r3, $r5
@@ -85,7 +85,7 @@ name: assembly_barrier
 tracksRegLiveness: true
 body: |
   ; CHECK-LABEL: name: assembly_barrier
-  ; CHECK: AND 
+  ; CHECK: AND
   ; CHECK: CMPLWI
   bb.0:
     liveins: $r3, $r5

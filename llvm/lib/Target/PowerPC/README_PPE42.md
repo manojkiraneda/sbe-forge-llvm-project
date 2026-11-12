@@ -294,14 +294,14 @@ clang -target powerpc-unknown-elf -mattr=+ppe42 -c test.c
 _start:
     # Load 64-bit value
     lvd d4, 0(r3)
-    
+
     # Store 64-bit value
     stvd d4, 8(r3)
-    
+
     # Standard 32-bit operations
     lwz r5, 0(r3)
     stw r5, 4(r3)
-    
+
     blr
 ```
 
@@ -390,7 +390,7 @@ void test_vdr(uint64_t *ptr) {
 ```c
 void inline_asm_example(void) {
     uint64_t value;
-    
+
     // Load 64 bits using LVD
     __asm__ volatile (
         "lvd d4, 0(%1)\n\t"
