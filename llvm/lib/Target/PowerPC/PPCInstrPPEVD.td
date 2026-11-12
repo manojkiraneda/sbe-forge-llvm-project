@@ -44,8 +44,7 @@ def STVD : DForm_1<6, (outs), (ins vdrc:$RST, (memri $D, $RA):$dst),
 def LVDU : DForm_1<9, (outs vdrc:$RST, ptr_rc_nor0:$ea_result),
                     (ins (memri $D, $RA):$addr),
                     "lvdu $RST, $addr", IIC_LdStLoadUpd, []>,
-                    RegConstraint<"@earlyclobber $RST, $addr.reg = $ea_result">,
-                    NoEncode<"$ea_result"> {
+                    RegConstraint<"@earlyclobber $RST, $addr.reg = $ea_result"> {
   let DecoderNamespace = "PPE42";
   // RA must differ from both GPRs in DT (ISA 9.4.47).
   let mayLoad = 1;
@@ -56,8 +55,7 @@ def LVDU : DForm_1<9, (outs vdrc:$RST, ptr_rc_nor0:$ea_result),
 def STVDU : DForm_1<22, (outs ptr_rc_nor0:$ea_result),
                      (ins vdrc:$RST, (memri $D, $RA):$addr),
                      "stvdu $RST, $addr", IIC_LdStSTU, []>,
-                     RegConstraint<"$addr.reg = $ea_result">,
-                     NoEncode<"$ea_result"> {
+                     RegConstraint<"$addr.reg = $ea_result"> {
   let DecoderNamespace = "PPE42";
   let mayLoad = 0;
   let mayStore = 1;
@@ -116,7 +114,7 @@ let Defs = [CR0], RC = 1 in
 def RLDIMI_VDR_rec : MDForm_1<30, 3, (outs vdrc:$RA),
     (ins vdrc:$RTi, vdrc:$RS, u6imm:$SH, u6imm:$MBE),
     "rldimi. $RA, $RS, $SH, $MBE", IIC_IntRotateDI, []>,
-    RegConstraint<"$RTi = $RA">, NoEncode<"$RTi">;
+    RegConstraint<"$RTi = $RA">;
 } // PPE42X immediate rotates
 
 let hasSideEffects = 0, Predicates = [IsPPE42] in {
@@ -138,5 +136,5 @@ def SRVD : XForm_6<31, 571, (outs vdrc:$RA),
 // Format: LI8_VDR vdrc, imm64
 let isReMaterializable = 1, Predicates = [IsPPE42] in {
 def LI8_VDR : PPCPostRAExpPseudo<(outs vdrc:$rD), (ins s16imm64:$imm),
-                                 "#LI8_VDR", []>;
+                                 [], "#LI8_VDR">;
 }
