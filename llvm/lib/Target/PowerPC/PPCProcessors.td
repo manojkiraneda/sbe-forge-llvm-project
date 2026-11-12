@@ -146,3 +146,7 @@ def : ProcessorModel<"ppc64", G5Model,
                    Feature64BitSupport /*, Feature64BitRegs */,
                    FeatureMFTB]>;
 def : ProcessorModel<"ppc64le", P8Model, ProcessorFeatures.P8Features>;
+
+// PPE42 embedded core.
+def : Processor<"ppe42", NoItineraries, [DirectivePPE42, FeatureMFTB,
+                                         FeaturePPE42, FeaturePPE42XStack, FeaturePPE42XRotate]>;
