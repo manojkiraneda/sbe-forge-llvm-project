@@ -101,11 +101,15 @@ public:
         if (Hi == Lo || C->getOperand(1).getReg() != (Right ? Hi : Lo))
           continue;
         for (Register Input : {Hi, Lo}) {
+          // SSA definitions may dominate this block from a predecessor.
+          // Requiring local definitions misses shifts guarded by a range
+          // check, even when neither input has any other use.
+          if (!MRI.hasOneDef(Input)) {
+            Safe = false;
+            continue;
+          }
           MachineInstr *Def = MRI.getVRegDef(Input);
-          bool Before = false;
-          for (auto K = MBB.begin(); K != First; ++K)
-            Before |= &*K == Def;
-          Safe &= Before && MRI.hasOneDef(Input) &&
+          Safe &= Def != &*A && Def != &*B && Def != &*C &&
                   MRI.getRegClass(Input) == &PPC::GPRCRegClass;
           for (MachineInstr &Use : MRI.use_nodbg_instructions(Input))
             Safe &= &Use == &*A || &Use == &*B || &Use == &*C;
