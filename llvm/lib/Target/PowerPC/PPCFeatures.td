@@ -590,7 +590,7 @@ def FeaturePPE42XRotate : SubtargetFeature<"ppe42x-rotate", "HasPPE42XRotate",
 def HasPPE42XRotate : Predicate<"Subtarget->isPPE42() && Subtarget->hasPPE42XRotate()">,
     AssemblerPredicate<(all_of FeaturePPE42, FeaturePPE42XRotate), "PPE42X rotate">;
 def NotPPE42 : Predicate<"!Subtarget->isPPE42()">,
-              AssemblerPredicate<(all_of (not FeaturePPE42)), "non-PPE42">;
+              AssemblerPredicate<(none_of FeaturePPE42), "non-PPE42">;
 def In64BitMode : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
 def IsPPE42 : Predicate<"Subtarget->isPPE42()">,
               AssemblerPredicate<(all_of FeaturePPE42), "PPE42">;
