@@ -821,7 +821,7 @@ PPCTargetLowering::PPCTargetLowering(const PPCTargetMachine &TM,
     setOperationAction(ISD::SHL_PARTS, MVT::i32, Custom);
     setOperationAction(ISD::SRA_PARTS, MVT::i32, Custom);
     setOperationAction(ISD::SRL_PARTS, MVT::i32, Custom);
-    
+
     // PPE42: 32-bit architecture with limited 64-bit support via VDR registers
     // VDR registers are pairs of consecutive GPRs used for 64-bit load/store
     if (Subtarget.isPPE42()) {
