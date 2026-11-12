@@ -19,6 +19,7 @@ class Directive<string enum_name>
   : SubtargetFeature<"", "CPUDirective", enum_name, "", [], InlineIgnore>;
 
 def Directive440 : Directive<"PPC::DIR_440">;
+def DirectivePPE42 : Directive<"PPC::DIR_440">;
 def Directive601 : Directive<"PPC::DIR_601">;
 def Directive602 : Directive<"PPC::DIR_602">;
 def Directive603 : Directive<"PPC::DIR_603">;
@@ -578,3 +579,18 @@ def ProcessorFeatures {
 //
 // DFP          p6, p6x, p7        decimal floating-point instructions
 // POPCNTB      p5 through p7      popcntb and related instructions
+
+// PPE42 downstream features and instruction predicates.
+def FeaturePPE42 : SubtargetFeature<"ppe42", "IsPPE42", "true",
+                                        "Enable PPE42 instructions">;
+def FeaturePPE42XStack : SubtargetFeature<"ppe42x-stack", "HasPPE42XStack",
+                                            "true", "Enable PPE42 stack pair instructions">;
+def FeaturePPE42XRotate : SubtargetFeature<"ppe42x-rotate", "HasPPE42XRotate",
+    "true", "Enable PPE42X virtual-doubleword immediate rotates">;
+def HasPPE42XRotate : Predicate<"Subtarget->isPPE42() && Subtarget->hasPPE42XRotate()">,
+    AssemblerPredicate<(all_of FeaturePPE42, FeaturePPE42XRotate), "PPE42X rotate">;
+def NotPPE42 : Predicate<"!Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of (not FeaturePPE42)), "non-PPE42">;
+def In64BitMode : Predicate<"Subtarget->isPPC64() && !Subtarget->isPPE42()">;
+def IsPPE42 : Predicate<"Subtarget->isPPE42()">,
+              AssemblerPredicate<(all_of FeaturePPE42), "PPE42">;
