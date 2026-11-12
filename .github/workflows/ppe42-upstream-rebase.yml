@@ -20,13 +20,16 @@ permissions:
 
 concurrency:
   group: ppe42-upstream-rebase-${{ github.event_name == 'pull_request' && github.ref || 'controller' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   tests:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: utils/ppe42
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
