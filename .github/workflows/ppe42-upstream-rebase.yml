@@ -42,7 +42,7 @@ jobs:
       actions: write
     env:
       GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
-      REPORT: ${{ runner.temp }}/ppe42-rebase
+      REPORT: /tmp/ppe42-rebase-${{ github.run_id }}
     steps:
       - name: Check controller credential
         run: |

@@ -25,7 +25,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
-      REPORT: ${{ runner.temp }}/ppe42-promotion
+      REPORT: /tmp/ppe42-promotion-${{ github.run_id }}
     steps:
       - name: Record failed candidate
         if: github.event.workflow_run.conclusion != 'success'
