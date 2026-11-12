@@ -36,8 +36,13 @@ def ancestor(repo, older, newer):
 
 def fetch(repo, remote, refs):
     args = ["fetch", "--no-tags", "--filter=blob:none"]
-    if git(repo, "rev-parse", "--is-shallow-repository").stdout.strip() == "true":
+    shallow = git(repo, "rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+    if shallow and remote == "origin":
         args.append("--unshallow")
+        # The controller's default-branch commit may not be reachable from
+        # main or next. Fetch origin HEAD too so its shallow boundary is
+        # removed before contacting upstream, which cannot know that commit.
+        refs = [*refs, "HEAD"]
     git(repo, *args, remote, *refs)
 
 

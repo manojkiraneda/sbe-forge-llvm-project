@@ -77,6 +77,22 @@ class RebaseTests(unittest.TestCase):
         self.assertEqual(bot.git(self.repo, 'show', result['candidate_sha'] + ':ppe42').stdout, 'downstream\n')
         self.assertFalse((self.root / 'report/worktree').exists())
 
+    def test_shallow_controller_on_separate_default_branch(self):
+        bot.git(self.repo, 'switch', '-c', 'controller', self.base)
+        self.commit(self.repo, 'controller-only', 'workflow lives on a separate line\n')
+        bot.git(self.repo, 'push', 'origin', 'controller')
+        bot.git(self.remote, 'symbolic-ref', 'HEAD', 'refs/heads/controller')
+        shallow = self.root / 'shallow-controller'
+        subprocess.run(['git', 'clone', '-q', '--depth=1', self.remote.as_uri(), str(shallow)],
+                       check=True)
+        self.repo = shallow
+        bot.git(self.repo, 'config', 'user.name', 'Test')
+        bot.git(self.repo, 'config', 'user.email', 'test@example.com')
+        self.advance()
+        self.assertEqual(self.prepare()['state'], 'candidate')
+        self.assertEqual(bot.git(self.repo, 'rev-parse', '--is-shallow-repository').stdout.strip(),
+                         'false')
+
     def test_retry_reuses_candidate(self):
         self.advance()
         first = self.prepare()
