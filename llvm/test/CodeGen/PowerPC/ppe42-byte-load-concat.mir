@@ -1,0 +1,163 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @word(ptr %p) { ret void }
+  define void @half(ptr %p) { ret void }
+  define void @unaligned(ptr %p) { ret void }
+  define void @volatile(ptr %p) { ret void }
+  define void @live_byte(ptr %p) { ret void }
+  define void @intermediate_use(ptr %p) { ret void }
+  define void @store_barrier(ptr %p) { ret void }
+  define void @wrong_order(ptr %p) { ret void }
+  define void @changed_base(ptr %p) { ret void }
+  define void @external_unaligned(ptr %p) { ret void }
+...
+---
+name: word
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: word
+    ; CHECK: $r5 = LWZ 76, $r1
+    ; CHECK-NOT: RLWIMI
+    $r3 = LBZ 78, $r1 :: (load (s8) from %ir.p + 78)
+    $r5 = LBZ 79, $r1 :: (load (s8) from %ir.p + 79)
+    $r4 = LBZ 77, $r1 :: (load (s8) from %ir.p + 77)
+    $r8 = ADDI $r8, 1
+    $r5 = RLWIMI $r5, $r3, 8, 16, 23
+    $r3 = LBZ 76, $r1 :: (load (s8) from %ir.p + 76)
+    $r5 = RLWIMI $r5, $r4, 16, 8, 15
+    $r4 = LWZ 56, $r1 :: (load (s32) from %ir.p + 56)
+    $r5 = RLWIMI $r5, $r3, 24, 0, 7
+    BLR implicit $lr, implicit undef $rm, implicit $r5, implicit $r4
+...
+---
+name: half
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: half
+    ; CHECK: $r5 = LHZ 62, $r1
+    ; CHECK-NOT: RLWIMI
+    $r3 = LBZ 62, $r1 :: (load (s8) from %ir.p + 62)
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: unaligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: unaligned
+    ; CHECK: RLWIMI
+    $r3 = LBZ 79, $r1 :: (load (s8) from %ir.p + 79)
+    $r5 = LBZ 80, $r1 :: (load (s8) from %ir.p + 80)
+    $r4 = LBZ 78, $r1 :: (load (s8) from %ir.p + 78)
+    $r8 = ADDI $r8, 1
+    $r5 = RLWIMI $r5, $r3, 8, 16, 23
+    $r3 = LBZ 77, $r1 :: (load (s8) from %ir.p + 77)
+    $r5 = RLWIMI $r5, $r4, 16, 8, 15
+    $r4 = LWZ 56, $r1 :: (load (s32) from %ir.p + 56)
+    $r5 = RLWIMI $r5, $r3, 24, 0, 7
+    BLR implicit $lr, implicit undef $rm, implicit $r5, implicit $r4
+...
+---
+name: volatile
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: volatile
+    ; CHECK: LBZ 62
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r1 :: (volatile load (s8) from %ir.p + 62)
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: live_byte
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: live_byte
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r1 :: (load (s8) from %ir.p + 62)
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    $r7 = OR $r3, $r3
+    BLR implicit $lr, implicit undef $rm, implicit $r5, implicit $r7
+...
+---
+name: intermediate_use
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: intermediate_use
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r1 :: (load (s8) from %ir.p + 62)
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r7 = OR $r3, $r3
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5, implicit $r7
+...
+---
+name: store_barrier
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: store_barrier
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r1 :: (load (s8) from %ir.p + 62)
+    STB $r6, 62, $r1 :: (store (s8) into %ir.p + 62)
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: wrong_order
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: wrong_order
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r1 :: (load (s8) from %ir.p + 62)
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 16, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: changed_base
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: changed_base
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r1 :: (load (s8) from %ir.p + 62)
+    $r1 = ADDI $r1, 8
+    $r5 = LBZ 63, $r1 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...
+---
+name: external_unaligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r6, $r8
+    ; CHECK-LABEL: name: external_unaligned
+    ; CHECK: RLWIMI
+    $r3 = LBZ 62, $r6 :: (load (s8) from %ir.p + 62)
+    $r5 = LBZ 63, $r6 :: (load (s8) from %ir.p + 63)
+    $r5 = RLWIMI $r5, $r3, 8, 0, 23
+    BLR implicit $lr, implicit undef $rm, implicit $r5
+...

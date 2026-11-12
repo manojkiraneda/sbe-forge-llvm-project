@@ -1,0 +1,124 @@
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=ppc-pre-emit-peephole -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @indexed(ptr %p) { ret void }
+  define void @commuted(ptr %p) { ret void }
+  define void @unaligned(ptr %p) { ret void }
+  define void @volatile(ptr %p) { ret void }
+  define void @wrong_address(ptr %p) { ret void }
+  define void @clobbered_address(ptr %p) { ret void }
+  define void @wrong_pair(ptr %p) { ret void }
+  define void @wrong_offset(ptr %p) { ret void }
+...
+---
+name: indexed
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: indexed
+    ; CHECK: $r4_r5 = LVD 0, killed $r7
+    ; CHECK-NOT: LWZ
+    $r7 = ADD4 $r6, $r4
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
+    $r5 = LWZ 4, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...
+---
+name: commuted
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: commuted
+    ; CHECK: $r4_r5 = LVD 0, killed $r7
+    ; CHECK-NOT: LWZ
+    $r7 = ADD4 $r4, $r6
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
+    $r5 = LWZ 4, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...
+---
+name: unaligned
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: unaligned
+    ; CHECK: LWZX
+    ; CHECK: LWZ 4
+    $r7 = ADD4 $r6, $r4
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 4)
+    $r5 = LWZ 4, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...
+---
+name: volatile
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: volatile
+    ; CHECK: LWZX
+    ; CHECK: LWZ 4
+    $r7 = ADD4 $r6, $r4
+    $r4 = LWZX $r6, $r4 :: (volatile load (s32) from %ir.p, align 8)
+    $r5 = LWZ 4, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...
+---
+name: wrong_address
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: wrong_address
+    ; CHECK: LWZX
+    ; CHECK: LWZ 4
+    $r7 = ADD4 $r8, $r4
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
+    $r5 = LWZ 4, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...
+---
+name: clobbered_address
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: clobbered_address
+    ; CHECK: LWZX
+    ; CHECK: LWZ 4
+    $r4 = ADD4 $r6, $r4
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
+    $r5 = LWZ 4, $r4 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...
+---
+name: wrong_pair
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r4, $r6, $r8
+    ; CHECK-LABEL: name: wrong_pair
+    ; CHECK: LWZX
+    ; CHECK: LWZ 4
+    $r7 = ADD4 $r6, $r4
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
+    $r8 = LWZ 4, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r8
+...
+---
+name: wrong_offset
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r6, $r4, $r6, $r8
+    ; CHECK-LABEL: name: wrong_offset
+    ; CHECK: LWZX
+    ; CHECK: LWZ 8
+    $r7 = ADD4 $r6, $r4
+    $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
+    $r5 = LWZ 8, $r7 :: (load (s32) from %ir.p + 4, align 4)
+    BLR implicit $lr, implicit undef $rm, implicit $r4, implicit $r5
+...

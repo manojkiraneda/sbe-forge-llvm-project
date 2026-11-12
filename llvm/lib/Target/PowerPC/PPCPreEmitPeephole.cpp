@@ -1114,20 +1114,244 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
       return Changed;
     }
 
+    // Reassemble only ordinary, aligned byte reads. Track byte provenance
+    // rather than assuming that every rotate/insert is a load concatenation.
+    // In particular, do not widen unaligned external or volatile accesses.
+    bool foldPPE42ByteLoads(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
+                            const TargetRegisterInfo &TRI) {
+      struct Bytes {
+        // Big-endian byte order; -65536 denotes a known zero byte.
+        int64_t Offset[4] = {-65536, -65536, -65536, -65536};
+        SmallVector<MachineInstr *, 8> Nodes;
+      };
+      bool Changed = false;
+      // Prefer the complete word to an intermediate halfword of the same
+      // concatenation; otherwise the first fold hides the larger pattern.
+      for (unsigned DesiredWidth : {4u, 2u}) {
+        for (auto I = MBB.begin(); I != MBB.end();) {
+          auto Start = I++;
+          if (Start->getOpcode() != PPC::LBZ || Start->getNumOperands() != 3 ||
+              !Start->getOperand(1).isImm())
+            continue;
+          Register Base = Start->getOperand(2).getReg();
+          if (Base == PPC::R0)
+            continue;
+          DenseMap<Register, Bytes> Values;
+          unsigned Steps = 0;
+          for (auto J = Start; J != MBB.end() && Steps++ != 20; ++J) {
+            MachineInstr &MI = *J;
+            if (MI.isDebugInstr())
+              continue;
+            if (MI.isBundled() || MI.getFlags() || MI.isCall() ||
+                MI.isTerminator() || MI.isInlineAsm() || MI.mayStore() ||
+                MI.hasUnmodeledSideEffects() || MI.hasOrderedMemoryRef() ||
+                MI.modifiesRegister(Base, &TRI))
+              break;
+            bool OperandsOK =
+                llvm::all_of(MI.operands(), [](const MachineOperand &MO) {
+                  return !MO.isReg() || (!MO.getSubReg() && !MO.isUndef());
+                });
+            Bytes Value;
+            bool Recognized = false;
+            if (OperandsOK && MI.getOpcode() == PPC::LBZ &&
+                MI.getNumOperands() == 3 && MI.hasOneMemOperand() &&
+                MI.getOperand(1).isImm() &&
+                isInt<16>(MI.getOperand(1).getImm()) &&
+                MI.getOperand(2).getReg() == Base &&
+                (*MI.memoperands_begin())->isLoad()) {
+              Value.Offset[3] = MI.getOperand(1).getImm();
+              Value.Nodes.push_back(&MI);
+              Recognized = true;
+            } else if (OperandsOK && MI.getOpcode() == PPC::RLWIMI &&
+                       MI.getNumOperands() == 6 && MI.getOperand(3).isImm() &&
+                       MI.getOperand(4).isImm() && MI.getOperand(5).isImm()) {
+              auto Old = Values.find(MI.getOperand(1).getReg());
+              auto Src = Values.find(MI.getOperand(2).getReg());
+              unsigned Rot = MI.getOperand(3).getImm();
+              unsigned MB = MI.getOperand(4).getImm();
+              unsigned ME = MI.getOperand(5).getImm();
+              if (Old != Values.end() && Src != Values.end() && Rot < 32 &&
+                  MB < 32 && ME < 32 && Rot % 8 == 0 && MB % 8 == 0 &&
+                  ME % 8 == 7) {
+                Value = Old->second;
+                for (unsigned B = 0; B != 4; ++B)
+                  if (MB <= ME ? B * 8 >= MB && B * 8 <= ME
+                               : B * 8 >= MB || B * 8 <= ME)
+                    Value.Offset[B] = Src->second.Offset[(B + Rot / 8) % 4];
+                for (MachineInstr *Node : Src->second.Nodes)
+                  if (!llvm::is_contained(Value.Nodes, Node))
+                    Value.Nodes.push_back(Node);
+                Value.Nodes.push_back(&MI);
+                Recognized = true;
+              }
+            }
+            // Kill provenance for every overwritten physical register, even
+            // when this is an unrelated instruction within the search window.
+            for (auto K = Values.begin(); K != Values.end();) {
+              if (MI.modifiesRegister(K->first, &TRI))
+                Values.erase(K++);
+              else
+                ++K;
+            }
+            if (!Recognized)
+              continue;
+            Register Dst = MI.getOperand(0).getReg();
+            Values[Dst] = Value;
+            unsigned Width = Value.Offset[0] != -65536 ? 4 : 2;
+            if (Width != DesiredWidth)
+              continue;
+            unsigned Begin = 4 - Width;
+            int64_t Offset = Value.Offset[Begin];
+            bool Contiguous = Offset != -65536;
+            for (unsigned B = 0; B != Begin; ++B)
+              Contiguous &= Value.Offset[B] == -65536;
+            for (unsigned B = Begin; B != 4; ++B)
+              Contiguous &= Value.Offset[B] == Offset + B - Begin;
+            if (!Contiguous || Value.Nodes.size() <= 1)
+              continue;
+            MachineMemOperand *FirstMem = nullptr;
+            for (MachineInstr *Node : Value.Nodes)
+              if (Node->getOpcode() == PPC::LBZ &&
+                  Node->getOperand(1).getImm() == Offset)
+                FirstMem = *Node->memoperands_begin();
+            const MachineFunction &MF = *MBB.getParent();
+            const MachineFrameInfo &MFI = MF.getFrameInfo();
+            bool StackAligned =
+                Base == PPC::R1 && Offset % Width == 0 &&
+                MF.getSubtarget<PPCSubtarget>().getStackAlignment() >=
+                    Align(Width) &&
+                !MFI.hasVarSizedObjects() && MFI.getStackSize() % Width == 0;
+            if (!FirstMem ||
+                (!StackAligned && FirstMem->getAlign() < Align(Width)))
+              continue;
+            LiveRegUnits Live(TRI);
+            Live.addLiveOuts(MBB);
+            for (auto K = MBB.rbegin(); &*K != &MI; ++K)
+              Live.stepBackward(*K);
+            bool Safe = true;
+            for (MachineInstr *Node : Value.Nodes) {
+              Register Def = Node->getOperand(0).getReg();
+              bool Redefined = false;
+              for (auto K = std::next(Node->getIterator()); K != std::next(J);
+                   ++K) {
+                if (!llvm::is_contained(Value.Nodes, &*K) &&
+                    K->readsRegister(Def, &TRI))
+                  Safe = false;
+                if (K->modifiesRegister(Def, &TRI)) {
+                  Redefined = true;
+                  break;
+                }
+              }
+              if (!Redefined && Def != Dst && !Live.available(Def))
+                Safe = false;
+              if (!Redefined)
+                for (auto K = std::next(J); K != MBB.end(); ++K) {
+                  if (K->isDebugInstr() && K->readsRegister(Def, &TRI))
+                    Safe = false;
+                  if (K->modifiesRegister(Def, &TRI))
+                    break;
+                }
+            }
+            if (!Safe)
+              continue;
+            auto Load = BuildMI(MBB, J, MI.getDebugLoc(),
+                                TII.get(Width == 4 ? PPC::LWZ : PPC::LHZ), Dst)
+                            .addImm(Offset)
+                            .addReg(Base);
+            for (MachineInstr *Node : Value.Nodes)
+              for (MachineMemOperand *Mem : Node->memoperands())
+                Load.addMemOperand(Mem);
+            I = std::next(J);
+            for (MachineInstr *Node : Value.Nodes)
+              Node->eraseFromParent();
+            Changed = true;
+            break;
+          }
+        }
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
+    // Recognize the shared effective address before the indexed load destroys
+    // its index. Never infer doubleword alignment from the ADD itself.
+    bool foldPPE42IndexedLoadPairs(MachineBasicBlock &MBB,
+                                   const PPCInstrInfo &TII,
+                                   const TargetRegisterInfo &TRI) {
+      bool Changed = false;
+      for (auto I = MBB.begin(); I != MBB.end();) {
+        MachineInstr &Add = *I++;
+        if (Add.getOpcode() != PPC::ADD4 || Add.getNumOperands() != 3 ||
+            Add.getFlags() || Add.isBundled())
+          continue;
+        auto First = I;
+        if (First == MBB.end())
+          break;
+        auto Second = std::next(First);
+        if (Second == MBB.end())
+          break;
+        if (First->getOpcode() != PPC::LWZX ||
+            Second->getOpcode() != PPC::LWZ || First->getNumOperands() != 3 ||
+            Second->getNumOperands() != 3 || First->getFlags() ||
+            Second->getFlags() || First->isBundled() || Second->isBundled() ||
+            !First->hasOneMemOperand() || !Second->hasOneMemOperand() ||
+            !Second->getOperand(1).isImm() ||
+            Second->getOperand(1).getImm() != 4)
+          continue;
+        bool OperandsOK = true;
+        for (MachineInstr *MI : {&Add, &*First, &*Second})
+          for (const MachineOperand &MO : MI->operands())
+            OperandsOK &= !MO.isReg() || (!MO.getSubReg() && !MO.isUndef());
+        Register Base = Add.getOperand(0).getReg();
+        Register A = Add.getOperand(1).getReg(), B = Add.getOperand(2).getReg();
+        Register X = First->getOperand(1).getReg(),
+                 Y = First->getOperand(2).getReg();
+        if (!OperandsOK || Base == PPC::R0 || X == PPC::R0 || Base == A ||
+            Base == B || !((A == X && B == Y) || (A == Y && B == X)) ||
+            Second->getOperand(2).getReg() != Base ||
+            First->modifiesRegister(Base, &TRI))
+          continue;
+        auto *HiMem = *First->memoperands_begin();
+        auto *LoMem = *Second->memoperands_begin();
+        if (!HiMem->isLoad() || !LoMem->isLoad() || HiMem->isVolatile() ||
+            LoMem->isVolatile() || HiMem->isAtomic() || LoMem->isAtomic() ||
+            HiMem->getAlign() < Align(8) || LoMem->getAlign() < Align(4))
+          continue;
+        Register Pair = TRI.getMatchingSuperReg(
+            First->getOperand(0).getReg(), PPC::sub_gpr_hi, &PPC::VDRCRegClass);
+        if (!Pair || TRI.getSubReg(Pair, PPC::sub_gpr_lo) !=
+                         Second->getOperand(0).getReg().asMCReg())
+          continue;
+        BuildMI(MBB, First, First->getDebugLoc(), TII.get(PPC::LVD), Pair)
+            .addImm(0)
+            .addReg(Base)
+            .addMemOperand(HiMem)
+            .addMemOperand(LoMem);
+        I = std::next(Second);
+        First->eraseFromParent();
+        Second->eraseFromParent();
+        Changed = true;
+        ++NumPPE42VDLoads;
+      }
+      if (Changed)
+        recomputeLivenessFlags(MBB);
+      return Changed;
+    }
+
     // LVD loads both halves of a VDR tuple from one doubleword. A later word
     // load may be separated by register-only instructions after scheduling.
     // Moving it to the first load must not cross memory or alter any register
     // value observed between the two loads.
-    bool combinePPE42WordLoads(MachineBasicBlock &MBB,
-                               const PPCInstrInfo &TII,
+    bool combinePPE42WordLoads(MachineBasicBlock &MBB, const PPCInstrInfo &TII,
                                const TargetRegisterInfo &TRI) {
       bool Changed = false;
       for (auto I = MBB.begin(); I != MBB.end();) {
         MachineInstr &First = *I++;
         if (First.getOpcode() != PPC::LWZ || First.getNumOperands() != 3 ||
             !First.hasOneMemOperand() || !First.getOperand(0).isReg() ||
-            (!First.getOperand(1).isImm() &&
-             !First.getOperand(1).isGlobal()) || !First.getOperand(2).isReg())
+            (!First.getOperand(1).isImm() && !First.getOperand(1).isGlobal()) ||
+            !First.getOperand(2).isReg())
           continue;
 
         auto Next = I;
@@ -1721,6 +1945,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           Changed |= foldPPE42RotateMasks(MBB);
           Changed |= foldPPE42UpdateCopies(MBB, *TII, *TRI);
           Changed |= combinePPE42WordStores(MBB, *TII, *TRI);
+          Changed |= foldPPE42ByteLoads(MBB, *TII, *TRI);
+          Changed |= foldPPE42IndexedLoadPairs(MBB, *TII, *TRI);
           Changed |= combinePPE42WordLoads(MBB, *TII, *TRI);
           Changed |= combinePPE42Updates(MBB, *TII, *TRI);
           // A scalar constant that looks dead can still provide the other

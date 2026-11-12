@@ -288,6 +288,9 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-vdr-update.mir \
             llvm/test/CodeGen/PowerPC/ppe42-i64-load-preinc.ll \
             llvm/test/CodeGen/PowerPC/ppe42-call-result-spills.ll \
+            llvm/test/CodeGen/PowerPC/ppe42-byte-load-concat.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-indexed-load-pairs.mir \
+            llvm/test/CodeGen/PowerPC/ppe42-pre-ra-doubleword-shifts.mir \
             llvm/test/CodeGen/PowerPC/ppe42-lvd-load-pairs.mir
 
       - name: Test PPE42 stack option
