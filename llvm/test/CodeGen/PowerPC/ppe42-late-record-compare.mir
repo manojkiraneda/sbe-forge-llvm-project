@@ -90,7 +90,7 @@ body: |
   bb.0:
     liveins: $r3, $r5, $cr0
     ; CHECK-LABEL: name: unsigned_sign_live
-    ; CHECK: RLWINM 
+    ; CHECK: RLWINM
     ; CHECK: CMPLWI
     ; CHECK: $r4 = LI 9
     $r4 = RLWINM $r3, 0, 0, 3
@@ -108,7 +108,7 @@ body: |
   bb.0:
     liveins: $r3, $r5, $cr0
     ; CHECK-LABEL: name: flags_observed
-    ; CHECK: RLWINM 
+    ; CHECK: RLWINM
     ; CHECK: CMPLWI
     ; CHECK: $r4 = LI 9
     $r4 = RLWINM $r3, 0, 28, 29
@@ -127,7 +127,7 @@ body: |
   bb.0:
     liveins: $r3, $r5, $cr0
     ; CHECK-LABEL: name: flags_clobbered
-    ; CHECK: RLWINM 
+    ; CHECK: RLWINM
     ; CHECK: CMPLWI
     ; CHECK: $r4 = LI 9
     $r4 = RLWINM $r3, 0, 28, 29
@@ -146,7 +146,7 @@ body: |
   bb.0:
     liveins: $r3, $r5, $cr0
     ; CHECK-LABEL: name: overflow_changed
-    ; CHECK: RLWINM 
+    ; CHECK: RLWINM
     ; CHECK: CMPLWI
     ; CHECK: $r4 = LI 9
     $r4 = RLWINM $r3, 0, 28, 29
