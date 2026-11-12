@@ -227,7 +227,7 @@ body: |
   bb.0:
     liveins: $r3, $r4
     ; CHECK-LABEL: name: volatile_access
-    ; CHECK: LWZ 
+    ; CHECK: LWZ
     ; CHECK: ADDI
     $r4 = LWZ 4, $r3 :: (volatile load (s32) from %ir.p)
     $r3 = ADDI $r3, 4
@@ -240,7 +240,7 @@ body: |
   bb.0:
     liveins: $r3, $r4
     ; CHECK-LABEL: name: overlap
-    ; CHECK: LWZ 
+    ; CHECK: LWZ
     ; CHECK: ADDI
     $r3 = LWZ 4, $r3 :: (load (s32) from %ir.p)
     $r3 = ADDI $r3, 4
@@ -253,7 +253,7 @@ body: |
   bb.0:
     liveins: $r3, $r4
     ; CHECK-LABEL: name: different_address
-    ; CHECK: STW 
+    ; CHECK: STW
     ; CHECK: ADDI
     STW $r4, 8, $r3 :: (store (s32) into %ir.p)
     $r3 = ADDI $r3, 4
