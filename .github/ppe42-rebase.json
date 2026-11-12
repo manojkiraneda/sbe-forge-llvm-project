@@ -1,0 +1,9 @@
+{
+  "upstream_url": "https://github.com/llvm/llvm-project.git",
+  "upstream_ref": "refs/heads/main",
+  "mirror_branch": "main",
+  "downstream_branch": "ppe42/llvm-next",
+  "candidate_prefix": "automation/ppe42-rebase",
+  "backup_prefix": "ppe42-next-backup",
+  "ci_workflow": "ppe42-toolchain.yml"
+}
