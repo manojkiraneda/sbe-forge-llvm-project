@@ -48,7 +48,7 @@ let Predicates = [IsPPE42], DecoderNamespace = "PPE42", isBranch = 1,
                         (ins u1imm:$PX, gprc:$RA_in, u5imm:$RB,
                              ppe42brtarget:$BDX),
                         "cmpwibc $PX, 3, $RA, $RB, $BDX">,
-                 RegConstraint<"$RA = $RA_in">, NoEncode<"$RA_in"> {
+                 RegConstraint<"$RA = $RA_in"> {
     let BIX = 3;
     let isCodeGenOnly = 1;
     let Uses = [];
@@ -168,7 +168,7 @@ def STCXU : PPE42DSForm_1<62, (outs),
 def STSKU : DSForm_1<62, 3, (outs ptr_rc_nor0:$ea_res),
                      (ins gprc:$RST, (memrix $D, $RA):$addr),
                      "stsku $RST, $addr", IIC_LdStSTU, []>,
-             RegConstraint<"$addr.reg = $ea_res">, NoEncode<"$ea_res"> {
+             RegConstraint<"$addr.reg = $ea_res"> {
   let Inst{29} = 0;
   let mayStore = 1;
   let hasSideEffects = 1;
