@@ -17,7 +17,7 @@ body: |
   bb.0:
     liveins: $r0, $r4, $r6, $r8
     ; CHECK-LABEL: name: indexed
-    ; CHECK: $r4_r5 = LVD 0, $r7
+    ; CHECK: $r4_r5 = LVD 0, killed $r7
     ; CHECK-NOT: LWZ
     $r7 = ADD4 $r6, $r4
     $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
@@ -31,7 +31,7 @@ body: |
   bb.0:
     liveins: $r0, $r4, $r6, $r8
     ; CHECK-LABEL: name: commuted
-    ; CHECK: $r4_r5 = LVD 0, $r7
+    ; CHECK: $r4_r5 = LVD 0, killed $r7
     ; CHECK-NOT: LWZ
     $r7 = ADD4 $r4, $r6
     $r4 = LWZX $r6, $r4 :: (load (s32) from %ir.p, align 8)
