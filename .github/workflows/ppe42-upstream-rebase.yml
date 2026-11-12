@@ -1,0 +1,108 @@
+name: PPE42 upstream rebase
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build a candidate even if upstream is unchanged
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - '.github/ppe42-rebase.json'
+      - '.github/workflows/ppe42-upstream-rebase*.yml'
+      - 'utils/ppe42/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ppe42-upstream-rebase-${{ github.event_name == 'pull_request' && github.ref || 'controller' }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 -m unittest discover -s utils/ppe42 -p 'test_rebase_next.py' -v
+
+  prepare:
+    if: github.event_name != 'pull_request'
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
+      REPORT: ${{ runner.temp }}/ppe42-rebase
+    steps:
+      - name: Check controller credential
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo '::error::Set PPE42_REBASE_TOKEN with repository Contents, Workflows and Actions write permissions. This is a one-time setup.'
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ secrets.PPE42_REBASE_TOKEN }}
+          fetch-depth: 1
+          filter: blob:none
+      - name: Set bot identity
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - uses: actions/cache/restore@v4
+        with:
+          path: .git/rr-cache
+          key: ppe42-rebase-rerere-v1-${{ github.run_id }}
+          restore-keys: ppe42-rebase-rerere-v1-
+      - name: Sync main and prepare isolated candidate
+        id: candidate
+        env:
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          args=()
+          if [ "$FORCE" = true ]; then args+=(--force); fi
+          python3 utils/ppe42/rebase_next.py prepare --report "$REPORT" "${args[@]}"
+      - name: Dispatch candidate compiler CI
+        if: steps.candidate.outputs.state == 'candidate'
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+        run: |
+          gh workflow run ppe42-toolchain.yml --repo "$GITHUB_REPOSITORY" --ref "$CANDIDATE"
+          printf 'Candidate `%s` was dispatched to toolchain CI. Promotion is automatic after success.\n' "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record no-op
+        if: steps.candidate.outputs.state == 'noop'
+        run: echo 'llvm-next already contains upstream main; no build needed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save trusted conflict-resolution cache
+        if: success() && steps.candidate.outputs.state == 'candidate'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/rr-cache
+          key: ppe42-rebase-rerere-v1-${{ github.run_id }}
+      - name: Upload rebase report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ppe42-rebase-${{ github.run_id }}
+          path: |
+            ${{ env.REPORT }}/*.json
+            ${{ env.REPORT }}/*.txt
+            ${{ env.REPORT }}/*.log
+            ${{ env.REPORT }}/*.patch
+            ${{ env.REPORT }}/conflicts/
+            ${{ env.REPORT }}/sequencer/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Explain failed attempt
+        if: failure()
+        run: echo 'Automatic rebase stopped. llvm-next was not promoted. See the rebase report or controller error above.' >> "$GITHUB_STEP_SUMMARY"
