@@ -728,8 +728,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
             BuildMI(MBB, First, First.getDebugLoc(), TII.get(UpdateOpcode));
         if (IsLoad)
           Update.addReg(Mem.getOperand(0).getReg(),
-                        RegState::Define |
-                            (IsPair ? RegState::EarlyClobber : 0));
+                        RegState::Define | getEarlyClobberRegState(IsPair));
         Update.addReg(Base, RegState::Define);
         if (!IsLoad)
           Update.addReg(Mem.getOperand(0).getReg());
@@ -1213,7 +1212,7 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
                 TII.get(PPC::LVD), Pair)
             .add(HiDisp)
-            .addReg(Base, Second.getOperand(2).isKill() ? RegState::Kill : 0)
+            .addReg(Base, getKillRegState(Second.getOperand(2).isKill()))
             .addMemOperand(HiMem)
             .addMemOperand(LoMem);
         I = std::next(Next);
