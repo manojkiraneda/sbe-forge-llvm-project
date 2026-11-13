@@ -66,7 +66,7 @@ namespace {
 // particularly useful for small C++ template helpers that otherwise keep a
 // by-reference Target argument alive across many PPE42 call sites.
 class PPE42SizeCloneHelpersPass
-    : public PassInfoMixin<PPE42SizeCloneHelpersPass> {
+    : public OptionalPassInfoMixin<PPE42SizeCloneHelpersPass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     SmallVector<Function *, 16> Candidates;
@@ -134,7 +134,7 @@ public:
 // file. Restore ODR linkage after removing dead arguments, using a name that
 // describes the surviving signature. Keep the original ABI under its old name.
 class PPE42SizeFinalizeHelpersPass
-    : public PassInfoMixin<PPE42SizeFinalizeHelpersPass> {
+    : public OptionalPassInfoMixin<PPE42SizeFinalizeHelpersPass> {
 public:
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     bool Changed = false;
@@ -161,6 +161,37 @@ public:
       Changed = true;
     }
     return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  }
+};
+// Size is now a per-function attribute rather than an OptimizationLevel.
+// Inspect the IR when the extension runs, keeping ordinary speed pipelines
+// free of the additional PPE42 interprocedural transformations.
+class PPE42SizeHelpersPass
+    : public OptionalPassInfoMixin<PPE42SizeHelpersPass> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
+    if (llvm::none_of(M, [](const Function &F) {
+          return !F.isDeclaration() && F.hasOptSize();
+        }))
+      return PreservedAnalyses::all();
+    ModulePassManager PM;
+    PM.addPass(PPE42SizeCloneHelpersPass());
+    PM.addPass(DeadArgumentEliminationPass());
+    PM.addPass(PPE42SizeFinalizeHelpersPass());
+    return PM.run(M, AM);
+  }
+};
+
+class PPE42SizeArgumentPromotionPass
+    : public OptionalPassInfoMixin<PPE42SizeArgumentPromotionPass> {
+public:
+  PreservedAnalyses run(LazyCallGraph::SCC &C, CGSCCAnalysisManager &AM,
+                        LazyCallGraph &CG, CGSCCUpdateResult &UR) {
+    if (llvm::none_of(C, [](const LazyCallGraph::Node &N) {
+          return N.getFunction().hasOptSize();
+        }))
+      return PreservedAnalyses::all();
+    return ArgumentPromotionPass().run(C, AM, CG, UR);
   }
 };
 } // namespace
@@ -564,20 +595,18 @@ void PPCTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
   // Run after the inliner and function simplification. Template checking
   // helpers can use an otherwise dead 'this' pointer until they are inlined;
   // the early-simplification extension point cannot see that opportunity.
-  PB.registerOptimizerEarlyEPCallback(
-      [](ModulePassManager &MPM, OptimizationLevel Level,
-         ThinOrFullLTOPhase Phase) {
-        if (!EnablePPE42SizeIPA || !Level.isOptimizingForSize() ||
-            Phase != ThinOrFullLTOPhase::None)
-          return;
-        MPM.addPass(PPE42SizeCloneHelpersPass());
-        MPM.addPass(DeadArgumentEliminationPass());
-        MPM.addPass(PPE42SizeFinalizeHelpersPass());
-      });
+  PB.registerOptimizerEarlyEPCallback([](ModulePassManager &MPM,
+                                         OptimizationLevel Level,
+                                         ThinOrFullLTOPhase Phase) {
+    if (!EnablePPE42SizeIPA || Level == OptimizationLevel::O0 ||
+        Phase != ThinOrFullLTOPhase::None)
+      return;
+    MPM.addPass(PPE42SizeHelpersPass());
+  });
   PB.registerCGSCCOptimizerLateEPCallback(
       [](CGSCCPassManager &CGPM, OptimizationLevel Level) {
-        if (EnablePPE42SizeIPA && Level.isOptimizingForSize())
-          CGPM.addPass(ArgumentPromotionPass());
+        if (EnablePPE42SizeIPA && Level != OptimizationLevel::O0)
+          CGPM.addPass(PPE42SizeArgumentPromotionPass());
       });
 }
 
