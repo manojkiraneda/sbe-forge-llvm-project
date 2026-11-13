@@ -146,7 +146,7 @@ public:
     const MCSymbol *Sym = Target.getAddSym();
     if (!Sym || Target.getSubSym() || Target.getSpecifier() ||
         !Sym->isInSection() || &Sym->getSection() != F.getParent() ||
-        cast<MCSymbolELF>(Sym)->getBinding() == ELF::STB_WEAK)
+        static_cast<const MCSymbolELF *>(Sym)->getBinding() == ELF::STB_WEAK)
       return false;
 
     Value = Asm->getSymbolOffset(*Sym) + Target.getConstant() -
