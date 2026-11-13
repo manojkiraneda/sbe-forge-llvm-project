@@ -30,8 +30,6 @@ namespace llvm {
     MCSection *SelectSectionForGlobal(const GlobalObject *GO, SectionKind Kind,
                                       const TargetMachine &TM) const override;
 
-    void getModuleMetadata(Module &M) override;
-
     bool isGlobalInSmallSection(const GlobalValue *GV,
                                 const TargetMachine &TM) const;
     bool isGlobalInReadOnlySmallSection(const GlobalValue *GV,

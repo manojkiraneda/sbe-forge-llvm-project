@@ -29,6 +29,9 @@ void PPC64LinuxTargetObjectFile::initialize(MCContext &Ctx,
       ".sbss", ELF::SHT_NOBITS, ELF::SHF_WRITE | ELF::SHF_ALLOC);
   SmallData2Section =
       Ctx.getELFSection(".sdata2", ELF::SHT_PROGBITS, ELF::SHF_ALLOC);
+  SSThreshold = 0;
+  if (Metadata *Limit = M.getModuleFlag("SmallDataLimit"))
+    SSThreshold = mdconst::extract<ConstantInt>(Limit)->getZExtValue();
 }
 
 bool PPC64LinuxTargetObjectFile::isGlobalInSmallSection(
@@ -110,18 +113,6 @@ MCSection *PPC64LinuxTargetObjectFile::SelectSectionForGlobal(
   }
 
   return TargetLoweringObjectFileELF::SelectSectionForGlobal(GO, Kind, TM);
-}
-
-void PPC64LinuxTargetObjectFile::getModuleMetadata(Module &M) {
-  TargetLoweringObjectFileELF::getModuleMetadata(M);
-  SmallVector<Module::ModuleFlagEntry, 8> ModuleFlags;
-  M.getModuleFlagsMetadata(ModuleFlags);
-  for (const auto &MFE : ModuleFlags) {
-    if (MFE.Key->getString() == "SmallDataLimit") {
-      SSThreshold = mdconst::extract<ConstantInt>(MFE.Val)->getZExtValue();
-      break;
-    }
-  }
 }
 
 const MCExpr *PPC64LinuxTargetObjectFile::

@@ -1571,7 +1571,7 @@ bool PPCAsmParser::parseOperand(OperandVector &Operands) {
         SMLoc End = getParser().getTok().getEndLoc();
         getParser().Lex();
         Operands.push_back(
-            PPCOperand::CreateImm(IntVal, S, End, isPPC64()));
+            PPCOperand::CreateImm(IntVal, S, End, isPPC64(), getContext()));
         return false;
       }
     }
