@@ -1,4 +1,4 @@
-; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -passes='default<Os>' %s | FileCheck %s
+; RUN: opt -S -mtriple=powerpc-unknown-elf -mcpu=ppe42 -passes='default<O2>' %s | FileCheck %s
 
 ; The IR looks like a 64-bit read/modify/write, but PPE42 lowers this
 ; full-byte replacement to one stb. Calls to a shared helper cost more.

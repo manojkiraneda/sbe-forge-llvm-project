@@ -683,7 +683,7 @@ public:
           for (auto [High, Low] : Pairs) {
             MachineInstrBuilder Store =
                 BuildMI(MBB, *High, High->getDebugLoc(), TII.get(PPC::STVD))
-                    .addReg(Pair, getKillRegState(High == Pairs.back().first))
+                    .addReg(Pair)
                     .addImm(High->getOperand(1).getImm());
             const MachineOperand &PairBase = High->getOperand(2);
             if (PairBase.isFI())
@@ -713,7 +713,7 @@ public:
         MachineInstrBuilder Store =
             BuildMI(MBB, FirstStore, FirstStore.getDebugLoc(),
                     TII.get(PPC::STVD))
-                .addReg(Pair, RegState::Kill)
+                .addReg(Pair)
                 .addImm(Offset);
         if (Base.isFI())
           Store.addFrameIndex(Base.getIndex());

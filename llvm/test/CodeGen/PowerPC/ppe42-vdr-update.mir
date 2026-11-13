@@ -195,7 +195,7 @@ body: |
     %3:vdrc = LVD 8, %1 :: (load (s64) from %ir.p, align 8)
     $r3_r4 = COPY %3
     %5:crrc = CMPLWI %2, 0
-    BCC 68, killed %5, %bb.1
+    BCC 68, %5, %bb.1
     B %bb.2
   bb.2:
     %4:gprc = nuw nsw ADDI %1, 16
@@ -220,7 +220,7 @@ body: |
     %2:gprc_and_gprc_nor0 = ADDI %1, 8
     STVD %3, 8, %1 :: (store (s64) into %ir.p, align 8)
     %5:crrc = CMPLWI %2, 0
-    BCC 68, killed %5, %bb.1
+    BCC 68, %5, %bb.1
     B %bb.2
   bb.2:
     %4:gprc = ADDI %1, 16
@@ -246,7 +246,7 @@ body: |
     %3:vdrc = LVD 8, %1 :: (load (s64) from %ir.p, align 8)
     $r3_r4 = COPY %3
     %5:crrc = CMPLWI %2, 0
-    BCC 68, killed %5, %bb.1
+    BCC 68, %5, %bb.1
     B %bb.2
   bb.2:
     %4:gprc = ADDI %1, -32768
@@ -272,7 +272,7 @@ body: |
     %3:vdrc = LVD 8, %1 :: (load (s64) from %ir.p, align 8)
     $r3_r4 = COPY %3
     %5:crrc = CMPLWI %2, 0
-    BCC 68, killed %5, %bb.1
+    BCC 68, %5, %bb.1
     B %bb.2
   bb.2:
     %4:gprc = ADDI %1, 16

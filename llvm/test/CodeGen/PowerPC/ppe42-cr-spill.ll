@@ -21,7 +21,7 @@ define void @reuse(i32 %a, i32 %b) optsize {
 ; MIR: CMPLWI %[[INPUT:[0-9]+]], 0
 ; MIR: bb.2.late:
 ; MIR: %[[COPY:[0-9]+]]:crrc = CMPLWI %[[INPUT]], 0
-; MIR-NEXT: BCC 76, killed %[[COPY]],
+; MIR-NEXT: BCC 76, %[[COPY]],
 entry:
   %c = icmp eq i32 %a, 0
   br i1 %c, label %late, label %middle
