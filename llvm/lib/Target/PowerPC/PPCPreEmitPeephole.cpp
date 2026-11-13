@@ -370,7 +370,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
           LiveRegUnits Live(TRI);
           Live.addLiveOuts(MBB);
           for (auto K = MBB.rbegin(); &*K != &MI; ++K)
-            Live.stepBackward(*K);
+            if (!K->isDebugInstr())
+              Live.stepBackward(*K);
           bool Dead = true;
           for (const auto &KV : Values) {
             if (KV.first == Dst)
@@ -450,7 +451,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         LiveRegUnits Live(TRI);
         Live.addLiveOuts(MBB);
         for (auto K = MBB.rbegin(); &*K != &Mem; ++K)
-          Live.stepBackward(*K);
+          if (!K->isDebugInstr())
+            Live.stepBackward(*K);
         if (!Mem.modifiesRegister(Address, &TRI) && !Live.available(Address))
           continue;
         // Do not invalidate a debug location for the removed address value.
@@ -599,7 +601,8 @@ static bool hasPCRelativeForm(MachineInstr &Use) {
         LiveRegUnits Live(TRI);
         Live.addLiveOuts(MBB);
         for (auto I = MBB.rbegin(); &*I != &Copy; ++I)
-          Live.stepBackward(*I);
+          if (!I->isDebugInstr())
+            Live.stepBackward(*I);
         if (!Live.available(Tmp))
           continue;
         auto I = Copy.getIterator();
