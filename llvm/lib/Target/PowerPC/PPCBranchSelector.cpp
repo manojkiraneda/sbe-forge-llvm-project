@@ -426,19 +426,20 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
       // A single fixed-width access is precise even when its operands differ
       // from the common templates below. Reject separators and directives.
       auto Mnemonic = Asm.take_until([](char C) { return C == ' ' || C == '\t'; });
-      bool FixedAccess = StringSwitch<bool>(Mnemonic)
-                             .Cases("lbz", "lhz", "lwz", "stb", "sth", "stw", true)
-                             .Cases("lvd", "stvd", "mfspr", "mtspr", true)
-                             .Cases("mfmsr", "mtmsr", "wrteei", true)
-                             .Default(false);
+      bool FixedAccess =
+          StringSwitch<bool>(Mnemonic)
+              .Cases({"lbz", "lhz", "lwz", "stb", "sth", "stw"}, true)
+              .Cases({"lvd", "stvd", "mfspr", "mtspr"}, true)
+              .Cases({"mfmsr", "mtmsr", "wrteei"}, true)
+              .Default(false);
       if (FixedAccess && Asm.find_first_of("\n\r;#.") == StringRef::npos)
         return false;
       return !StringSwitch<bool>(Asm)
-                  .Cases("nop", "trap", "sync", "isync", "eieio", true)
-                  .Cases("tw 31, $0, $1", "tw 0, $0, $1", "tw 0, 0, 0", true)
-                  .Cases("mfmsr $0", "mtmsr $0", "wrteei $0", true)
-                  .Cases("mfspr $0, $1", "mtspr $0, $1", true)
-                  .Cases("lvd $0, 0($1)", "stvd $0, 0($1)", "stvd $0, 0($2)",
+                  .Cases({"nop", "trap", "sync", "isync", "eieio"}, true)
+                  .Cases({"tw 31, $0, $1", "tw 0, $0, $1", "tw 0, 0, 0"}, true)
+                  .Cases({"mfmsr $0", "mtmsr $0", "wrteei $0"}, true)
+                  .Cases({"mfspr $0, $1", "mtspr $0, $1"}, true)
+                  .Cases({"lvd $0, 0($1)", "stvd $0, 0($1)", "stvd $0, 0($2)"},
                          true)
                   .Default(false);
     });
@@ -750,7 +751,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           PX ^= 1;
         BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
             .addImm(PX)
-            .addReg(SrcReg, IsDeadAfter(Br, SrcReg) ? RegState::Kill : 0)
+            .addReg(SrcReg, getKillRegState(IsDeadAfter(Br, SrcReg)))
             .addImm(Bit)
             .addMBB(Br.getOperand(DestOp).getMBB());
         Mask.eraseFromParent();
@@ -839,9 +840,9 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             .addImm(PX)
             .addImm(BIX)
             .addReg(Cmp.getOperand(1).getReg(),
-                    Cmp.getOperand(1).isKill() ? RegState::Kill : 0)
+                    getKillRegState(Cmp.getOperand(1).isKill()))
             .addReg(Cmp.getOperand(2).getReg(),
-                    Cmp.getOperand(2).isKill() ? RegState::Kill : 0)
+                    getKillRegState(Cmp.getOperand(2).isKill()))
             .addMBB(Br.getOperand(DestOp).getMBB());
         Cmp.eraseFromParent();
         Br.eraseFromParent();
@@ -1001,7 +1002,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
             .addImm(PX)
             .addImm(BIX)
             .addReg(Cmp.getOperand(1).getReg(),
-                    Cmp.getOperand(1).isKill() ? RegState::Kill : 0)
+                    getKillRegState(Cmp.getOperand(1).isKill()))
             .addImm(Immediate)
             .addMBB(Br.getOperand(DestOp).getMBB());
         Cmp.eraseFromParent();
@@ -1090,7 +1091,7 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
           uint32_t BitMask = uint32_t(1) << Bit;
           BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::BNBWI))
               .addImm(bool(Expected & BitMask))
-              .addReg(Src, N == 1 && IsDeadAfter(Br, Src) ? RegState::Kill : 0)
+              .addReg(Src, getKillRegState(N == 1 && IsDeadAfter(Br, Src)))
               .addImm(31 - Bit)
               .addMBB(Dest);
           Bits &= ~BitMask;
@@ -1263,13 +1264,13 @@ bool PPCBSel::runOnMachineFunction(MachineFunction &Fn) {
         // Relational CR bits are different at signed overflow boundaries.
         if (!Fn.getRegInfo().tracksLiveness() || !Live.available(PPC::CR0))
           continue;
-        unsigned DefFlags = RegState::Define;
+        RegState DefFlags = RegState::Define;
         if (Live.available(R))
           DefFlags |= RegState::Dead;
         BuildMI(MBB, Br.getIterator(), Br.getDebugLoc(), TII->get(PPC::SUBWIBC))
             .addReg(R, DefFlags)
             .addImm(Br.getOperand(0).getImm())
-            .addReg(R, Dec.getOperand(1).isKill() ? RegState::Kill : 0)
+            .addReg(R, getKillRegState(Dec.getOperand(1).isKill()))
             .addImm(Amount)
             .addMBB(Br.getOperand(4).getMBB());
         Dec.eraseFromParent();
