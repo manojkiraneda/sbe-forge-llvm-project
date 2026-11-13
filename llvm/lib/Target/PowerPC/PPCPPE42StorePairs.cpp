@@ -683,8 +683,7 @@ public:
           for (auto [High, Low] : Pairs) {
             MachineInstrBuilder Store =
                 BuildMI(MBB, *High, High->getDebugLoc(), TII.get(PPC::STVD))
-                    .addReg(Pair,
-                            High == Pairs.back().first ? RegState::Kill : 0)
+                    .addReg(Pair, getKillRegState(High == Pairs.back().first))
                     .addImm(High->getOperand(1).getImm());
             const MachineOperand &PairBase = High->getOperand(2);
             if (PairBase.isFI())
@@ -720,7 +719,7 @@ public:
           Store.addFrameIndex(Base.getIndex());
         else
           Store.addReg(Base.getReg(),
-                       SecondStore.getOperand(2).isKill() ? RegState::Kill : 0);
+                       getKillRegState(SecondStore.getOperand(2).isKill()));
         Store.addMemOperand(HiMem).addMemOperand(LoMem);
         I = std::next(Next);
         HiStore.eraseFromParent();
@@ -972,8 +971,7 @@ public:
             BuildMI(MBB, Mem, Mem.getDebugLoc(), TII.get(UpdateOpcode));
         if (IsLoad)
           Update.addReg(Mem.getOperand(0).getReg(),
-                        RegState::Define |
-                            (IsPair ? RegState::EarlyClobber : 0));
+                        RegState::Define | getEarlyClobberRegState(IsPair));
         Update.addReg(Address, RegState::Define);
         if (!IsLoad)
           Update.add(Mem.getOperand(0));
