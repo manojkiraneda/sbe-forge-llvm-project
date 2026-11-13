@@ -132,7 +132,7 @@ bool PPCPPE42InlineAsm::runOnMachineFunction(MachineFunction &MF) {
                 .addImm(Second);
             NewMI.addReg(Tuple);
           } else {
-            unsigned Flags = RegState::Define;
+            RegState Flags = RegState::Define;
             if (F.isRegDefEarlyClobberKind())
               Flags |= RegState::EarlyClobber;
             NewMI.addReg(Tuple, Flags);
