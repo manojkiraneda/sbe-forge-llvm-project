@@ -25,7 +25,7 @@ body: |
     ; CHECK: STW %0, 0, $r13
     %0:gprc = LI 0
     %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
-    STVD killed %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
+    STVD %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
     ADJCALLSTACKDOWN 8, 0, implicit-def dead $r1, implicit $r1
     BL @clobber, csr_svr432, implicit-def dead $lr, implicit $rm, implicit-def $r1
     ADJCALLSTACKUP 8, 0, implicit-def dead $r1, implicit $r1
@@ -45,7 +45,7 @@ body: |
     ; CHECK: BLR
     %0:gprc = LI 0
     %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
-    STVD killed %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
+    STVD %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
     STW %0, 8, $r5 :: (store (s32) into %ir.p + 8)
     BLR implicit $lr, implicit undef $rm
 ...
@@ -65,7 +65,7 @@ body: |
     ; CHECK: BLR
     %0:gprc = LI 0
     %1:vdrc = REG_SEQUENCE %0, %subreg.sub_gpr_hi, %0, %subreg.sub_gpr_lo
-    STVD killed %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
+    STVD %1, 0, $r5 :: (store (s64) into %ir.p, align 8)
     ADJCALLSTACKDOWN 8, 0, implicit-def dead $r1, implicit $r1
     BL @clobber, csr_svr432, implicit-def dead $lr, implicit $rm, implicit-def $r1
     ADJCALLSTACKUP 8, 0, implicit-def dead $r1, implicit $r1
