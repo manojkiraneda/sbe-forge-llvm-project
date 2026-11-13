@@ -143,7 +143,9 @@ public:
         Copy->setDebugLoc(Use->getDebugLoc());
         Use->getParent()->insert(Use->getIterator(), Copy);
         Use->getOperand(1).setReg(NewCR);
-        Use->getOperand(1).setIsKill(true);
+        // Virtual-register liveness is computed from SSA uses/live intervals;
+        // current LLVM forbids explicit kill flags on virtual registers.
+        Use->getOperand(1).setIsKill(false);
         MRI.clearKillFlags(Input);
         MRI.clearKillFlags(CR);
         Changed = true;

@@ -23,19 +23,19 @@ body: |
   bb.1:
     successors: %bb.2, %bb.19
     %3:crrc = CMPLWI %1, 2
-    BCC 76, killed %3, %bb.19
+    BCC 76, %3, %bb.19
     B %bb.2
   bb.2:
     successors: %bb.3, %bb.19
     ; CHECK: bb.2:
     ; CHECK: %[[CR:[0-9]+]]:crrc = CMPLWI %0, 1
-    ; CHECK-NEXT: BCC 76, killed %[[CR]],
+    ; CHECK-NEXT: BCC 76, %[[CR]],
     BCC 76, %2, %bb.19
     B %bb.3
   bb.3:
     successors: %bb.4, %bb.19
     %4:crrc = CMPLWI %1, 3
-    BCC 76, killed %4, %bb.19
+    BCC 76, %4, %bb.19
     B %bb.4
   bb.4:
     successors: %bb.5, %bb.19
@@ -44,7 +44,7 @@ body: |
   bb.5:
     successors: %bb.6, %bb.19
     %5:crrc = CMPLWI %1, 4
-    BCC 76, killed %5, %bb.19
+    BCC 76, %5, %bb.19
     B %bb.6
   bb.6:
     successors: %bb.7, %bb.19
@@ -53,7 +53,7 @@ body: |
   bb.7:
     successors: %bb.8, %bb.19
     %6:crrc = CMPLWI %1, 5
-    BCC 76, killed %6, %bb.19
+    BCC 76, %6, %bb.19
     B %bb.8
   bb.8:
     successors: %bb.9, %bb.19
@@ -62,7 +62,7 @@ body: |
   bb.9:
     successors: %bb.10, %bb.19
     %7:crrc = CMPLWI %1, 6
-    BCC 76, killed %7, %bb.19
+    BCC 76, %7, %bb.19
     B %bb.10
   bb.10:
     successors: %bb.11, %bb.19
@@ -71,7 +71,7 @@ body: |
   bb.11:
     successors: %bb.12, %bb.19
     %8:crrc = CMPLWI %1, 7
-    BCC 76, killed %8, %bb.19
+    BCC 76, %8, %bb.19
     B %bb.12
   bb.12:
     successors: %bb.13, %bb.19
@@ -80,7 +80,7 @@ body: |
   bb.13:
     successors: %bb.14, %bb.19
     %9:crrc = CMPLWI %1, 8
-    BCC 76, killed %9, %bb.19
+    BCC 76, %9, %bb.19
     B %bb.14
   bb.14:
     successors: %bb.15, %bb.19
@@ -89,7 +89,7 @@ body: |
   bb.15:
     successors: %bb.16, %bb.19
     %10:crrc = CMPLWI %1, 9
-    BCC 76, killed %10, %bb.19
+    BCC 76, %10, %bb.19
     B %bb.16
   bb.16:
     successors: %bb.17, %bb.19
@@ -98,7 +98,7 @@ body: |
   bb.17:
     successors: %bb.18, %bb.19
     %11:crrc = CMPLWI %1, 10
-    BCC 76, killed %11, %bb.19
+    BCC 76, %11, %bb.19
     B %bb.18
   bb.18:
     successors: %bb.19
@@ -122,7 +122,7 @@ body: |
   bb.1:
     successors: %bb.2, %bb.33
     %3:crrc = CMPLWI %1, 2
-    BCC 76, killed %3, %bb.33
+    BCC 76, %3, %bb.33
     B %bb.2
   bb.2:
     successors: %bb.3, %bb.33
@@ -134,7 +134,7 @@ body: |
   bb.3:
     successors: %bb.4, %bb.33
     %4:crrc = CMPLWI %1, 3
-    BCC 76, killed %4, %bb.33
+    BCC 76, %4, %bb.33
     B %bb.4
   bb.4:
     successors: %bb.5, %bb.33
@@ -143,7 +143,7 @@ body: |
   bb.5:
     successors: %bb.6, %bb.33
     %5:crrc = CMPLWI %1, 4
-    BCC 76, killed %5, %bb.33
+    BCC 76, %5, %bb.33
     B %bb.6
   bb.6:
     successors: %bb.7, %bb.33
@@ -152,7 +152,7 @@ body: |
   bb.7:
     successors: %bb.8, %bb.33
     %6:crrc = CMPLWI %1, 5
-    BCC 76, killed %6, %bb.33
+    BCC 76, %6, %bb.33
     B %bb.8
   bb.8:
     successors: %bb.9, %bb.33
@@ -161,7 +161,7 @@ body: |
   bb.9:
     successors: %bb.10, %bb.33
     %7:crrc = CMPLWI %1, 6
-    BCC 76, killed %7, %bb.33
+    BCC 76, %7, %bb.33
     B %bb.10
   bb.10:
     successors: %bb.11, %bb.33
@@ -170,7 +170,7 @@ body: |
   bb.11:
     successors: %bb.12, %bb.33
     %8:crrc = CMPLWI %1, 7
-    BCC 76, killed %8, %bb.33
+    BCC 76, %8, %bb.33
     B %bb.12
   bb.12:
     successors: %bb.13, %bb.33
@@ -179,7 +179,7 @@ body: |
   bb.13:
     successors: %bb.14, %bb.33
     %9:crrc = CMPLWI %1, 8
-    BCC 76, killed %9, %bb.33
+    BCC 76, %9, %bb.33
     B %bb.14
   bb.14:
     successors: %bb.15, %bb.33
@@ -188,7 +188,7 @@ body: |
   bb.15:
     successors: %bb.16, %bb.33
     %10:crrc = CMPLWI %1, 9
-    BCC 76, killed %10, %bb.33
+    BCC 76, %10, %bb.33
     B %bb.16
   bb.16:
     successors: %bb.17, %bb.33
@@ -197,7 +197,7 @@ body: |
   bb.17:
     successors: %bb.18, %bb.33
     %11:crrc = CMPLWI %1, 10
-    BCC 76, killed %11, %bb.33
+    BCC 76, %11, %bb.33
     B %bb.18
   bb.18:
     successors: %bb.19, %bb.33
@@ -206,7 +206,7 @@ body: |
   bb.19:
     successors: %bb.20, %bb.33
     %12:crrc = CMPLWI %1, 11
-    BCC 76, killed %12, %bb.33
+    BCC 76, %12, %bb.33
     B %bb.20
   bb.20:
     successors: %bb.21, %bb.33
@@ -215,7 +215,7 @@ body: |
   bb.21:
     successors: %bb.22, %bb.33
     %13:crrc = CMPLWI %1, 12
-    BCC 76, killed %13, %bb.33
+    BCC 76, %13, %bb.33
     B %bb.22
   bb.22:
     successors: %bb.23, %bb.33
@@ -224,7 +224,7 @@ body: |
   bb.23:
     successors: %bb.24, %bb.33
     %14:crrc = CMPLWI %1, 13
-    BCC 76, killed %14, %bb.33
+    BCC 76, %14, %bb.33
     B %bb.24
   bb.24:
     successors: %bb.25, %bb.33
@@ -233,7 +233,7 @@ body: |
   bb.25:
     successors: %bb.26, %bb.33
     %15:crrc = CMPLWI %1, 14
-    BCC 76, killed %15, %bb.33
+    BCC 76, %15, %bb.33
     B %bb.26
   bb.26:
     successors: %bb.27, %bb.33
@@ -242,7 +242,7 @@ body: |
   bb.27:
     successors: %bb.28, %bb.33
     %16:crrc = CMPLWI %1, 15
-    BCC 76, killed %16, %bb.33
+    BCC 76, %16, %bb.33
     B %bb.28
   bb.28:
     successors: %bb.29, %bb.33
@@ -251,7 +251,7 @@ body: |
   bb.29:
     successors: %bb.30, %bb.33
     %17:crrc = CMPLWI %1, 16
-    BCC 76, killed %17, %bb.33
+    BCC 76, %17, %bb.33
     B %bb.30
   bb.30:
     successors: %bb.31, %bb.33
@@ -260,7 +260,7 @@ body: |
   bb.31:
     successors: %bb.32, %bb.33
     %18:crrc = CMPLWI %1, 17
-    BCC 76, killed %18, %bb.33
+    BCC 76, %18, %bb.33
     B %bb.32
   bb.32:
     successors: %bb.33
@@ -284,7 +284,7 @@ body: |
   bb.1:
     successors: %bb.2, %bb.82
     %3:crrc = CMPLWI %1, 2
-    BCC 76, killed %3, %bb.82
+    BCC 76, %3, %bb.82
     B %bb.2
   bb.2:
     successors: %bb.3
@@ -527,8 +527,8 @@ body: |
     successors: %bb.82
     ; CHECK: bb.81:
     ; CHECK: %[[LONG:[0-9]+]]:crrc = CMPLWI %0, 1
-    ; CHECK-NEXT: BCC 76, killed %[[LONG]],
-    BCC 76, killed %2, %bb.82
+    ; CHECK-NEXT: BCC 76, %[[LONG]],
+    BCC 76, %2, %bb.82
   bb.82:
     BLR implicit $lr, implicit undef $rm
 ...

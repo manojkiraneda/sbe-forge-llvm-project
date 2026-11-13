@@ -21,7 +21,7 @@ body: |
     %4:gprc = nuw nsw ADDI %2, 2
     STB %1, 1, %2 :: (store (s8) into %ir.p)
     %5:crrc = CMPLWI %1, 0
-    BCC 68, killed %5, %bb.1
+    BCC 68, %5, %bb.1
     B %bb.2
   bb.2:
     $r3 = COPY %4
@@ -46,7 +46,7 @@ body: |
     STW %4, 16, %0 :: (store (s32) into %ir.p)
     STB %1, 1, %2 :: (store (s8) into %ir.p)
     %5:crrc = CMPLWI %1, 0
-    BCC 68, killed %5, %bb.1
+    BCC 68, %5, %bb.1
     B %bb.2
   bb.2:
     $r3 = COPY %4

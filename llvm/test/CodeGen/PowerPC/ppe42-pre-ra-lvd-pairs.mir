@@ -176,8 +176,8 @@ body: |
     $r3 = COPY %0
     $r4 = COPY %1
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
-    $r3 = COPY killed %0
-    $r4 = COPY killed %1
+    $r3 = COPY %0
+    $r4 = COPY %1
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
     BLR implicit $lr, implicit $rm
 ...
@@ -193,12 +193,12 @@ body: |
     BL @get, csr_svr432, implicit-def dead $lr, implicit-def $r3, implicit-def $r4
     %0:gprc = COPY killed $r3
     %1:gprc = COPY killed $r4
-    %2:gprc = COPY killed %0
-    %3:gprc = COPY killed %1
+    %2:gprc = COPY %0
+    %3:gprc = COPY %1
     BL @check, csr_svr432, implicit-def dead $lr, implicit-def $r3
     %4:gprc = COPY killed $r3
-    %5:crrc = CMPLWI killed %4, 0
-    BCC 76, killed %5, %bb.2
+    %5:crrc = CMPLWI %4, 0
+    BCC 76, %5, %bb.2
     B %bb.1
   bb.1:
     successors: %bb.2(0x80000000)
@@ -208,8 +208,8 @@ body: |
     $r4 = COPY %3
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
   bb.2:
-    $r3 = COPY killed %2
-    $r4 = COPY killed %3
+    $r3 = COPY %2
+    $r4 = COPY %3
     BL @use, csr_svr432, implicit-def dead $lr, implicit killed $r3, implicit killed $r4
     BLR implicit $lr, implicit $rm
 ...
