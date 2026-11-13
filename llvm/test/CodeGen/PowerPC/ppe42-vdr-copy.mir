@@ -1,4 +1,4 @@
-# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=postrapseudos -verify-machineinstrs %s -o - | FileCheck %s
+# RUN: llc -mtriple=powerpc-unknown-elf -mcpu=ppe42 -run-pass=post-ra-pseudos -verify-machineinstrs %s -o - | FileCheck %s
 
 ---
 name: copy_disjoint
