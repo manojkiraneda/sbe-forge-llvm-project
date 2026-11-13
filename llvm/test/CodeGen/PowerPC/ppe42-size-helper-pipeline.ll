@@ -1,7 +1,9 @@
-; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -passes='default<Os>' -S %s | FileCheck %s
-; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -ppe42-size-ipa=false -passes='default<Os>' -S %s | FileCheck %s --check-prefix=DISABLED
-; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -passes='debugify,default<Os>,verify' -disable-output %s
+; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -passes='default<O2>' -S %s | FileCheck %s
+; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -ppe42-size-ipa=false -passes='default<O2>' -S %s | FileCheck %s --check-prefix=DISABLED
+; RUN: opt -mtriple=powerpc-none-eabi -mcpu=ppe42 -passes='debugify,default<O2>,verify' -disable-output %s
 
+; Size optimization is selected by the optsize attributes below; the
+; optimizer level itself is O2 on current LLVM.
 ; A template checking helper initially keeps 'this' live. Only after inlining
 ; that check can the size pass remove the unused pointer and group arguments.
 ; Exercise the normal pipeline rather than manually ordering the target pass.
