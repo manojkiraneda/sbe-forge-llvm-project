@@ -142,13 +142,12 @@ public:
     // two Boolean words and keeping a high-word CR live over a low-word
     // comparison. Freeze each operand once: a split must not choose different
     // values for separate uses of an undef input.
-    SmallVector<BranchInst *, 8> Branches;
+    SmallVector<CondBrInst *, 8> Branches;
     if (F.hasOptSize())
       for (BasicBlock &BB : F)
-        if (auto *Br = dyn_cast<BranchInst>(BB.getTerminator()))
-          if (Br->isConditional())
-            Branches.push_back(Br);
-    for (BranchInst *Br : Branches) {
+        if (auto *Br = dyn_cast<CondBrInst>(BB.getTerminator()))
+          Branches.push_back(Br);
+    for (CondBrInst *Br : Branches) {
       auto *Cmp = dyn_cast<ICmpInst>(Br->getCondition());
       if (!Cmp || !Cmp->hasOneUse() || !Cmp->isRelational() ||
           !Cmp->getOperand(0)->getType()->isIntegerTy(64) ||
