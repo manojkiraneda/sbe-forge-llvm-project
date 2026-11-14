@@ -165,22 +165,66 @@ def prepare(repo, config, report, force=False):
     return data
 
 
-def candidate_inputs(config, run, repository):
+def stage_ci(repo, config, result):
+    """Keep compiler builds in one branch scope without changing candidate refs."""
+    branch = config["ci_branch"]
+    if (not branch.startswith("automation/") or
+        branch == config["candidate_prefix"] or
+        branch.startswith(config["candidate_prefix"] + "/") or
+        branch in (config["mirror_branch"], config["downstream_branch"]) or
+        git(repo, "check-ref-format", "refs/heads/" + branch, check=False).returncode):
+        raise RebaseError("CI branch must be a separate automation branch")
+    candidate, tested = result["candidate"], result["candidate_sha"]
+    published = git(repo, "ls-remote", "--heads", "origin",
+                    "refs/heads/" + candidate).stdout.split()
+    if not published or published[0] != tested:
+        raise RebaseError("Candidate moved before CI staging")
+    ref = "refs/heads/" + branch
+    previous = git(repo, "ls-remote", "--heads", "origin", ref).stdout.split()
+    old = previous[0] if previous else ""
+    if old != tested:
+        git(repo, "push", f"--force-with-lease={ref}:{old}",
+            "origin", f"{tested}:{ref}")
+    return branch
+
+
+def validate_run(config, run, repository):
     if (run.get("event") != "workflow_dispatch" or
         run.get("status") != "completed" or run.get("conclusion") != "success" or
         run.get("head_repository", {}).get("full_name") != repository or
         run.get("path") != ".github/workflows/" + config["ci_workflow"]):
         raise RebaseError("Run is not a successful same-repository candidate toolchain dispatch")
-    match = re.fullmatch(re.escape(config["candidate_prefix"]) +
-                         r"/([0-9a-f]{40})-([0-9a-f]{40})", run.get("head_branch", ""))
-    if not match or not re.fullmatch(r"[0-9a-f]{40}", run.get("head_sha", "")):
+    if not re.fullmatch(r"[0-9a-f]{40}", run.get("head_sha", "")):
         raise RebaseError("Run has an invalid candidate name or commit")
     if not isinstance(run.get("id"), int):
         raise RebaseError("Run has no numeric ID")
+
+
+def candidate_inputs(config, run, repository):
+    validate_run(config, run, repository)
+    match = re.fullmatch(re.escape(config["candidate_prefix"]) +
+                         r"/([0-9a-f]{40})-([0-9a-f]{40})", run.get("head_branch", ""))
+    if not match:
+        raise RebaseError("Run has an invalid candidate name or commit")
     return match.groups()
 
 
 def promote(repo, config, report, run, repository):
+    validate_run(config, run, repository)
+    ci_branch = run["head_branch"]
+    if ci_branch == config.get("ci_branch"):
+        # The fixed CI ref may already point at a later night's build. Bind
+        # this run to its immutable candidate using GitHub's recorded head SHA,
+        # never the current tip of the moving CI branch.
+        refs = git(repo, "ls-remote", "--heads", "origin",
+                   f'refs/heads/{config["candidate_prefix"]}/*').stdout
+        candidates = [ref.removeprefix("refs/heads/")
+                      for line in refs.splitlines()
+                      for commit, ref in [line.split()]
+                      if commit == run["head_sha"]]
+        if len(candidates) != 1:
+            raise RebaseError("Tested SHA must match exactly one immutable candidate")
+        run = {**run, "head_branch": candidates[0]}
     upstream, old_next = candidate_inputs(config, run, repository)
     downstream, candidate = config["downstream_branch"], run["head_branch"]
     fetch(repo, "origin", [f"+refs/heads/{b}:{origin_ref(b)}"
@@ -192,7 +236,8 @@ def promote(repo, config, report, run, repository):
         raise RebaseError("Candidate upstream snapshot is not in candidate and mirror")
     current = sha(repo, origin_ref(downstream))
     data = {"state": "already-promoted", "old_next": old_next, "candidate_sha": tested,
-            "ci_run": run["id"], "upstream": upstream}
+            "ci_run": run["id"], "upstream": upstream, "ci_branch": ci_branch,
+            "candidate": candidate}
     if current == tested:
         save(report, data)
         return data
@@ -224,6 +269,9 @@ def main():
     try:
         if args.mode == "prepare":
             result = prepare(args.repo, config, report, args.force)
+            if result["state"] == "candidate":
+                result["ci_branch"] = stage_ci(args.repo, config, result)
+                save(report, result)
         else:
             if not args.repository or not args.run_id:
                 parser.error("promotion requires --repository and --run-id")
@@ -233,7 +281,7 @@ def main():
         output = os.environ.get("GITHUB_OUTPUT")
         if output:
             with open(output, "a") as stream:
-                for key in ("state", "candidate", "candidate_sha"):
+                for key in ("state", "candidate", "candidate_sha", "ci_branch"):
                     if key in result:
                         stream.write(f"{key}={result[key]}\n")
         print(json.dumps(result, indent=2))
