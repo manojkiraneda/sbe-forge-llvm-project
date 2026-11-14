@@ -80,9 +80,10 @@ jobs:
         if: steps.candidate.outputs.state == 'candidate'
         env:
           CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+          CI_BRANCH: ${{ steps.candidate.outputs.ci_branch }}
         run: |
-          gh workflow run ppe42-toolchain.yml --repo "$GITHUB_REPOSITORY" --ref "$CANDIDATE"
-          printf 'Candidate `%s` was dispatched to toolchain CI. Promotion is automatic after success.\n' "$CANDIDATE" >> "$GITHUB_STEP_SUMMARY"
+          gh workflow run ppe42-toolchain.yml --repo "$GITHUB_REPOSITORY" --ref "$CI_BRANCH"
+          printf 'Candidate `%s` was staged on `%s` and dispatched to toolchain CI. Promotion is automatic after success.\n' "$CANDIDATE" "$CI_BRANCH" >> "$GITHUB_STEP_SUMMARY"
       - name: Record no-op
         if: steps.candidate.outputs.state == 'noop'
         run: echo 'llvm-next already contains upstream main; no build needed.' >> "$GITHUB_STEP_SUMMARY"

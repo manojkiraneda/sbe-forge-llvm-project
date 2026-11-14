@@ -17,7 +17,8 @@ jobs:
     if: >-
       github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
-      startsWith(github.event.workflow_run.head_branch, 'automation/ppe42-rebase/')
+      (github.event.workflow_run.head_branch == 'automation/ppe42-build' ||
+       startsWith(github.event.workflow_run.head_branch, 'automation/ppe42-rebase/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

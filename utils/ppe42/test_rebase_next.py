@@ -1,8 +1,10 @@
 """End-to-end controller tests using tiny local repositories, never LLVM builds."""
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -36,7 +38,7 @@ class RebaseTests(unittest.TestCase):
             'upstream_url': str(self.upstream), 'upstream_ref': 'refs/heads/main',
             'mirror_branch': 'main', 'downstream_branch': 'ppe42/llvm-next',
             'candidate_prefix': 'automation/ppe42-rebase', 'backup_prefix': 'ppe42-next-backup',
-            'ci_workflow': 'ppe42-toolchain.yml'}
+            'ci_workflow': 'ppe42-toolchain.yml', 'ci_branch': 'automation/ppe42-build'}
         self.repository = 'example/compiler'
 
     def commit(self, repo, name, content):
@@ -105,6 +107,112 @@ class RebaseTests(unittest.TestCase):
         result = self.prepare(force=True)
         self.assertEqual(result['state'], 'candidate')
         self.assertEqual(result['candidate_sha'], self.original)
+
+    def test_nightly_builds_reuse_one_ci_branch(self):
+        self.advance()
+        first = self.prepare()
+        branch = bot.stage_ci(self.repo, self.config, first)
+        self.assertEqual(branch, 'automation/ppe42-build')
+        self.assertEqual(self.remote_sha(branch), first['candidate_sha'])
+        self.assertEqual(bot.stage_ci(self.repo, self.config, first), branch)
+        self.commit(self.upstream, 'another-day', 'next upstream snapshot\n')
+        second = self.prepare()
+        self.assertEqual(bot.stage_ci(self.repo, self.config, second), branch)
+        self.assertEqual(self.remote_sha(branch), second['candidate_sha'])
+        self.assertNotEqual(first['candidate'], second['candidate'])
+        self.assertEqual(self.remote_sha(first['candidate']), first['candidate_sha'])
+        self.assertEqual(self.remote_sha('ppe42/llvm-next'), self.original)
+
+    def test_prepare_cli_emits_stable_dispatch_ref(self):
+        self.advance()
+        config_file = self.root / 'config.json'
+        config_file.write_text(json.dumps(self.config))
+        output = self.root / 'github-output'
+        result = subprocess.run(
+            [sys.executable, bot.__file__, 'prepare', '--repo', str(self.repo),
+             '--config', str(config_file), '--report', str(self.root / 'cli-report')],
+            text=True, capture_output=True,
+            env={**os.environ, 'GITHUB_OUTPUT': str(output)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual(data['ci_branch'], self.config['ci_branch'])
+        self.assertIn('ci_branch=' + self.config['ci_branch'], output.read_text())
+        self.assertEqual(self.remote_sha(data['ci_branch']), data['candidate_sha'])
+        self.assertEqual(self.remote_sha('ppe42/llvm-next'), self.original)
+
+    def test_stable_ci_branch_promotes_exact_tested_candidate(self):
+        self.advance()
+        result = self.prepare()
+        branch = bot.stage_ci(self.repo, self.config, result)
+        run = self.run_for(result)
+        run['head_branch'] = branch
+        # A later dispatch can move the CI branch without changing the source
+        # snapshot recorded by GitHub for the completed run.
+        bot.git(self.repo, 'push', 'origin', '+' + self.original + ':refs/heads/' + branch)
+        promoted = self.promote(run)
+        self.assertEqual(promoted['state'], 'promoted')
+        self.assertEqual(promoted['candidate'], result['candidate'])
+        self.assertEqual(promoted['ci_branch'], branch)
+        self.assertEqual(self.remote_sha('ppe42/llvm-next'), run['head_sha'])
+        self.assertEqual(self.promote(run)['state'], 'already-promoted')
+
+    def test_stable_ci_requires_an_immutable_candidate(self):
+        self.advance()
+        result = self.prepare()
+        run = self.run_for(result)
+        run['head_branch'] = self.config['ci_branch']
+        run['head_sha'] = self.original
+        with self.assertRaisesRegex(bot.RebaseError, 'exactly one immutable candidate'):
+            self.promote(run)
+        self.assertEqual(self.remote_sha('ppe42/llvm-next'), self.original)
+
+    def test_stable_ci_rejects_ambiguous_candidate(self):
+        self.advance()
+        result = self.prepare()
+        alias = self.config['candidate_prefix'] + '/' + self.base + '-' + self.original
+        bot.git(self.repo, 'push', 'origin', result['candidate_sha'] + ':refs/heads/' + alias)
+        run = self.run_for(result)
+        run['head_branch'] = self.config['ci_branch']
+        with self.assertRaisesRegex(bot.RebaseError, 'exactly one immutable candidate'):
+            self.promote(run)
+
+    def test_stable_ci_rejects_failed_or_foreign_runs(self):
+        self.advance()
+        result = self.prepare()
+        run = self.run_for(result)
+        run['head_branch'] = self.config['ci_branch']
+        for key, value in [('conclusion', 'failure'), ('event', 'push'),
+                           ('head_repository', {'full_name': 'untrusted/fork'})]:
+            invalid = {**run, key: value}
+            with self.subTest(key=key), self.assertRaises(bot.RebaseError):
+                self.promote(invalid)
+
+    def test_ci_staging_rejects_moved_candidate(self):
+        self.advance()
+        result = self.prepare()
+        bot.git(self.repo, 'push', 'origin', '+' + self.original + ':refs/heads/' + result['candidate'])
+        with self.assertRaisesRegex(bot.RebaseError, 'moved before CI staging'):
+            bot.stage_ci(self.repo, self.config, result)
+
+    def test_ci_staging_cannot_rewrite_source_branches(self):
+        result = self.prepare(force=True)
+        for branch in ['main', 'ppe42/llvm-next', 'ppe42/llvm-21', result['candidate'],
+                       'automation/../bad']:
+            with self.subTest(branch=branch), self.assertRaises(bot.RebaseError):
+                bot.stage_ci(self.repo, {**self.config, 'ci_branch': branch}, result)
+
+    def test_ci_staging_lease_rejects_race(self):
+        self.advance()
+        result = self.prepare()
+        real_git = bot.git
+        ref = 'refs/heads/' + self.config['ci_branch']
+        def raced(repo, *args, **kwargs):
+            if args[:2] == ('push', '--force-with-lease=' + ref + ':'):
+                real_git(self.repo, 'push', 'origin', self.original + ':' + ref)
+            return real_git(repo, *args, **kwargs)
+        with patch.object(bot, 'git', side_effect=raced), self.assertRaises(bot.RebaseError):
+            bot.stage_ci(self.repo, self.config, result)
+        self.assertEqual(self.remote_sha(ref), self.original)
 
     def test_conflict_keeps_next_and_saves_report(self):
         bot.git(self.repo, 'switch', 'ppe42/llvm-next')
