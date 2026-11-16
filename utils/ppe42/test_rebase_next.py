@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -94,6 +95,84 @@ class RebaseTests(unittest.TestCase):
         self.assertEqual(self.prepare()['state'], 'candidate')
         self.assertEqual(bot.git(self.repo, 'rev-parse', '--is-shallow-repository').stdout.strip(),
                          'false')
+
+    def test_cached_bare_history_prepares_and_promotes(self):
+        controller = self.repo
+        history = self.root / 'history.git'
+        bot.initialize_history(history, controller)
+        self.repo = history
+        self.advance()
+        result = self.prepare()
+        bot.stage_ci(self.repo, self.config, result)
+        run = self.run_for(result)
+        run['head_branch'] = self.config['ci_branch']
+        self.assertEqual(self.promote(run)['state'], 'promoted')
+        self.assertEqual(self.remote_sha('ppe42/llvm-next'), result['candidate_sha'])
+        self.assertEqual(bot.git(history, 'rev-parse', '--is-shallow-repository').stdout.strip(),
+                         'false')
+        self.assertEqual((history / 'rr-cache').resolve(),
+                         (controller / '.git/rr-cache').resolve())
+
+    def test_restored_objects_and_refs_are_incremental(self):
+        controller = self.repo
+        bot.git(self.remote, 'config', 'uploadpack.allowFilter', 'true')
+        bot.git(self.upstream, 'config', 'uploadpack.allowFilter', 'true')
+        bot.git(controller, 'remote', 'set-url', 'origin', self.remote.as_uri())
+        first = self.root / 'first-history.git'
+        bot.initialize_history(first, controller)
+        self.repo = first
+        self.advance()
+        old_blob = bot.git(self.upstream, 'rev-parse', 'HEAD:new-upstream').stdout.strip()
+        self.commit(self.upstream, 'new-upstream', 'changed upstream content\n')
+        # The fork already has these history objects, but neither filtered
+        # fetch nor the rebase needs this file's obsolete blob version.
+        bot.git(self.upstream, 'push', str(self.remote), 'main:main')
+        result = self.prepare()
+        bot.stage_ci(first, self.config, result)
+        missing = bot.git(first, 'rev-list', '--objects', '--missing=print', '--all').stdout
+        self.assertIn('?' + old_blob, missing)
+        restored = self.root / 'restored-history.git'
+        restored.mkdir()
+        # These are the exact paths stored by actions/cache. Configuration,
+        # credentials, hooks, worktrees and shallow boundaries are excluded.
+        for name in ('objects', 'refs', 'packed-refs'):
+            source = first / name
+            if source.is_dir():
+                shutil.copytree(source, restored / name)
+            elif source.exists():
+                shutil.copyfile(source, restored / name)
+        self.assertFalse((restored / 'config').exists())
+        bot.initialize_history(restored, controller)
+        self.assertEqual(bot.sha(restored, bot.origin_ref('main')),
+                         bot.sha(first, bot.origin_ref('main')))
+        self.assertEqual(bot.sha(restored, 'refs/remotes/ppe42-upstream/main'), result['upstream'])
+        self.assertEqual(bot.git(restored, 'cat-file', '-t', result['candidate_sha']).stdout.strip(),
+                         'commit')
+        # A blob omitted from the cached filtered packs must still lazy-fetch
+        # after rebuilding the uncached promisor/credential configuration.
+        self.assertEqual(bot.git(restored, 'cat-file', '-p', old_blob).stdout, 'upstream\n')
+        self.repo = restored
+        self.commit(self.upstream, 'next-day', 'small upstream increment\n')
+        real_git = bot.git
+        with patch.object(bot, 'git', wraps=real_git) as calls:
+            newer = self.prepare()
+        fetches = [call.args for call in calls.call_args_list if call.args[1] == 'fetch']
+        self.assertTrue(fetches)
+        self.assertTrue(all('--unshallow' not in args for args in fetches))
+        self.assertTrue(bot.ancestor(restored, newer['upstream'], newer['candidate_sha']))
+        bot.stage_ci(restored, self.config, newer)
+
+    def test_history_configuration_is_rebuilt_not_cached(self):
+        key = 'http.https://github.com/.extraheader'
+        bot.git(self.repo, 'config', key, 'AUTHORIZATION: test-only-header')
+        history = self.root / 'history.git'
+        bot.initialize_history(history, self.repo)
+        self.assertEqual(bot.git(history, 'config', '--get', key).stdout.strip(),
+                         'AUTHORIZATION: test-only-header')
+        self.assertEqual(bot.git(history, 'config', '--get', 'remote.origin.url').stdout.strip(),
+                         str(self.remote))
+        self.assertEqual(bot.git(history, 'config', '--get', 'remote.origin.promisor').stdout.strip(),
+                         'true')
 
     def test_retry_reuses_candidate(self):
         self.advance()

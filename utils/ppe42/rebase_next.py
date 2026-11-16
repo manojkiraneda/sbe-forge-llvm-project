@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 
 class RebaseError(RuntimeError):
@@ -14,13 +15,64 @@ class RebaseError(RuntimeError):
 
 
 def git(repo, *args, check=True):
-    result = subprocess.run(
-        ["git", "-C", str(repo), *args], text=True, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, env={**os.environ, "GIT_TERMINAL_PROMPT": "0",
-                                     "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"})
+    command = ["git", "-C", str(repo), *args]
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
+           "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"}
+    operation = next((arg for arg in args
+                      if arg in ("fetch", "push", "worktree", "rebase")), None)
+    if operation:
+        started = time.monotonic()
+        print(f"Git {operation}: started", file=sys.stderr, flush=True)
+        with subprocess.Popen(command, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, env=env) as process:
+            while True:
+                try:
+                    stdout, stderr = process.communicate(timeout=30)
+                    break
+                except subprocess.TimeoutExpired:
+                    print(f"Git {operation}: still running ({time.monotonic() - started:.0f}s)",
+                          file=sys.stderr, flush=True)
+            result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        print(f"Git {operation}: finished ({time.monotonic() - started:.1f}s, exit {result.returncode})",
+              file=sys.stderr, flush=True)
+    else:
+        result = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=env)
     if check and result.returncode:
         raise RebaseError(result.stderr.strip() or result.stdout.strip())
     return result
+
+
+def initialize_history(repo, controller):
+    """Rebuild uncached configuration around a cached bare object database."""
+    repo = repo.resolve()
+    repo.mkdir(parents=True, exist_ok=True)
+    git(repo, "init", "--bare", "--quiet")
+    remote = git(controller, "remote", "get-url", "origin").stdout.strip()
+    git(repo, "config", "remote.origin.url", remote)
+    git(repo, "config", "remote.origin.promisor", "true")
+    git(repo, "config", "remote.origin.partialclonefilter", "blob:none")
+    for key in ("user.name", "user.email"):
+        git(repo, "config", key, git(controller, "config", "--get", key).stdout.strip())
+    # Checkout's credential headers live only in runner-local configuration.
+    # Never include config, hooks, worktrees, or credentials in the cache.
+    headers = git(controller, "config", "--get-regexp", r"^http\..*\.extraheader$",
+                  check=False).stdout.splitlines()
+    for key in {header.split(" ", 1)[0] for header in headers}:
+        git(repo, "config", "--unset-all", key, check=False)
+    for header in headers:
+        key, value = header.split(" ", 1)
+        git(repo, "config", "--add", key, value)
+    common = Path(git(controller, "rev-parse", "--path-format=absolute",
+                      "--git-common-dir").stdout.strip())
+    resolutions = common / "rr-cache"
+    resolutions.mkdir(exist_ok=True)
+    link = repo / "rr-cache"
+    if link.is_symlink() and link.resolve() == resolutions.resolve():
+        return
+    if link.exists() or link.is_symlink():
+        raise RebaseError("Unexpected rerere cache in history repository")
+    link.symlink_to(resolutions, target_is_directory=True)
 
 
 def sha(repo, ref):
@@ -59,7 +111,12 @@ def prepare(repo, config, report, force=False):
     mirror, downstream = config["mirror_branch"], config["downstream_branch"]
     fetch(repo, "origin", [f"+refs/heads/{b}:{origin_ref(b)}"
                            for b in (mirror, downstream)])
-    fetch(repo, config["upstream_url"],
+    # Retain a named promisor remote so newly fetched upstream blobs can be
+    # obtained even before main has been pushed to the fork.
+    git(repo, "config", "remote.ppe42-upstream.url", config["upstream_url"])
+    git(repo, "config", "remote.ppe42-upstream.promisor", "true")
+    git(repo, "config", "remote.ppe42-upstream.partialclonefilter", "blob:none")
+    fetch(repo, "ppe42-upstream",
           [f'+{config["upstream_ref"]}:refs/remotes/ppe42-upstream/main'])
     old_main, old_next = sha(repo, origin_ref(mirror)), sha(repo, origin_ref(downstream))
     upstream = sha(repo, "refs/remotes/ppe42-upstream/main")
@@ -256,14 +313,20 @@ def promote(repo, config, report, run, repository):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["prepare", "promote"])
+    parser.add_argument("mode", choices=["initialize", "prepare", "promote"])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--config", type=Path, default=Path(".github/ppe42-rebase.json"))
-    parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--report", type=Path)
+    parser.add_argument("--controller", type=Path, default=Path.cwd())
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--run-id", type=int)
     args = parser.parse_args()
+    if args.mode == "initialize":
+        initialize_history(args.repo, args.controller)
+        return
+    if not args.report:
+        parser.error("--report is required for preparation and promotion")
     config = json.loads(args.config.read_text())
     report = args.report.resolve()
     try:

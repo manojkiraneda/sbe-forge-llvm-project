@@ -46,6 +46,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
       REPORT: /tmp/ppe42-rebase-${{ github.run_id }}
+      HISTORY_REPO: ${{ runner.temp }}/ppe42-rebase-history.git
     steps:
       - name: Check controller credential
         run: |
@@ -59,10 +60,24 @@ jobs:
           token: ${{ secrets.PPE42_REBASE_TOKEN }}
           fetch-depth: 1
           filter: blob:none
+          sparse-checkout: |
+            .github
+            utils/ppe42
       - name: Set bot identity
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Restore rebase Git history
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.HISTORY_REPO }}/objects
+            ${{ env.HISTORY_REPO }}/refs
+            ${{ env.HISTORY_REPO }}/packed-refs
+          key: ppe42-rebase-history-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ppe42-rebase-history-v1-${{ runner.os }}-
+      - name: Initialize runner-local history configuration
+        run: python3 utils/ppe42/rebase_next.py initialize --repo "$HISTORY_REPO"
       - uses: actions/cache/restore@v4
         with:
           path: .git/rr-cache
@@ -75,7 +90,7 @@ jobs:
         run: |
           args=()
           if [ "$FORCE" = true ]; then args+=(--force); fi
-          python3 utils/ppe42/rebase_next.py prepare --report "$REPORT" "${args[@]}"
+          python3 utils/ppe42/rebase_next.py prepare --repo "$HISTORY_REPO" --report "$REPORT" "${args[@]}"
       - name: Dispatch candidate compiler CI
         if: steps.candidate.outputs.state == 'candidate'
         env:
@@ -93,6 +108,15 @@ jobs:
         with:
           path: .git/rr-cache
           key: ppe42-rebase-rerere-v1-${{ github.run_id }}
+      - name: Save rebase Git history
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.HISTORY_REPO }}/objects
+            ${{ env.HISTORY_REPO }}/refs
+            ${{ env.HISTORY_REPO }}/packed-refs
+          key: ppe42-rebase-history-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Upload rebase report
         if: always()
         uses: actions/upload-artifact@v4
