@@ -6,7 +6,10 @@ on:
       - 'llvm/**'
       - 'clang/**'
       - 'lld/**'
+      - 'lldb/**'
+      - 'compiler-rt/lib/builtins/ppc/**'
       - '.github/workflows/ppe42-toolchain.yml'
+      - '.github/ppe42-toolchain-manifest.json'
   push:
     branches: ['ppe42/llvm-21']
     tags: ['ppe42-toolchain-v*']
@@ -22,11 +25,28 @@ concurrency:
 env:
   BUILD_DIR: build/ppe42
   PACKAGE_DIR: package/ppe42-toolchain
-  ASSET_NAME: sbe-ppe42-toolchain-linux-x86_64
 
 jobs:
   build-package-integration:
-    runs-on: ubuntu-24.04
+    name: Build and test (${{ matrix.host_arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host_arch: x86_64
+            runner: ubuntu-24.04
+            cache_suffix: ''
+            elf_machine: 'Advanced Micro Devices X86-64'
+          - host_arch: aarch64
+            runner: ubuntu-24.04-arm
+            cache_suffix: '-aarch64'
+            elf_machine: AArch64
+    runs-on: ${{ matrix.runner }}
+    env:
+      ASSET_NAME: sbe-ppe42-toolchain-linux-${{ matrix.host_arch }}
+      # Preserve the existing x86 cache keys. The ARM namespace cannot match
+      # either the x86 exact keys or their restore prefixes.
+      CACHE_NAMESPACE: ppe42${{ matrix.cache_suffix }}
     permissions:
       contents: write
       id-token: write
@@ -41,6 +61,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Verify native runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.host_arch }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+
       - name: Install build and integration dependencies
         run: |
           sudo apt-get update
@@ -51,7 +76,15 @@ jobs:
 
       - name: Prepare MLGO inliner model and TensorFlow AOT compiler
         run: |
-          python -m pip install 'tensorflow==2.15.1'
+          python -m pip install --only-binary=:all: 'tensorflow==2.15.1'
+          # Both host wheels must include the AOT compiler and runtime sources.
+          python - <<'PY'
+          from pathlib import Path
+          import tensorflow
+          from tensorflow.python import _pywrap_tfcompile
+          root = Path(tensorflow.__file__).parent
+          assert (root / 'xla_aot_runtime_src/CMakeLists.txt').is_file()
+          PY
           mkdir -p "$RUNNER_TEMP/ppe42-mlgo"
           curl --fail --location --retry 3 \
             https://github.com/google/ml-compiler-opt/releases/download/inlining-Oz-v1.1/inlining-Oz-99f0063-v1.1.tar.gz \
@@ -69,18 +102,24 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
-          key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
+          key: ${{ env.CACHE_NAMESPACE }}-ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ppe42-ccache-${{ runner.os }}-
+            ${{ env.CACHE_NAMESPACE }}-ccache-${{ runner.os }}-
 
       - name: Restore CMake and Ninja build tree
         id: build-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.BUILD_DIR }}
-          key: ppe42-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
+          key: ${{ env.CACHE_NAMESPACE }}-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ppe42-mlgo-build-v1-${{ runner.os }}-
+            ${{ env.CACHE_NAMESPACE }}-mlgo-build-v1-${{ runner.os }}-
+
+      - name: Record compiler cache configuration
+        id: cache-stats
+        run: |
+          ccache --show-config
+          ccache --zero-stats
 
       - name: Configure
         run: |
@@ -109,6 +148,10 @@ jobs:
           cmake --build "$BUILD_DIR" --target \
             clang lld lldb llc opt llvm-ar llvm-objcopy llvm-objdump llvm-nm \
             llvm-mc llvm-readobj llvm-config llvm-isel-fuzzer FileCheck split-file not count
+
+      - name: Report compiler cache hits and misses
+        if: always() && steps.cache-stats.outcome == 'success'
+        run: ccache --show-stats --verbose
 
       - name: Test PPE42 void sibling call
         run: |
@@ -362,7 +405,9 @@ jobs:
           jq \
             --arg llvm_sha "$GITHUB_SHA" \
             --arg llvm_ref "$GITHUB_REF_NAME" \
+            --arg host "linux-${{ matrix.host_arch }}" \
             '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref |
+             .host = $host |
              .mlgo = {"inliner_model": "inlining-Oz-v1.1",
                       "mode": "embedded-aot",
                       "activation": "-mllvm -enable-ml-inliner=release",
@@ -401,6 +446,15 @@ jobs:
           grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
           grep -q 'frame #1:.*ppe42_caller' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
 
+      - name: Verify packaged host architecture
+        env:
+          EXPECTED_MACHINE: ${{ matrix.elf_machine }}
+        run: |
+          for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
+            machine="$(LC_ALL=C readelf -h "$PACKAGE_DIR/bin/$tool" | sed -n 's/^ *Machine: *//p')"
+            test "$machine" = "$EXPECTED_MACHINE"
+          done
+
       - name: Test candidate toolchain against SBE Forge
         env:
           SBE_FORGE_REPOSITORY: ${{ vars.SBE_FORGE_REPOSITORY || 'manojkiraneda/sbe-forge' }}
@@ -424,18 +478,6 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "$ASSET_NAME.tar.zst" \
-            "$ASSET_NAME.tar.zst.sha256" \
-            --verify-tag \
-            --generate-notes \
-            --title "$GITHUB_REF_NAME"
-
       - name: Attest tagged package
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v2
@@ -447,11 +489,44 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BUILD_DIR }}
-          key: ppe42-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
+          key: ${{ env.CACHE_NAMESPACE }}-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
 
       - name: Save compiler object cache
         if: always() && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/ccache
-          key: ppe42-ccache-${{ runner.os }}-${{ github.sha }}
+          key: ${{ env.CACHE_NAMESPACE }}-ccache-${{ runner.os }}-${{ github.sha }}
+
+  publish-release:
+    name: Publish both host toolchains
+    needs: build-package-integration
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested host packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sbe-ppe42-toolchain-linux-*-${{ github.sha }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        working-directory: release-assets
+        run: |
+          for arch in x86_64 aarch64; do
+            test -f "sbe-ppe42-toolchain-linux-$arch.tar.zst"
+            sha256sum --check "sbe-ppe42-toolchain-linux-$arch.tar.zst.sha256"
+          done
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" ./*.tar.zst ./*.tar.zst.sha256 --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              ./*.tar.zst ./*.tar.zst.sha256 \
+              --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi

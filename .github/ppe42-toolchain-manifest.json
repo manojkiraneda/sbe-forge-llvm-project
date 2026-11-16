@@ -2,7 +2,7 @@
   "name": "sbe-ppe42-toolchain",
   "llvm_sha": "@LLVM_SHA@",
   "llvm_ref": "@LLVM_REF@",
-  "host": "linux-x86_64",
+  "host": "@HOST@",
   "projects": ["clang", "lld", "lldb"],
   "targets": ["PowerPC"],
   "tools": ["clang", "clang++", "ld.lld", "lldb", "llvm-ar", "llvm-objcopy", "llvm-objdump", "llvm-nm"],
