@@ -27,6 +27,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
       REPORT: /tmp/ppe42-promotion-${{ github.run_id }}
+      HISTORY_REPO: ${{ runner.temp }}/ppe42-rebase-history.git
     steps:
       - name: Record failed candidate
         if: github.event.workflow_run.conclusion != 'success'
@@ -44,13 +45,32 @@ jobs:
           token: ${{ secrets.PPE42_REBASE_TOKEN }}
           fetch-depth: 1
           filter: blob:none
+          sparse-checkout: |
+            .github
+            utils/ppe42
+      - name: Restore rebase Git history
+        if: github.event.workflow_run.conclusion == 'success'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.HISTORY_REPO }}/objects
+            ${{ env.HISTORY_REPO }}/refs
+            ${{ env.HISTORY_REPO }}/packed-refs
+          key: ppe42-rebase-history-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ppe42-rebase-history-v1-${{ runner.os }}-
+      - name: Initialize runner-local history configuration
+        if: github.event.workflow_run.conclusion == 'success'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 utils/ppe42/rebase_next.py initialize --repo "$HISTORY_REPO"
       - name: Validate tested commit and promote with a backup
         if: github.event.workflow_run.conclusion == 'success'
         env:
           CI_RUN: ${{ github.event.workflow_run.id }}
         run: |
           test -n "$GH_TOKEN"
-          python3 utils/ppe42/rebase_next.py promote --run-id "$CI_RUN" --report "$REPORT"
+          python3 utils/ppe42/rebase_next.py promote --repo "$HISTORY_REPO" --run-id "$CI_RUN" --report "$REPORT"
           cat "$REPORT/manifest.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()

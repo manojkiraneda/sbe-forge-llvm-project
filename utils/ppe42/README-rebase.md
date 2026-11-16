@@ -65,6 +65,30 @@ the original next SHA. Older in-flight builds dispatched on immutable candidate
 branches remain supported during migration. No cache artifacts are executed by
 the privileged promotion controller.
 
+## Incremental rebase preparation
+
+The controller checks out only `.github` and `utils/ppe42`. Repository history
+used for ancestry checks, rebasing, and promotion lives in a separate bare
+repository under the runner's temporary directory. Its objects and refs are
+cached with the `ppe42-rebase-history-v1-` prefix, independently of compiler
+build caches and reviewed conflict resolutions.
+
+On a warm cache, Git can negotiate from the previous fetched tips and reuse
+already downloaded history and blobs. A cold or evicted cache still needs its
+initial history fetch. Both preparation and promotion use this history store;
+the trusted controller checkout remains separate from the rebased worktree.
+
+Only `objects`, `refs`, and `packed-refs` are cached. Configuration, credential
+headers, hooks, shallow boundaries, and worktree state are not cached. Each job
+recreates configuration from its trusted checkout, reconnects the existing
+reviewed-resolution cache, and enables lazy blob fetching for filtered packs.
+Promotion restores this cache without writing a new one.
+
+Long Git operations report their start, elapsed time every 30 seconds, and
+completion time to stderr. JSON reports and GitHub output values remain on
+their existing channels. This makes history fetching, worktree creation, and
+rebasing distinguishable in the live Actions log.
+
 The promotion token stays in controller jobs. Candidate CI receives its normal
 existing workflow token, not `PPE42_REBASE_TOKEN`. Promotion executes only the
 script from the trusted default branch and does not execute candidate artifacts.
