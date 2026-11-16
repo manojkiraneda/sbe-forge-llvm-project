@@ -27,7 +27,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
       REPORT: /tmp/ppe42-promotion-${{ github.run_id }}
-      HISTORY_REPO: ${{ runner.temp }}/ppe42-rebase-history.git
+      HISTORY_REPO: ${{ github.workspace }}/../ppe42-rebase-history.git
     steps:
       - name: Record failed candidate
         if: github.event.workflow_run.conclusion != 'success'

@@ -46,7 +46,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PPE42_REBASE_TOKEN }}
       REPORT: /tmp/ppe42-rebase-${{ github.run_id }}
-      HISTORY_REPO: ${{ runner.temp }}/ppe42-rebase-history.git
+      HISTORY_REPO: ${{ github.workspace }}/../ppe42-rebase-history.git
     steps:
       - name: Check controller credential
         run: |
