@@ -509,9 +509,8 @@ jobs:
       - name: Check out SBE Forge integration tests
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.SBE_FORGE_REPOSITORY || 'manojkiraneda/sbe-forge' }}
-          # Includes portable host-memory tests for Apple Silicon macOS.
-          ref: ${{ vars.SBE_FORGE_REVISION || 'be72eec3526c57a3745c7112b64712397e28c28c' }}
+          repository: manojkiraneda/sbe-forge
+          ref: main
           path: sbe-forge-integration
           persist-credentials: false
 
