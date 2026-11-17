@@ -6,7 +6,8 @@ for three hosts:
 
 * x86-64, on ``ubuntu-24.04`` runners, packaged as
   ``sbe-ppe42-toolchain-linux-x86_64.tar.zst``.
-* Linux ARM64, on ``ubuntu-24.04-arm`` runners, packaged as
+* Linux ARM64, built in a ``fedora:45`` container on native
+  ``ubuntu-24.04-arm`` runners, packaged as
   ``sbe-ppe42-toolchain-linux-aarch64.tar.zst``.
 * macOS on Apple Silicon, on ``macos-latest`` runners, packaged as
   ``sbe-ppe42-toolchain-darwin-arm64.tar.zst``.
@@ -59,8 +60,12 @@ Apple Silicon uses distinct keys and restore prefixes:
 
 Linux ARM64 has its own keys and restore prefixes:
 
-* ``ppe42-linux-aarch64-ccache-Linux-<revision>``
-* ``ppe42-linux-aarch64-mlgo-build-v1-Linux-<revision>``
+* ``ppe42-fedora45-linux-aarch64-ccache-Linux-<revision>``
+* ``ppe42-fedora45-linux-aarch64-mlgo-build-v1-Linux-<revision>``
+
+The Linux ARM64 package uses Fedora 45's compiler, libraries, and glibc ABI.
+Python 3.11 and MLGO's build dependencies run in a virtual environment in
+the container. The Fedora cache namespace cannot restore Ubuntu build outputs.
 
 The first build for a new host populates its caches. Later builds can restore an
 earlier revision from the same architecture. GitHub's branch cache access
