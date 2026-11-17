@@ -6,7 +6,7 @@ for two hosts:
 
 * x86-64, on ``ubuntu-24.04`` runners, packaged as
   ``sbe-ppe42-toolchain-linux-x86_64.tar.zst``.
-* macOS on Apple Silicon, on ``macos-15`` runners, packaged as
+* macOS on Apple Silicon, on ``macos-latest`` runners, packaged as
   ``sbe-ppe42-toolchain-darwin-arm64.tar.zst``.
 
 The host architecture is the machine running Clang and LLDB. Both packages
