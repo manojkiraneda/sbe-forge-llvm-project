@@ -1191,6 +1191,8 @@ endif()
 # Then set TENSORFLOW_AOT_PATH to the package install - usually it's ~/.local/lib/python3.7/site-packages/tensorflow
 #
 set(TENSORFLOW_AOT_PATH "" CACHE PATH "Path to TensorFlow pip install dir")
+option(LLVM_TF_AOT_SCALAR_RUNTIME
+  "Build the TensorFlow AOT runtime without Eigen vectorization" OFF)
 
 if (NOT TENSORFLOW_AOT_PATH STREQUAL "")
   set(LLVM_HAVE_TF_AOT "ON" CACHE BOOL "Tensorflow AOT available")
@@ -1200,6 +1202,14 @@ if (NOT TENSORFLOW_AOT_PATH STREQUAL "")
   include_directories(${TENSORFLOW_AOT_PATH}/include)
   add_subdirectory(${TENSORFLOW_AOT_PATH}/xla_aot_runtime_src
     ${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}/tf_runtime)
+  if (LLVM_TF_AOT_SCALAR_RUNTIME)
+    # TensorFlow 2.15's convolution packers require nr == 4, while Eigen's
+    # AArch64 NEON kernels select nr == 8. Use Eigen's scalar implementation
+    # only in the runtime objects, without changing LLVM's own compile flags
+    # or the generated model's host target.
+    target_compile_definitions(tf_xla_runtime_objects PRIVATE
+      EIGEN_DONT_VECTORIZE)
+  endif()
   install(TARGETS tf_xla_runtime EXPORT LLVMExports
     ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX} COMPONENT tf_xla_runtime)
   install(TARGETS tf_xla_runtime EXPORT LLVMDevelopmentExports

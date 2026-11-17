@@ -30,6 +30,14 @@ notarization. System libraries and frameworks remain provided by macOS. A native
 integration test checks that a package still runs after moving it away from
 the original build and dependency directories.
 
+The Apple Silicon build enables ``LLVM_TF_AOT_SCALAR_RUNTIME`` for the
+TensorFlow 2.15 runtime. Its convolution packers require four-column Eigen
+kernels, while the bundled ARM NEON specialization selects eight. The option
+uses Eigen's scalar implementation only for the host runtime object library.
+The embedded model remains enabled and compiled for the native host, and LLVM
+and PPE42 code generation retain their normal optimization settings. CI builds
+the runtime and generated model before starting the full compiler build.
+
 Build caches
 ------------
 

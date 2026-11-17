@@ -151,6 +151,7 @@ jobs:
               # PPE42 core/backtrace checks run directly in the steps below.
               -DLLDB_INCLUDE_TESTS=OFF
               -DLLDB_USE_SYSTEM_DEBUGSERVER=ON
+              -DLLVM_TF_AOT_SCALAR_RUNTIME=ON
               -DLLVM_PARALLEL_COMPILE_JOBS=2
               -DLLVM_PARALLEL_LINK_JOBS=1
             )
@@ -174,6 +175,11 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/ppe42-toolchain" \
             "${host_options[@]}"
           grep -q '^LLDB_ENABLE_LIBEDIT:STRING=ON$' "$BUILD_DIR/CMakeCache.txt"
+
+      - name: Build embedded MLGO dependencies first
+        run: |
+          cmake --build "$BUILD_DIR" --target \
+            tf_xla_runtime lib/Analysis/InlinerSizeModel.o
 
       - name: Incrementally build required tools
         run: |
