@@ -142,7 +142,10 @@ jobs:
           tensorflow_aot_path="$(python -c 'import os, tensorflow; print(os.path.dirname(tensorflow.__file__))')"
           host_options=()
           if [ "$RUNNER_OS" = macOS ]; then
+            # TensorFlow 2.15's runtime declares a pre-3.5 CMake policy version.
+            # Homebrew CMake 4 requires this compatibility floor for that subtree.
             host_options+=(
+              -DCMAKE_POLICY_VERSION_MINIMUM=3.5
               -DLLDB_BUILD_FRAMEWORK=OFF
               -DLLDB_USE_SYSTEM_DEBUGSERVER=ON
               -DLLVM_PARALLEL_COMPILE_JOBS=2
