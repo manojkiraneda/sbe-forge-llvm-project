@@ -506,11 +506,17 @@ jobs:
             fi
           done
 
+      - name: Check out SBE Forge integration tests
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SBE_FORGE_REPOSITORY || 'manojkiraneda/sbe-forge' }}
+          # Includes portable host-memory tests for Apple Silicon macOS.
+          ref: ${{ vars.SBE_FORGE_REVISION || 'be72eec3526c57a3745c7112b64712397e28c28c' }}
+          path: sbe-forge-integration
+          persist-credentials: false
+
       - name: Test candidate toolchain against SBE Forge
-        env:
-          SBE_FORGE_REPOSITORY: ${{ vars.SBE_FORGE_REPOSITORY || 'manojkiraneda/sbe-forge' }}
         run: |
-          git clone --depth 1 "https://github.com/${SBE_FORGE_REPOSITORY}.git" sbe-forge-integration
           SBE_LLVM_INSTALL_DIR="$GITHUB_WORKSPACE/$PACKAGE_DIR" \
             sbe-forge-integration/scripts/test-firmware.sh
 
