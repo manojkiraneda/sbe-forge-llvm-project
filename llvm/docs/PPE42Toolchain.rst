@@ -22,6 +22,11 @@ also checks the ELF or Mach-O architecture of the packaged executables. On a
 ``ppe42-toolchain-v*`` tag, one publishing job waits for both host builds to
 pass before uploading their archives and checksums to the same release.
 
+Firmware integration uses a pinned SBE Forge revision so both hosts test the
+same sources, including its portable native formatting test. Repository
+variables ``SBE_FORGE_REPOSITORY`` and ``SBE_FORGE_REVISION`` can override the
+integration repository and revision together.
+
 The macOS package bundles non-system dynamic libraries, including any Homebrew
 dependencies. Their install names are rewritten to paths relative to the
 packaged executables and libraries. The binaries receive ad-hoc code signatures
