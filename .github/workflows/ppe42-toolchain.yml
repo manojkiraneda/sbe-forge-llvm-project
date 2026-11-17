@@ -42,7 +42,7 @@ jobs:
             elf_machine: 'Advanced Micro Devices X86-64'
           - host: darwin-arm64
             host_arch: arm64
-            runner: macos-15
+            runner: macos-latest
             cache_suffix: '-darwin-arm64'
             elf_machine: ''
     runs-on: ${{ matrix.runner }}
