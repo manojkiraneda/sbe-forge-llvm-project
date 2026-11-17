@@ -147,6 +147,9 @@ jobs:
             host_options+=(
               -DCMAKE_POLICY_VERSION_MINIMUM=3.5
               -DLLDB_BUILD_FRAMEWORK=OFF
+              # The upstream Darwin host test suite requires an in-tree libc++.
+              # PPE42 core/backtrace checks run directly in the steps below.
+              -DLLDB_INCLUDE_TESTS=OFF
               -DLLDB_USE_SYSTEM_DEBUGSERVER=ON
               -DLLVM_PARALLEL_COMPILE_JOBS=2
               -DLLVM_PARALLEL_LINK_JOBS=1
