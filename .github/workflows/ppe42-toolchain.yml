@@ -410,6 +410,10 @@ jobs:
             llvm/test/CodeGen/PowerPC/ppe42-stack-ops.ll \
             clang/test/Driver/ppc-ppe42x-stack.c
 
+      - name: Test PowerPC ELF driver linker selection
+        run: |
+          "$BUILD_DIR/bin/llvm-lit" -v clang/test/Driver/ppc-elf-linker.c
+
       - name: Build PPE42 compiler runtime
         run: |
           mkdir -p "$BUILD_DIR/ppe42-runtime"
@@ -547,6 +551,17 @@ jobs:
             --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
           grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
           grep -q 'frame #1:.*ppe42_caller' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
+
+      - name: Test packaged Clang PowerPC linking
+        run: |
+          "$PACKAGE_DIR/bin/clang" --target=powerpc-unknown-elf -mcpu=ppe42 \
+            -Wl,--version | grep 'LLD'
+          printf 'void _start(void) { for (;;) {} }\n' > "$RUNNER_TEMP/ppe42-link.c"
+          "$PACKAGE_DIR/bin/clang" --target=powerpc-unknown-elf -mcpu=ppe42 \
+            -msoft-float -nostdlib -Wl,-e,_start \
+            "$RUNNER_TEMP/ppe42-link.c" -o "$RUNNER_TEMP/ppe42-link.elf"
+          "$BUILD_DIR/bin/llvm-readobj" --file-headers \
+            "$RUNNER_TEMP/ppe42-link.elf" | grep 'Machine: EM_PPC'
 
       - name: Verify packaged host architecture
         env:

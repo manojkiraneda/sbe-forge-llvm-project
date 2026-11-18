@@ -42,6 +42,7 @@ public:
   bool isBareMetal() const override { return true; }
   bool isCrossCompiling() const override { return true; }
   bool HasNativeLLVMSupport() const override { return true; }
+  const char *getDefaultLinker() const override;
   bool isPICDefault() const override { return false; }
   bool isPIEDefault(const llvm::opt::ArgList &Args) const override {
     return false;
@@ -52,9 +53,7 @@ public:
   StringRef getOSLibName() const override { return "baremetal"; }
 
   UnwindTableLevel
-  getDefaultUnwindTableLevel(const llvm::opt::ArgList &Args) const override {
-    return UnwindTableLevel::None;
-  }
+  getDefaultUnwindTableLevel(const llvm::opt::ArgList &Args) const override;
 
   CXXStdlibType GetDefaultCXXStdlibType() const override;
 
