@@ -45,10 +45,11 @@ static bool isRISCVBareMetal(const llvm::Triple &Triple) {
   return Triple.getEnvironmentName() == "elf";
 }
 
-/// Is the triple powerpc[64][le]-*-none-eabi?
+/// Is the triple powerpc[64][le]-*-none-{eabi,elf}?
 static bool isPPCBareMetal(const llvm::Triple &Triple) {
   return Triple.isPPC() && Triple.getOS() == llvm::Triple::UnknownOS &&
-         Triple.getEnvironment() == llvm::Triple::EABI;
+         (Triple.getEnvironment() == llvm::Triple::EABI ||
+          Triple.getEnvironmentName() == "elf");
 }
 
 static bool findRISCVMultilibs(const Driver &D,
@@ -356,6 +357,21 @@ bool BareMetal::handlesTarget(const llvm::Triple &Triple) {
 
 Tool *BareMetal::buildLinker() const {
   return new tools::baremetal::Linker(*this);
+}
+
+const char *BareMetal::getDefaultLinker() const {
+  if (getTriple().isPPC() && getTriple().getEnvironmentName() == "elf")
+    return "ld.lld";
+  return Generic_ELF::getDefaultLinker();
+}
+
+ToolChain::UnwindTableLevel
+BareMetal::getDefaultUnwindTableLevel(const ArgList &Args) const {
+  // Preserve the unwind information emitted before ELF PowerPC targets used
+  // the bare-metal linker. PPE42 crash dump backtraces rely on this metadata.
+  if (getTriple().isPPC() && getTriple().getEnvironmentName() == "elf")
+    return Generic_ELF::getDefaultUnwindTableLevel(Args);
+  return UnwindTableLevel::None;
 }
 
 Tool *BareMetal::buildStaticLibTool() const {

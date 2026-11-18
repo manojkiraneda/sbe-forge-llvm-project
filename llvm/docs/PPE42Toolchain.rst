@@ -19,6 +19,11 @@ core converter, and embedded MLGO inliner model. Each archive contains the
 system and architecture, LLVM revision, and model version. Each archive has
 a separate ``.tar.zst.sha256`` checksum file.
 
+Clang routes bare-metal PowerPC ELF links directly to ``ld.lld``, rather than
+using a host GCC driver. The existing ELF unwind-table default is preserved.
+CI checks both linker discovery and a freestanding PowerPC ELF link using
+the packaged compiler on every host.
+
 All builds run the compiler regression tests, MLGO smoke test, LLDB core
 tests, and SBE Forge firmware integration on native hardware. The workflow
 also checks the ELF or Mach-O architecture of the packaged executables. On a
