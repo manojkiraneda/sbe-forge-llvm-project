@@ -133,6 +133,8 @@ def package_toolchain(build, package):
                              executable, search)
     alias = package / "lib/liblldb.dylib"
     if alias != library:
+        if alias.is_symlink():
+            alias.unlink()
         alias.symlink_to(library.name)
     bundler.finish()
 
