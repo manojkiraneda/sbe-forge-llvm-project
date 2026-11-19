@@ -39,9 +39,11 @@ with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\
         path.chmod(0o755)
 
     def run_function(self, command, variables=''):
-        return subprocess.run(['bash', '-c', 'source "$1"; ' + self.variables + variables + command,
-                               'test', str(DRIVER)], env=self.env, check=True,
-                              capture_output=True, text=True)
+        result = subprocess.run(['bash', '-c', 'source "$1"; ' + self.variables + variables + command,
+                                 'test', str(DRIVER)], env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
 
     def commands(self):
         return [json.loads(line) for line in Path(self.env['RECORD']).read_text().splitlines()]

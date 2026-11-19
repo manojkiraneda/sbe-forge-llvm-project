@@ -114,6 +114,8 @@ elif [ -n "$FEDORA" ]; then
   # Fedora ships CMake 4, while TensorFlow's runtime requests 3.4.3.
   host_options+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
 fi
+# Bash 3.2 (macOS) treats an empty array as unset with nounset enabled.
+# The conditional expansion below omits it without adding an empty argument.
 cmake -S llvm -B "$BUILD_DIR" -G Ninja \
   -DLLVM_ENABLE_PROJECTS='clang;lld;lldb' \
   -DLLVM_TARGETS_TO_BUILD=PowerPC \
@@ -132,7 +134,7 @@ cmake -S llvm -B "$BUILD_DIR" -G Ninja \
   -DLLVM_TF_AOT_SCALAR_RUNTIME=$SCALAR_RUNTIME \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$PACKAGE_DIR" \
-  "${host_options[@]}" "$@"
+  ${host_options[@]+"${host_options[@]}"} "$@"
 grep -q '^LLDB_ENABLE_LIBEDIT:STRING=ON$' "$BUILD_DIR/CMakeCache.txt"
 }
 
