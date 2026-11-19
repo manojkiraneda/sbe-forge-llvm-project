@@ -79,3 +79,25 @@ namespace. Each build resets ccache statistics before compilation and prints
 its hits and misses afterward, including when compilation fails.
 The workflow explicitly sets ``CCACHE_DIR`` to ``~/.cache/ccache`` on all
 hosts, so the macOS cache is saved from the directory ccache actually uses.
+
+Shared local and release builds
+-------------------------------
+
+``utils/ppe42/build-toolchain.sh`` owns the MLGO dependency versions, model
+checksum, CMake configuration, explicit tool targets, runtime library and
+release packaging. Release CI calls its phases around the existing build caches
+and regression checks. SBE Forge delegates to the same script through its pinned
+LLVM submodule.
+
+Install Python 3.11 and run ``build-toolchain.sh deps`` to install host build
+and integration dependencies. Then run ``build-toolchain.sh`` to prepare the
+TensorFlow AOT compiler and inliner model, build and stage the toolchain, verify
+MLGO compilation and create a compressed release archive. Native local builds
+use a private Python environment; CI uses its provisioned Python 3.11.
+
+``SBE_LLVM_BUILD_DIR``, ``SBE_LLVM_INSTALL_DIR`` and ``SBE_LLVM_DEPS_DIR``
+select the build tree, staging directory and dependency cache. Existing CI
+``BUILD_DIR`` and ``PACKAGE_DIR`` values remain supported. Run ``--help`` for
+individual phases. Additional CMake arguments can follow ``configure`` or
+``all``. The register-allocation model remains disabled; the embedded inliner
+is activated with ``-mllvm -enable-ml-inliner=release``.

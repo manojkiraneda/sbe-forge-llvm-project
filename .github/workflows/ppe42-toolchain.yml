@@ -8,6 +8,8 @@ on:
       - 'lld/**'
       - 'lldb/**'
       - 'compiler-rt/lib/builtins/ppc/**'
+      - 'utils/ppe42/build-toolchain.sh'
+      - 'utils/ppe42/test_build_toolchain.py'
       - 'utils/ppe42/package_darwin.py'
       - 'utils/ppe42/test_package_darwin.py'
       - '.github/workflows/ppe42-toolchain.yml'
@@ -40,21 +42,18 @@ jobs:
             runner: ubuntu-24.04
             cache_suffix: ''
             elf_machine: 'Advanced Micro Devices X86-64'
-            scalar_runtime: 'OFF'
             container: ''
           - host: linux-aarch64
             host_arch: aarch64
             runner: ubuntu-24.04-arm
             cache_suffix: '-fedora45-linux-aarch64'
             elf_machine: AArch64
-            scalar_runtime: 'ON'
             container: fedora:45
           - host: darwin-arm64
             host_arch: arm64
             runner: macos-latest
             cache_suffix: '-darwin-arm64'
             elf_machine: ''
-            scalar_runtime: 'ON'
             container: ''
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -75,16 +74,7 @@ jobs:
       - name: Bootstrap Fedora 45 build environment
         if: matrix.container != ''
         run: |
-          dnf install -y \
-            gcc gcc-c++ binutils cmake ccache git ninja-build libedit-devel \
-            zlib-devel libzstd-devel libxml2-devel patchelf rustup \
-            python3.11 python3-pip jq tar gzip zstd which findutils diffutils \
-            curl-minimal ca-certificates
-          python3.11 -m venv /opt/ppe42-python
-          /opt/ppe42-python/bin/python -m pip install --upgrade pip meson
-          printf '%s\n' /opt/ppe42-python/bin >> "$GITHUB_PATH"
-          rustup-init -y --no-modify-path --profile minimal --default-toolchain none
-          printf '%s\n' "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          dnf install -y git python3.11 python3-pip ca-certificates
 
       - uses: actions/checkout@v4
         with:
@@ -101,47 +91,16 @@ jobs:
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
 
       - name: Install build and integration dependencies
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            brew install ccache cmake libedit ninja meson coreutils gnu-tar zstd pkgconf
-            printf 'PKG_CONFIG_PATH=%s/lib/pkgconfig\n' "$(brew --prefix libedit)" >> "$GITHUB_ENV"
-            printf '%s\n' "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
-            printf '%s\n' "$(brew --prefix gnu-tar)/libexec/gnubin" >> "$GITHUB_PATH"
-          elif [ -z "${{ matrix.container }}" ]; then
-            sudo apt-get update
-            sudo apt-get install -y ccache cmake libedit-dev ninja-build meson patchelf rustup zstd
-          fi
-          # ccache otherwise defaults to ~/Library/Caches/ccache on macOS.
-          printf 'CCACHE_DIR=%s/.cache/ccache\n' "$HOME" >> "$GITHUB_ENV"
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add powerpc-unknown-linux-gnu
+        run: ./utils/ppe42/build-toolchain.sh deps
+
+      - name: Test shared build driver
+        run: python -m unittest discover -s utils/ppe42 -p test_build_toolchain.py -v
 
       - name: Test Darwin package relocation
         run: python -m unittest discover -s utils/ppe42 -p test_package_darwin.py -v
 
       - name: Prepare MLGO inliner model and TensorFlow AOT compiler
-        run: |
-          python -m pip install --only-binary=:all: 'tensorflow==2.15.1'
-          # Every host wheel must include the AOT compiler and runtime sources.
-          python - <<'PY'
-          from pathlib import Path
-          import tensorflow
-          from tensorflow.python import _pywrap_tfcompile
-          root = Path(tensorflow.__file__).parent
-          assert (root / 'xla_aot_runtime_src/CMakeLists.txt').is_file()
-          PY
-          mkdir -p "$RUNNER_TEMP/ppe42-mlgo"
-          curl --fail --location --retry 3 \
-            https://github.com/google/ml-compiler-opt/releases/download/inlining-Oz-v1.1/inlining-Oz-99f0063-v1.1.tar.gz \
-            --output "$RUNNER_TEMP/ppe42-mlgo/inliner.tar.gz"
-          printf '%s  %s\n' \
-            308e5fbe2c4382d6f9c154c7afbea46624dac32b95609144ba1160836e906cd2 \
-            "$RUNNER_TEMP/ppe42-mlgo/inliner.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/ppe42-mlgo/inliner.tar.gz" \
-            -C "$RUNNER_TEMP/ppe42-mlgo"
-          test -f "$RUNNER_TEMP/ppe42-mlgo/model/saved_model.pb"
-          printf 'MLGO_MODEL_PATH=%s\n' "$RUNNER_TEMP/ppe42-mlgo/model" >> "$GITHUB_ENV"
+        run: ./utils/ppe42/build-toolchain.sh prepare
 
       - name: Restore compiler object cache
         id: ccache
@@ -168,57 +127,13 @@ jobs:
           ccache --zero-stats
 
       - name: Configure
-        run: |
-          tensorflow_aot_path="$(python -c 'import os, tensorflow; print(os.path.dirname(tensorflow.__file__))')"
-          host_options=()
-          if [ "$RUNNER_OS" = macOS ]; then
-            # TensorFlow 2.15's runtime declares a pre-3.5 CMake policy version.
-            # Homebrew CMake 4 requires this compatibility floor for that subtree.
-            host_options+=(
-              -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-              -DLLDB_BUILD_FRAMEWORK=OFF
-              # The upstream Darwin host test suite requires an in-tree libc++.
-              # PPE42 core/backtrace checks run directly in the steps below.
-              -DLLDB_INCLUDE_TESTS=OFF
-              -DLLDB_USE_SYSTEM_DEBUGSERVER=ON
-              -DLLVM_PARALLEL_COMPILE_JOBS=2
-              -DLLVM_PARALLEL_LINK_JOBS=1
-            )
-          elif [ -n "${{ matrix.container }}" ]; then
-            # Fedora ships CMake 4, while TensorFlow's runtime requests 3.4.3.
-            host_options+=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
-          fi
-          cmake -S llvm -B "$BUILD_DIR" -G Ninja \
-            -DLLVM_ENABLE_PROJECTS='clang;lld;lldb' \
-            -DLLVM_TARGETS_TO_BUILD=PowerPC \
-            -DLLVM_ENABLE_ASSERTIONS=ON \
-            -DLLVM_CCACHE_BUILD=ON \
-            -DLLVM_BUILD_LLVM_DYLIB=OFF \
-            -DLLVM_LINK_LLVM_DYLIB=OFF \
-            -DCLANG_LINK_CLANG_DYLIB=OFF \
-            -DLLDB_ENABLE_PYTHON=OFF \
-            -DLLDB_ENABLE_LIBEDIT=ON \
-            -DLLDB_ENABLE_CURSES=OFF \
-            -DTENSORFLOW_AOT_PATH="$tensorflow_aot_path" \
-            -DTENSORFLOW_AOT_COMPILER="$(command -v saved_model_cli)" \
-            -DLLVM_INLINER_MODEL_PATH="$MLGO_MODEL_PATH" \
-            -DLLVM_RAEVICT_MODEL_PATH=none \
-            -DLLVM_TF_AOT_SCALAR_RUNTIME=${{ matrix.scalar_runtime }} \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/ppe42-toolchain" \
-            "${host_options[@]}"
-          grep -q '^LLDB_ENABLE_LIBEDIT:STRING=ON$' "$BUILD_DIR/CMakeCache.txt"
+        run: ./utils/ppe42/build-toolchain.sh configure
 
       - name: Build embedded MLGO dependencies first
-        run: |
-          cmake --build "$BUILD_DIR" --target \
-            tf_xla_runtime lib/Analysis/InlinerSizeModel.o
+        run: ./utils/ppe42/build-toolchain.sh build-deps
 
       - name: Incrementally build required tools
-        run: |
-          cmake --build "$BUILD_DIR" --target \
-            clang lld lldb llc opt llvm-ar llvm-objcopy llvm-objdump llvm-nm \
-            llvm-mc llvm-readobj llvm-config llvm-isel-fuzzer FileCheck split-file not count
+        run: ./utils/ppe42/build-toolchain.sh build
 
       - name: Report compiler cache hits and misses
         if: always() && steps.cache-stats.outcome == 'success'
@@ -415,118 +330,12 @@ jobs:
           "$BUILD_DIR/bin/llvm-lit" -v clang/test/Driver/ppc-elf-linker.c
 
       - name: Build PPE42 compiler runtime
-        run: |
-          mkdir -p "$BUILD_DIR/ppe42-runtime"
-          for width in 32 64; do
-            "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
-              -c "compiler-rt/lib/builtins/ppc/ppe42-div${width}.S" \
-              -o "$BUILD_DIR/ppe42-runtime/ppe42-div${width}.o"
-          done
-          cmake -E rm -f "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a"
-          "$BUILD_DIR/bin/llvm-ar" rcs \
-            "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
-            "$BUILD_DIR/ppe42-runtime/ppe42-div32.o" \
-            "$BUILD_DIR/ppe42-runtime/ppe42-div64.o"
-          "$BUILD_DIR/bin/llvm-nm" --defined-only \
-            "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" | \
-            "$BUILD_DIR/bin/FileCheck" \
-              compiler-rt/test/builtins/ppc/ppe42-div-symbols.txt
+        run: ./utils/ppe42/build-toolchain.sh runtime
 
       - name: Stage minimal toolchain
         run: |
-          mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib/clang"
-          mkdir -p "$PACKAGE_DIR/lib/ppe42" "$PACKAGE_DIR/share/ppe42"
-          mkdir -p "$PACKAGE_DIR/share/mlgo/inliner-oz-v1.1" \
-            "$PACKAGE_DIR/share/doc"
-          for tool in clang ld.lld llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
-            cp -L "$BUILD_DIR/bin/$tool" "$PACKAGE_DIR/bin/$tool"
-            if [ "$RUNNER_OS" != macOS ]; then
-              strip "$PACKAGE_DIR/bin/$tool"
-            fi
-          done
-          cp -L "$BUILD_DIR/bin/lldb" "$PACKAGE_DIR/bin/lldb"
-          if [ "$RUNNER_OS" = macOS ]; then
-            python utils/ppe42/package_darwin.py \
-              --build-dir "$BUILD_DIR" --package-dir "$PACKAGE_DIR"
-          else
-            cp -a "$BUILD_DIR/lib/liblldb.so"* "$PACKAGE_DIR/lib/"
-            # libedit is not installed on every toolchain host. Its non-glibc
-            # dependencies also need to travel with the packaged LLDB.
-            lldb_dependencies="$(ldd "$BUILD_DIR/lib/liblldb.so")"
-            for name in libedit.so libtinfo.so libbsd.so libmd.so; do
-              path="$(printf '%s\n' "$lldb_dependencies" | awk -v prefix="$name" \
-                'index($1, prefix) == 1 {print $3; exit}')"
-              if [ -n "$path" ]; then
-                cp --dereference "$path" "$PACKAGE_DIR/lib/$(basename "$path")"
-              elif [ "$name" = libedit.so ]; then
-                echo 'LLDB was built without a dynamic libedit dependency' >&2
-                exit 1
-              fi
-            done
-            patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/lldb"
-            find "$PACKAGE_DIR/lib" -maxdepth 1 -name 'liblldb.so*' -type f \
-              -exec patchelf --set-rpath '$ORIGIN' {} +
-            find "$PACKAGE_DIR/lib" -maxdepth 1 -type f \
-              \( -name 'libedit.so*' -o -name 'libtinfo.so*' -o \
-                 -name 'libbsd.so*' -o -name 'libmd.so*' \) \
-              -exec patchelf --set-rpath '$ORIGIN' {} +
-            strip "$PACKAGE_DIR/bin/lldb"
-            if [ -n "${{ matrix.container }}" ]; then
-              # Fedora's optional LLVM/LLDB libraries must also travel with
-              # the package. ldd lists transitive dependencies of these roots.
-              while IFS= read -r dependency; do
-                case "$(basename "$dependency")" in
-                  libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libutil.so.*|libanl.so.*)
-                    continue ;;
-                esac
-                cp -L "$dependency" "$PACKAGE_DIR/lib/$(basename "$dependency")"
-              done < <(
-                {
-                  for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
-                    ldd "$BUILD_DIR/bin/$tool"
-                  done
-                  ldd "$BUILD_DIR/lib/liblldb.so"
-                } | awk '$2 == "=>" && $3 ~ /^\// {print $3}' | sort -u
-              )
-              for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
-                patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/$tool"
-              done
-              find "$PACKAGE_DIR/lib" -maxdepth 1 -name '*.so*' -type f \
-                -exec patchelf --set-rpath '$ORIGIN' {} +
-            fi
-          fi
-          ln -s clang "$PACKAGE_DIR/bin/clang++"
-
-          resource_dir="$("$BUILD_DIR/bin/clang" --print-resource-dir)"
-          cp -a "$resource_dir" "$PACKAGE_DIR/lib/clang/"
-          cp "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a" \
-            "$PACKAGE_DIR/lib/ppe42/"
-          cp -a "$MLGO_MODEL_PATH/." \
-            "$PACKAGE_DIR/share/mlgo/inliner-oz-v1.1/"
-          cp llvm/docs/PPE42MLGO.rst "$PACKAGE_DIR/share/doc/"
-          cp lldb/utils/ppe42/ppe42_core.py "$PACKAGE_DIR/share/ppe42/"
-          cp lldb/utils/ppe42/README.md "$PACKAGE_DIR/share/doc/PPE42LLDB.md"
-
-          jq \
-            --arg llvm_sha "$GITHUB_SHA" \
-            --arg llvm_ref "$GITHUB_REF_NAME" \
-            --arg host "${{ matrix.host }}" \
-            '.llvm_sha = $llvm_sha | .llvm_ref = $llvm_ref |
-             .host = $host |
-             .mlgo = {"inliner_model": "inlining-Oz-v1.1",
-                      "mode": "embedded-aot",
-                      "activation": "-mllvm -enable-ml-inliner=release",
-                      "source_model": "share/mlgo/inliner-oz-v1.1"}' \
-            .github/ppe42-toolchain-manifest.json \
-            > "$PACKAGE_DIR/manifest.json"
-
-          du -sh "$PACKAGE_DIR"
-
-          "$PACKAGE_DIR/bin/clang++" --version
-          "$PACKAGE_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
-            -Oz -mllvm -enable-ml-inliner=release \
-            -c "$RUNNER_TEMP/ppe42-mlgo/smoke.c" \
-            -o "$RUNNER_TEMP/ppe42-mlgo/packaged-smoke.o"
+          ./utils/ppe42/build-toolchain.sh stage
+          ./utils/ppe42/build-toolchain.sh check
           if [ "$RUNNER_OS" != macOS ]; then
             if ldd "$PACKAGE_DIR/bin/clang" | grep -q 'not found'; then
               echo 'Packaged clang has a missing shared-library dependency' >&2
@@ -591,9 +400,7 @@ jobs:
             sbe-forge-integration/scripts/test-firmware.sh
 
       - name: Create toolchain package
-        run: |
-          tar --zstd -C package -cf "$ASSET_NAME.tar.zst" ppe42-toolchain
-          sha256sum "$ASSET_NAME.tar.zst" > "$ASSET_NAME.tar.zst.sha256"
+        run: ./utils/ppe42/build-toolchain.sh archive
 
       - name: Upload candidate artifact
         uses: actions/upload-artifact@v4

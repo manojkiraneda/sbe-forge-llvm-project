@@ -84,6 +84,8 @@ class NativeRelocationTests(unittest.TestCase):
                 shutil.copy2(executable, package / "bin" / name)
 
             packaging.package_toolchain(build, package)
+            # Local development stages into the same directory repeatedly.
+            packaging.package_toolchain(build, package)
             # Neither the original LLVM build nor the external library install
             # can satisfy a load after relocation.
             build.rename(root / "hidden-build")
