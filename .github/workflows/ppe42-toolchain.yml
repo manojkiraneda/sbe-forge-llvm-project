@@ -62,6 +62,7 @@ jobs:
         shell: bash
     env:
       ASSET_NAME: sbe-ppe42-toolchain-${{ matrix.host }}
+      SBE_LLVM_SOURCE_DIR: ${{ github.workspace }}
       # Preserve the existing x86 and Darwin keys. Each other host has its own
       # namespace, including architecture-specific restore prefixes.
       CACHE_NAMESPACE: ppe42${{ matrix.cache_suffix }}
@@ -80,6 +81,15 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Check out the common development entry point
+        uses: actions/checkout@v4
+        with:
+          repository: manojkiraneda/sbe-forge
+          # Pin the entry-point API; compiler sources always come from this job.
+          ref: 9c68d82e83dc513aa7d234604ee8e59ce90afb88
+          path: sbe-forge-integration
+          persist-credentials: false
+
       - uses: actions/setup-python@v5
         if: matrix.container == ''
         with:
@@ -91,7 +101,10 @@ jobs:
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
 
       - name: Install build and integration dependencies
-        run: ./utils/ppe42/build-toolchain.sh deps
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase deps
+
+      - name: Test development entry point
+        run: python -m unittest discover -s sbe-forge-integration/tests -p 'test_*build*.py' -v
 
       - name: Test shared build driver
         run: python -m unittest discover -s utils/ppe42 -p test_build_toolchain.py -v
@@ -100,7 +113,7 @@ jobs:
         run: python -m unittest discover -s utils/ppe42 -p test_package_darwin.py -v
 
       - name: Prepare MLGO inliner model and TensorFlow AOT compiler
-        run: ./utils/ppe42/build-toolchain.sh prepare
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase prepare
 
       - name: Restore compiler object cache
         id: ccache
@@ -127,13 +140,13 @@ jobs:
           ccache --zero-stats
 
       - name: Configure
-        run: ./utils/ppe42/build-toolchain.sh configure
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase configure
 
       - name: Build embedded MLGO dependencies first
-        run: ./utils/ppe42/build-toolchain.sh build-deps
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase build-deps
 
       - name: Incrementally build required tools
-        run: ./utils/ppe42/build-toolchain.sh build
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase build
 
       - name: Report compiler cache hits and misses
         if: always() && steps.cache-stats.outcome == 'success'
@@ -330,12 +343,12 @@ jobs:
           "$BUILD_DIR/bin/llvm-lit" -v clang/test/Driver/ppc-elf-linker.c
 
       - name: Build PPE42 compiler runtime
-        run: ./utils/ppe42/build-toolchain.sh runtime
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase runtime
 
       - name: Stage minimal toolchain
         run: |
-          ./utils/ppe42/build-toolchain.sh stage
-          ./utils/ppe42/build-toolchain.sh check
+          ./sbe-forge-integration/scripts/dev.sh --native --phase stage
+          ./sbe-forge-integration/scripts/dev.sh --native --phase check
           if [ "$RUNNER_OS" != macOS ]; then
             if ldd "$PACKAGE_DIR/bin/clang" | grep -q 'not found'; then
               echo 'Packaged clang has a missing shared-library dependency' >&2
@@ -386,21 +399,15 @@ jobs:
             fi
           done
 
-      - name: Check out SBE Forge integration tests
-        uses: actions/checkout@v4
-        with:
-          repository: manojkiraneda/sbe-forge
-          ref: main
-          path: sbe-forge-integration
-          persist-credentials: false
-
       - name: Test candidate toolchain against SBE Forge
-        run: |
-          SBE_LLVM_INSTALL_DIR="$GITHUB_WORKSPACE/$PACKAGE_DIR" \
-            sbe-forge-integration/scripts/test-firmware.sh
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase firmware
+
+      - name: Test development container with the candidate toolchain
+        if: matrix.host == 'linux-x86_64'
+        run: ./sbe-forge-integration/scripts/dev.sh --container --phase check
 
       - name: Create toolchain package
-        run: ./utils/ppe42/build-toolchain.sh archive
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase archive
 
       - name: Upload candidate artifact
         uses: actions/upload-artifact@v4
