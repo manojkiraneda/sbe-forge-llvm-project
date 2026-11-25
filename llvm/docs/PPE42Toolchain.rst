@@ -101,3 +101,21 @@ select the build tree, staging directory and dependency cache. Existing CI
 individual phases. Additional CMake arguments can follow ``configure`` or
 ``all``. The register-allocation model remains disabled; the embedded inliner
 is activated with ``-mllvm -enable-ml-inliner=release``.
+
+Development entry-point coverage
+--------------------------------
+
+Toolchain CI checks out a pinned SBE Forge revision and invokes its
+``scripts/dev.sh --native --phase ...`` entry point for dependency preparation,
+configuration, compilation, runtime generation, staging, checking and packaging.
+The job selects its own LLVM checkout with ``SBE_LLVM_SOURCE_DIR``; the SBE Forge
+submodule is not initialized or substituted for the candidate being tested.
+Existing ``BUILD_DIR`` and ``PACKAGE_DIR`` cache locations remain unchanged.
+
+Firmware integration also goes through ``dev.sh --native --phase firmware``.
+On Linux x86, CI additionally runs ``dev.sh --container --phase check`` against
+the staged candidate. This exercises the actual Docker image build and container
+launcher without compiling LLVM a second time. Command-routing tests run on
+all three host architectures. The LLVM build driver remains the owner of model
+versions and compiler configuration; both native and container entry points
+use it.
