@@ -119,3 +119,8 @@ launcher without compiling LLVM a second time. Command-routing tests run on
 all three host architectures. The LLVM build driver remains the owner of model
 versions and compiler configuration; both native and container entry points
 use it.
+
+Linux staging includes the transitive non-glibc shared libraries required by
+the packaged tools, including LLDB's libxml2 dependency. Tools and bundled
+libraries use relative runtime search paths. The Fedora container check verifies
+that the package does not depend on additional Ubuntu host libraries.

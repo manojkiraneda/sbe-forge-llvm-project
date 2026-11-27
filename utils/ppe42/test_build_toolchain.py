@@ -38,11 +38,11 @@ with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\
         path.write_text('#!' + sys.executable + '\n' + body)
         path.chmod(0o755)
 
-    def run_function(self, command, variables=''):
+    def run_function(self, command, variables='', expected=0):
         result = subprocess.run(['bash', '-c', 'source "$1"; ' + self.variables + variables + command,
                                  'test', str(DRIVER)], env=self.env,
                                 capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result
 
     def commands(self):
@@ -95,6 +95,58 @@ with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\
         with tarfile.open(fileobj=io.BytesIO(data)) as tar:
             self.assertEqual(tar.getmember('ppe42-toolchain/clang++').linkname, 'clang')
             self.assertEqual(tar.extractfile('ppe42-toolchain/clang').read(), b'fixture')
+
+    def linux_package_fixture(self):
+        system = self.root / 'system libraries'
+        system.mkdir()
+        (self.package / 'lib').mkdir()
+        (self.package / 'bin').mkdir()
+        (self.build / 'lib').mkdir()
+        (self.build / 'bin').mkdir()
+        for tool in ('clang', 'ld.lld', 'lldb', 'llvm-ar', 'llvm-objcopy',
+                     'llvm-objdump', 'llvm-nm', 'llvm-strip'):
+            (self.package / 'bin' / tool).write_text('fixture')
+            (self.build / 'bin' / tool).write_text('fixture')
+        (self.build / 'lib/liblldb.so').write_text('lldb')
+        (system / 'libxml2.so.2.9.14').write_text('xml fixture')
+        (system / 'libxml2.so.2').symlink_to('libxml2.so.2.9.14')
+        (system / 'libicudata.so.74').write_text('transitive ICU fixture')
+        (system / 'libc.so.6').write_text('host glibc')
+        listing = self.root / 'ldd.txt'
+        listing.write_text(''.join(
+            f'\t{name} => {system / name} (0x00000001)\n'
+            for name in ('libxml2.so.2', 'libicudata.so.74', 'libc.so.6')) +
+            '\t/lib64/ld-linux-x86-64.so.2 (0x00000002)\n')
+        self.env['DEPENDENCY_LIST'] = str(listing)
+        self.stub('ldd', "import os, pathlib; print(pathlib.Path(os.environ['DEPENDENCY_LIST']).read_text())\n")
+        self.stub('patchelf', "import os, sys, json\nwith open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n")
+        return listing
+
+    def test_linux_bundles_xml_and_transitive_dependencies_without_glibc(self):
+        self.linux_package_fixture()
+        self.run_function('bundle_linux_dependencies')
+        xml = self.package / 'lib/libxml2.so.2'
+        self.assertEqual(xml.read_text(), 'xml fixture')
+        self.assertFalse(xml.is_symlink())
+        self.assertEqual((self.package / 'lib/libicudata.so.74').read_text(), 'transitive ICU fixture')
+        self.assertFalse((self.package / 'lib/libc.so.6').exists())
+        self.assertFalse((self.package / 'lib/ld-linux-x86-64.so.2').exists())
+        commands = self.commands()
+        self.assertIn(['--set-rpath', '$ORIGIN/../lib', str(self.package / 'bin/lldb')], commands)
+        self.assertTrue(any(args[:2] == ['--set-rpath', '$ORIGIN'] and str(xml) in args[2:]
+                            for args in commands))
+
+    def test_linux_rejects_unresolved_dependencies(self):
+        listing = self.linux_package_fixture()
+        listing.write_text('libxml2.so.2 => not found\n')
+        result = self.run_function('bundle_linux_dependencies', expected=1)
+        self.assertIn('unresolved shared-library dependencies', result.stderr)
+
+    def test_linux_rejects_failed_dependency_inspection(self):
+        self.linux_package_fixture()
+        self.stub('ldd', 'raise SystemExit(1)\n')
+        result = self.run_function('bundle_linux_dependencies', expected=1)
+        self.assertIn('Unable to inspect', result.stderr)
 
     def test_unknown_phase_fails(self):
         result = subprocess.run(['bash', str(DRIVER), 'invalid'], env=dict(self.env,

@@ -167,6 +167,42 @@ cmake -E rm -f "$BUILD_DIR/ppe42-runtime/libclang_rt.ppe42.a"
     compiler-rt/test/builtins/ppc/ppe42-div-symbols.txt
 }
 
+# Bundle the complete non-glibc dependency closure on every Linux build host.
+# In particular, Ubuntu's libxml2.so.2 is absent from newer Fedora images.
+bundle_linux_dependencies() {
+  local dependencies dependency tool
+  if ! dependencies="$(
+    for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip; do
+      ldd "$BUILD_DIR/bin/$tool" || exit 1
+    done
+    ldd "$BUILD_DIR/lib/liblldb.so"
+  )"; then
+    echo 'Unable to inspect toolchain shared-library dependencies' >&2
+    return 1
+  fi
+  if printf '%s\n' "$dependencies" | grep -Eq '=>[[:space:]]+not found'; then
+    printf '%s\n' "$dependencies" >&2
+    echo 'Toolchain has unresolved shared-library dependencies' >&2
+    return 1
+  fi
+  while IFS= read -r dependency; do
+    case "$(basename "$dependency")" in
+      libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libutil.so.*|libanl.so.*)
+        continue ;;
+    esac
+    cp -L "$dependency" "$PACKAGE_DIR/lib/$(basename "$dependency")"
+  done < <(
+    printf '%s\n' "$dependencies" | awk '$2 == "=>" && $3 ~ /^\// {
+      sub(/^[^=]*=>[ \t]*/, ""); sub(/[ \t]+\([^)]*\)[ \t]*$/, ""); print
+    }' | sort -u
+  )
+  for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip; do
+    patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/$tool"
+  done
+  find "$PACKAGE_DIR/lib" -maxdepth 1 -name '*.so*' -type f \
+    -exec patchelf --set-rpath '$ORIGIN' {} +
+}
+
 stage() {
 HOST_NAME="$(case "$RUNNER_OS" in macOS) echo darwin;; *) echo linux;; esac)-$(uname -m)"
 HOST_NAME="${HOST_NAME/darwin-aarch64/darwin-arm64}"
@@ -207,29 +243,7 @@ else
        -name 'libbsd.so*' -o -name 'libmd.so*' \) \
     -exec patchelf --set-rpath '$ORIGIN' {} +
   strip "$PACKAGE_DIR/bin/lldb"
-  if [ -n "$FEDORA" ]; then
-    # Fedora's optional LLVM/LLDB libraries must also travel with
-    # the package. ldd lists transitive dependencies of these roots.
-    while IFS= read -r dependency; do
-      case "$(basename "$dependency")" in
-        libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libutil.so.*|libanl.so.*)
-          continue ;;
-      esac
-      cp -L "$dependency" "$PACKAGE_DIR/lib/$(basename "$dependency")"
-    done < <(
-      {
-        for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip; do
-          ldd "$BUILD_DIR/bin/$tool"
-        done
-        ldd "$BUILD_DIR/lib/liblldb.so"
-      } | awk '$2 == "=>" && $3 ~ /^\// {print $3}' | sort -u
-    )
-    for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm llvm-strip; do
-      patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/$tool"
-    done
-    find "$PACKAGE_DIR/lib" -maxdepth 1 -name '*.so*' -type f \
-      -exec patchelf --set-rpath '$ORIGIN' {} +
-  fi
+  bundle_linux_dependencies
 fi
 ln -sfn clang "$PACKAGE_DIR/bin/clang++"
 

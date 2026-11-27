@@ -86,7 +86,7 @@ jobs:
         with:
           repository: manojkiraneda/sbe-forge
           # Pin the entry-point API; compiler sources always come from this job.
-          ref: 9c68d82e83dc513aa7d234604ee8e59ce90afb88
+          ref: 011e5de1dfdd82f490e958b53792599aa58a59ab
           path: sbe-forge-integration
           persist-credentials: false
 
