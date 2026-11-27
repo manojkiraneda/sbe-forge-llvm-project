@@ -277,12 +277,28 @@ test_compiler() { load_test_helpers; toolchain_test_compiler; }
 test_package() { load_test_helpers; toolchain_test_package; }
 test_all() { test_unit; test_compiler; check; test_package; }
 
+build_and_test() {
+  verify_host
+  prepare
+  test_unit
+  cache_start
+  trap 'cache_report || true' EXIT
+  configure "$@"
+  build_deps
+  build
+  runtime
+  test_compiler
+  stage
+  check
+  test_package
+}
+
 main() {
   local phase="${1:-all}"
   if [[ "$phase" == --help ]]; then
     echo 'Usage: build-toolchain.sh PHASE [CMake arguments]'
     echo 'Phases: all, deps, prepare, prepare-tensorflow, prepare-model, configure,'
-    echo '  build-deps, build, runtime, stage, check, test, test-unit, test-compiler,'
+    echo '  build-deps, build, build-test, runtime, stage, check, test, test-unit, test-compiler,'
     echo '  test-package, host, cache-start, cache-report, archive'
     echo 'Paths: SBE_LLVM_SOURCE_DIR, SBE_LLVM_BUILD_DIR, SBE_LLVM_INSTALL_DIR, SBE_LLVM_DEPS_DIR.'
     echo 'deps installs host dependencies; all prepares MLGO and builds, stages, checks and archives the toolchain.'
@@ -291,21 +307,8 @@ main() {
   if (( $# )); then shift; fi
   initialize
   case "$phase" in
-    all)
-      verify_host
-      prepare
-      test_unit
-      cache_start
-      trap 'cache_report || true' EXIT
-      configure "$@"
-      build_deps
-      build
-      runtime
-      test_compiler
-      stage
-      check
-      test_package
-      archive;;
+    all) build_and_test "$@"; archive;;
+    build-test) build_and_test "$@";;
     host) verify_host;;
     cache-start) cache_start;;
     cache-report) cache_report;;

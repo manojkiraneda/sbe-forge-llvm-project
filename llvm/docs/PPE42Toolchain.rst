@@ -86,8 +86,8 @@ Shared local and release builds
 SBE Forge's ``scripts/dev.sh`` is the common entry point for local builds and
 LLVM CI. It supports native and container execution, phase selection, candidate
 source directories and output-directory overrides. ``all`` prepares/builds the
-compiler, runs the compiler and package regressions, creates an archive, then
-runs firmware validation. ``test`` reruns validation against an existing build.
+compiler, runs compiler/package and firmware validation, then creates the
+archive after those checks succeed. ``test`` reruns validation against an existing build.
 
 The shared LLVM modules own the implementation:
 
