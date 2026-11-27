@@ -37,6 +37,10 @@ if [ -n "$FEDORA" ]; then
     zlib-devel libzstd-devel libxml2-devel patchelf rustup \
     python3.11 python3-pip jq tar gzip zstd which findutils diffutils \
     curl-minimal ca-certificates
+  # Installing newer headers can upgrade libzstd while leaving the image's
+  # older CLI installed. zstd requires an exact runtime version match.
+  dnf upgrade -y zstd libzstd libzstd-devel
+  zstd --version
   python3.11 -m venv /opt/ppe42-python
   /opt/ppe42-python/bin/python -m pip install --upgrade pip meson
   printf '%s\n' /opt/ppe42-python/bin >> "${GITHUB_PATH:-/dev/null}"
