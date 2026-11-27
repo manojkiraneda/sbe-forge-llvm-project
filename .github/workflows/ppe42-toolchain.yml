@@ -9,6 +9,8 @@ on:
       - 'lldb/**'
       - 'compiler-rt/lib/builtins/ppc/**'
       - 'utils/ppe42/build-toolchain.sh'
+      - 'utils/ppe42/toolchain-tests.sh'
+      - 'utils/ppe42/toolchain-environment.sh'
       - 'utils/ppe42/test_build_toolchain.py'
       - 'utils/ppe42/package_darwin.py'
       - 'utils/ppe42/test_package_darwin.py'
@@ -41,19 +43,16 @@ jobs:
             host_arch: x86_64
             runner: ubuntu-24.04
             cache_suffix: ''
-            elf_machine: 'Advanced Micro Devices X86-64'
             container: ''
           - host: linux-aarch64
             host_arch: aarch64
             runner: ubuntu-24.04-arm
             cache_suffix: '-fedora45-linux-aarch64'
-            elf_machine: AArch64
             container: fedora:45
           - host: darwin-arm64
             host_arch: arm64
             runner: macos-latest
             cache_suffix: '-darwin-arm64'
-            elf_machine: ''
             container: ''
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -72,10 +71,10 @@ jobs:
       attestations: write
 
     steps:
-      - name: Bootstrap Fedora 45 build environment
+      - name: Bootstrap Fedora checkout tools
         if: matrix.container != ''
         run: |
-          dnf install -y git python3.11 python3-pip ca-certificates
+          dnf install -y git ca-certificates
 
       - uses: actions/checkout@v4
         with:
@@ -86,7 +85,7 @@ jobs:
         with:
           repository: manojkiraneda/sbe-forge
           # Pin the entry-point API; compiler sources always come from this job.
-          ref: 011e5de1dfdd82f490e958b53792599aa58a59ab
+          ref: 147cb1a9c9dfc2576fedb05dbcaca2ccd837cf6d
           path: sbe-forge-integration
           persist-credentials: false
 
@@ -98,22 +97,22 @@ jobs:
       - name: Verify native runner architecture
         env:
           EXPECTED_ARCH: ${{ matrix.host_arch }}
-        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase host --expect-arch "$EXPECTED_ARCH"
 
       - name: Install build and integration dependencies
         run: ./sbe-forge-integration/scripts/dev.sh --native --phase deps
 
       - name: Test development entry point
-        run: python -m unittest discover -s sbe-forge-integration/tests -p 'test_*build*.py' -v
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase test-entrypoint
 
-      - name: Test shared build driver
-        run: python -m unittest discover -s utils/ppe42 -p test_build_toolchain.py -v
+      - name: Test shared build helpers
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase test-unit
 
-      - name: Test Darwin package relocation
-        run: python -m unittest discover -s utils/ppe42 -p test_package_darwin.py -v
+      - name: Prepare TensorFlow AOT compiler
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase prepare-tensorflow
 
-      - name: Prepare MLGO inliner model and TensorFlow AOT compiler
-        run: ./sbe-forge-integration/scripts/dev.sh --native --phase prepare
+      - name: Prepare MLGO inliner model
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase prepare-model
 
       - name: Restore compiler object cache
         id: ccache
@@ -135,9 +134,7 @@ jobs:
 
       - name: Record compiler cache configuration
         id: cache-stats
-        run: |
-          ccache --show-config
-          ccache --zero-stats
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase cache-start
 
       - name: Configure
         run: ./sbe-forge-integration/scripts/dev.sh --native --phase configure
@@ -150,254 +147,22 @@ jobs:
 
       - name: Report compiler cache hits and misses
         if: always() && steps.cache-stats.outcome == 'success'
-        run: ccache --show-stats --verbose
-
-      - name: Test PPE42 void sibling call
-        run: |
-          "$BUILD_DIR/bin/llc" -mtriple=powerpc-unknown-elf -mcpu=ppe42 \
-            -verify-machineinstrs \
-            < llvm/test/CodeGen/PowerPC/ppe42-tailcall-void.ll | \
-            "$BUILD_DIR/bin/FileCheck" \
-              llvm/test/CodeGen/PowerPC/ppe42-tailcall-void.ll
-
-      - name: Test PPE42 branch fusion and safety regressions
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v --show-all \
-            llvm/test/CodeGen/PowerPC/ppe42-bit-branch.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-bit-test-context.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-immediate-compare-branch.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-register-compare-branch.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-subtract-branch.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-wide-boundary-compare.ll
-
-      - name: Test PPE42 PIBMEM core support
-        run: |
-          python -m unittest discover -s lldb/utils/ppe42 -p 'test_*.py'
-          python -c 'import pathlib,sys; data=bytearray(0x2000); data[0x1234:0x1238]=bytes.fromhex("7fe00008"); pathlib.Path(sys.argv[1]).write_bytes(data)' \
-            "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin"
-          cat > "$RUNNER_TEMP/ppe42-mlgo/registers.txt" <<'EOF'
-          | iar | 0xfff81234 | r1 | 0xfff80000 |
-          | lr  | 0xfff8123c | cr | 0x20000000 |
-          EOF
-          cat > "$RUNNER_TEMP/ppe42-mlgo/fault.s" <<'EOF'
-          .text
-          .globl ppe42_fault
-          .type ppe42_fault, @function
-          ppe42_fault:
-            .cfi_startproc
-            .cfi_return_column 65
-            trap
-            .cfi_endproc
-          .size ppe42_fault, . - ppe42_fault
-          .globl ppe42_caller
-          .type ppe42_caller, @function
-          ppe42_caller:
-            .cfi_startproc
-            .cfi_return_column 65
-            bl ppe42_fault
-            blr
-            .cfi_endproc
-          .size ppe42_caller, . - ppe42_caller
-          EOF
-          "$BUILD_DIR/bin/llvm-mc" -triple=powerpc-unknown-elf \
-            -mcpu=ppe42 -filetype=obj \
-            "$RUNNER_TEMP/ppe42-mlgo/fault.s" \
-            -o "$RUNNER_TEMP/ppe42-mlgo/fault.o"
-          "$BUILD_DIR/bin/ld.lld" -m elf32ppc \
-            -Ttext=0xfff81234 -e ppe42_fault \
-            "$RUNNER_TEMP/ppe42-mlgo/fault.o" \
-            -o "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
-          "$BUILD_DIR/bin/llvm-nm" "$RUNNER_TEMP/ppe42-mlgo/fault.elf"
-          symbol_address="$("$BUILD_DIR/bin/llvm-nm" "$RUNNER_TEMP/ppe42-mlgo/fault.elf" | awk '$3 == "ppe42_fault" {print tolower($1)}')"
-          test "$symbol_address" = fff81234
-          python lldb/utils/ppe42/ppe42_core.py \
-            --pibmem "$RUNNER_TEMP/ppe42-mlgo/pibmem.bin" \
-            --base 0xfff80000 \
-            --registers "$RUNNER_TEMP/ppe42-mlgo/registers.txt" \
-            --elf "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
-            --output "$RUNNER_TEMP/ppe42-mlgo/ppe42.core"
-          "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
-            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
-            --one-line 'register read pc r1 lr' \
-            > "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
-          grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
-          grep -q '0xfff80000' "$RUNNER_TEMP/ppe42-mlgo/lldb.log"
-          "$BUILD_DIR/bin/lldb" --batch --no-lldbinit \
-            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
-            "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
-            --one-line 'target modules list' \
-            --one-line 'image lookup -a 0xfff81234' \
-            --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
-          grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
-          grep -q 'frame #1:.*ppe42_caller' "$RUNNER_TEMP/ppe42-mlgo/backtrace.log"
-
-      - name: Test embedded MLGO inliner
-        run: |
-          cat > "$RUNNER_TEMP/ppe42-mlgo/smoke.c" <<'EOF'
-          static int helper(int value) { return value + 1; }
-          int entry(int value) { return helper(value); }
-          EOF
-          "$BUILD_DIR/bin/clang" -target powerpc-unknown-elf -mcpu=ppe42 \
-            -Oz -mllvm -enable-ml-inliner=release \
-            -c "$RUNNER_TEMP/ppe42-mlgo/smoke.c" \
-            -o "$RUNNER_TEMP/ppe42-mlgo/smoke.o"
-          "$BUILD_DIR/bin/llvm-readobj" --file-headers \
-            "$RUNNER_TEMP/ppe42-mlgo/smoke.o" | grep -q 'Machine: EM_PPC'
-
-      - name: Test PowerPC small-data relocations
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/MC/PowerPC/ppc32-sda21.s \
-            llvm/test/MC/PowerPC/ppc32-sda21-invalid.s \
-            llvm/test/CodeGen/PowerPC/sdata-limit.ll \
-            clang/test/Driver/ppc-sdata.c \
-            lld/test/ELF/ppc32-sda21.s \
-            lld/test/ELF/ppc32-sda21-invalid.s
-
-      - name: Test PPE42 fused compare-and-branch instructions
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/MC/PowerPC/ppe42-fused-compare-branch.s \
-            llvm/test/MC/PowerPC/ppe42-fused-compare-branch-invalid.s
-
-      - name: Test PPE42 byte-reversed memory legalization
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/CodeGen/PowerPC/ppe42-byte-reversed-memory.ll \
-            llvm/test/MC/PowerPC/ppe42-byte-reversed-memory.s
-
-      - name: Test PPE42 signed halfword load legalization
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/CodeGen/PowerPC/ppe42-signed-halfword-loads.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-signed-halfword-peephole.mir \
-            llvm/test/MC/PowerPC/ppe42-signed-halfword-loads.s
-
-      - name: Test PPE42 size-aware inlining
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/CodeGen/PowerPC/ppe42-packed-stack-align.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-byval-stack-align.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-small-zero-fill.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-late-size-patterns.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-cr-spill.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-update-copies.mir \
-            llvm/test/MC/PowerPC/ppe42-vdr-rotate.s \
-            llvm/test/MC/PowerPC/ppe42-vdr-rotate-invalid.s \
-            llvm/test/CodeGen/PowerPC/ppe42-extra-size-folds.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-address-folds.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-hoisted-loop-update.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-generic-cr-equality.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-wide-branch.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-scalar-updates.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-immediate-updates.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-late-record-compare.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-branch-known-bits.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-two-bit-branch.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-cr-spill-large.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-cr-spill.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-const-spill.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-const-spill.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-tuple-scalar-constants.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-size-helper-clone.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-size-helper-pipeline.ll \
-            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-asm.ll \
-            llvm/test/Transforms/Inline/PowerPC/ppe42-size-shared-wide.ll \
-            llvm/test/Transforms/Inline/PowerPC/ppe42-size-retained-helper.ll
-
-      - name: Test PPE42 machine outlining
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v --show-all \
-            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-machine-outliner-calls.ll
-
-      - name: Test PPE42 inline assembly register pairs
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/CodeGen/PowerPC/ppe42-inline-asm-vdr.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-inline-asm-pairs.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-vdr-copy.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-pre-ra-stvd-pairs.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-pre-ra-lvd-pairs.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-symbolic-load-pairs.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-cached-sda-stores.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-equal-value-stores.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-sda-address-normalization.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-late-sda-updates.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-symbolic-load-pairs.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-vdr-update.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-vdr-update.mir \
-            llvm/test/CodeGen/PowerPC/ppe42-i64-load-preinc.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-call-result-spills.ll \
-            llvm/test/CodeGen/PowerPC/ppe42-lvd-load-pairs.mir
-
-      - name: Test PPE42 stack option
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v \
-            llvm/test/CodeGen/PowerPC/ppe42-stack-ops.ll \
-            clang/test/Driver/ppc-ppe42x-stack.c
-
-      - name: Test PowerPC ELF driver linker selection
-        run: |
-          "$BUILD_DIR/bin/llvm-lit" -v clang/test/Driver/ppc-elf-linker.c
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase cache-report
 
       - name: Build PPE42 compiler runtime
         run: ./sbe-forge-integration/scripts/dev.sh --native --phase runtime
 
+      - name: Test compiler regressions
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase test-compiler
+
       - name: Stage minimal toolchain
-        run: |
-          ./sbe-forge-integration/scripts/dev.sh --native --phase stage
-          ./sbe-forge-integration/scripts/dev.sh --native --phase check
-          if [ "$RUNNER_OS" != macOS ]; then
-            if ldd "$PACKAGE_DIR/bin/clang" | grep -q 'not found'; then
-              echo 'Packaged clang has a missing shared-library dependency' >&2
-              exit 1
-            fi
-            if ldd "$PACKAGE_DIR/bin/lldb" | grep -q 'not found' || \
-               ldd "$PACKAGE_DIR/lib/liblldb.so" | grep -q 'not found'; then
-              echo 'Packaged lldb has a missing shared-library dependency' >&2
-              exit 1
-            fi
-            ldd "$PACKAGE_DIR/lib/liblldb.so" | \
-              grep -Fq "$(realpath "$PACKAGE_DIR/lib")/libedit.so"
-          fi
-          "$PACKAGE_DIR/bin/lldb" --batch --no-lldbinit \
-            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
-            --one-line 'register read pc r1 lr' \
-            > "$RUNNER_TEMP/ppe42-mlgo/packaged-lldb.log"
-          grep -q '0xfff81234' "$RUNNER_TEMP/ppe42-mlgo/packaged-lldb.log"
-          "$PACKAGE_DIR/bin/lldb" --batch --no-lldbinit \
-            --core "$RUNNER_TEMP/ppe42-mlgo/ppe42.core" \
-            "$RUNNER_TEMP/ppe42-mlgo/fault.elf" \
-            --one-line bt | tee "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
-          grep -q 'frame #0:.*ppe42_fault' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
-          grep -q 'frame #1:.*ppe42_caller' "$RUNNER_TEMP/ppe42-mlgo/packaged-backtrace.log"
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase stage
 
-      - name: Test packaged Clang PowerPC linking
-        run: |
-          "$PACKAGE_DIR/bin/clang" --target=powerpc-unknown-elf -mcpu=ppe42 \
-            -Wl,--version | grep 'LLD'
-          printf 'void _start(void) { for (;;) {} }\n' > "$RUNNER_TEMP/ppe42-link.c"
-          "$PACKAGE_DIR/bin/clang" --target=powerpc-unknown-elf -mcpu=ppe42 \
-            -msoft-float -nostdlib -Wl,-e,_start \
-            "$RUNNER_TEMP/ppe42-link.c" -o "$RUNNER_TEMP/ppe42-link.elf"
-          "$BUILD_DIR/bin/llvm-readobj" --file-headers \
-            "$RUNNER_TEMP/ppe42-link.elf" | grep 'Machine: EM_PPC'
+      - name: Check packaged toolchain
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase check
 
-      - name: Verify packaged host architecture
-        env:
-          EXPECTED_MACHINE: ${{ matrix.elf_machine }}
-          EXPECTED_ARCH: ${{ matrix.host_arch }}
-        run: |
-          for tool in clang ld.lld lldb llvm-ar llvm-objcopy llvm-objdump llvm-nm; do
-            if [ "$RUNNER_OS" = macOS ]; then
-              test "$(lipo -archs "$PACKAGE_DIR/bin/$tool")" = "$EXPECTED_ARCH"
-            else
-              machine="$(LC_ALL=C readelf -h "$PACKAGE_DIR/bin/$tool" | sed -n 's/^ *Machine: *//p')"
-              test "$machine" = "$EXPECTED_MACHINE"
-            fi
-          done
+      - name: Test packaged cores, linking and host architecture
+        run: ./sbe-forge-integration/scripts/dev.sh --native --phase test-package
 
       - name: Test candidate toolchain against SBE Forge
         run: ./sbe-forge-integration/scripts/dev.sh --native --phase firmware
@@ -426,14 +191,14 @@ jobs:
           subject-path: ${{ env.ASSET_NAME }}.tar.zst
 
       - name: Save CMake and Ninja build tree
-        if: always() && steps.build-cache.outputs.cache-hit != 'true'
+        if: always() && steps.build-cache.outcome == 'success' && steps.build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BUILD_DIR }}
           key: ${{ env.CACHE_NAMESPACE }}-mlgo-build-v1-${{ runner.os }}-${{ github.sha }}
 
       - name: Save compiler object cache
-        if: always() && steps.ccache.outputs.cache-hit != 'true'
+        if: always() && steps.ccache.outcome == 'success' && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/ccache
