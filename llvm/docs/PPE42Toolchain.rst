@@ -83,44 +83,62 @@ hosts, so the macOS cache is saved from the directory ccache actually uses.
 Shared local and release builds
 -------------------------------
 
-``utils/ppe42/build-toolchain.sh`` owns the MLGO dependency versions, model
-checksum, CMake configuration, explicit tool targets, runtime library and
-release packaging. Release CI calls its phases around the existing build caches
-and regression checks. SBE Forge delegates to the same script through its pinned
-LLVM submodule.
+SBE Forge's ``scripts/dev.sh`` is the common entry point for local builds and
+LLVM CI. It supports native and container execution, phase selection, candidate
+source directories and output-directory overrides. ``all`` prepares/builds the
+compiler, runs the compiler and package regressions, creates an archive, then
+runs firmware validation. ``test`` reruns validation against an existing build.
 
-Install Python 3.11 and run ``build-toolchain.sh deps`` to install host build
-and integration dependencies. Then run ``build-toolchain.sh`` to prepare the
-TensorFlow AOT compiler and inliner model, build and stage the toolchain, verify
-MLGO compilation and create a compressed release archive. Native local builds
-use a private Python environment; CI uses its provisioned Python 3.11.
+The shared LLVM modules own the implementation:
 
-``SBE_LLVM_BUILD_DIR``, ``SBE_LLVM_INSTALL_DIR`` and ``SBE_LLVM_DEPS_DIR``
-select the build tree, staging directory and dependency cache. Existing CI
-``BUILD_DIR`` and ``PACKAGE_DIR`` values remain supported. Run ``--help`` for
-individual phases. Additional CMake arguments can follow ``configure`` or
-``all``. The register-allocation model remains disabled; the embedded inliner
-is activated with ``-mllvm -enable-ml-inliner=release``.
+* ``utils/ppe42/toolchain-environment.sh`` owns host dependencies, Python and
+  TensorFlow setup. The TensorFlow version is defined once there.
+* ``utils/ppe42/build-toolchain.sh`` owns model pins/checksums, CMake settings,
+  build/package tool lists, the PPE42 runtime, staging and archiving.
+* ``utils/ppe42/toolchain-tests.sh`` owns compiler test selections, core fixtures,
+  packaged LLDB/linking checks and host-architecture validation.
 
-Development entry-point coverage
---------------------------------
+The full local path and CI invoke those same checks. No compiler test lists or
+core fixtures are duplicated in the workflow. CI owns runner selection,
+checkouts, cache restore/save, artifact upload, attestation and tagged release
+publication. Apart from the minimal container bootstrap needed before checkout,
+its build-job shell steps call ``dev.sh --native --phase ...``. Linux x86 also
+runs ``dev.sh --container --phase check`` against the packaged candidate.
 
-Toolchain CI checks out a pinned SBE Forge revision and invokes its
-``scripts/dev.sh --native --phase ...`` entry point for dependency preparation,
-configuration, compilation, runtime generation, staging, checking and packaging.
-The job selects its own LLVM checkout with ``SBE_LLVM_SOURCE_DIR``; the SBE Forge
-submodule is not initialized or substituted for the candidate being tested.
-Existing ``BUILD_DIR`` and ``PACKAGE_DIR`` cache locations remain unchanged.
+Container caching
+-----------------
 
-Firmware integration also goes through ``dev.sh --native --phase firmware``.
-On Linux x86, CI additionally runs ``dev.sh --container --phase check`` against
-the staged candidate. This exercises the actual Docker image build and container
-launcher without compiling LLVM a second time. Command-routing tests run on
-all three host architectures. The LLVM build driver remains the owner of model
-versions and compiler configuration; both native and container entry points
-use it.
+The development image has separate layers for system dependencies, TensorFlow
+and model preparation. Only the stable environment module is copied before
+installing TensorFlow; compiler/model scripts are copied afterward. A compiler
+script edit or model-extraction failure therefore does not invalidate the
+TensorFlow layer. Model extraction ignores release archive owner IDs, allowing
+rootless containers to use the same image build. Preparation validates and
+reuses the pinned TensorFlow wheel without running pip when it is already
+installed. Container compiler-cache data persists in the selected build tree.
 
-Linux staging includes the transitive non-glibc shared libraries required by
-the packaged tools, including LLDB's libxml2 dependency. Tools and bundled
-libraries use relative runtime search paths. The Fedora container check verifies
-that the package does not depend on additional Ubuntu host libraries.
+Linux staging bundles the transitive non-glibc libraries required by the tools,
+including LLDB's libxml2 dependency. Tools and bundled libraries use relative
+runtime search paths. The Fedora container smoke check tests the resulting
+Ubuntu package in the development image.
+
+Phase and path controls
+-----------------------
+
+``dev.sh --help`` lists the supported phases, including dependency/model setup,
+configuration/build, runtime generation, staging/checking, compiler and package
+regressions, firmware validation and archiving. Host checks and ccache reporting
+also have phases so workflow ordering can surround the existing cache actions.
+``build-toolchain.sh --help`` exposes the LLVM backend phases directly.
+
+``SBE_LLVM_SOURCE_DIR`` selects the candidate LLVM checkout; CI does not replace
+it with the SBE Forge submodule. ``SBE_LLVM_BUILD_DIR``,
+``SBE_LLVM_INSTALL_DIR`` and ``SBE_LLVM_DEPS_DIR`` select the build tree,
+staging directory and dependency cache. Existing ``BUILD_DIR`` and
+``PACKAGE_DIR`` CI cache paths remain supported. Additional CMake arguments
+can follow ``configure`` or ``all`` in the backend, or ``--`` in ``dev.sh``.
+Native builds require Python 3.11 and the supported host dependencies; the
+default container supplies them.
+
+The register-allocation model remains disabled. Activate the embedded inliner
+with ``-mllvm -enable-ml-inliner=release``.

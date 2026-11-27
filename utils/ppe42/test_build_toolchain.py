@@ -175,6 +175,58 @@ with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\
                 self.assertEqual(target.stat().st_uid, os.geteuid())
                 self.assertEqual(target.stat().st_gid, self.root.stat().st_gid)
 
+    def tensorflow_fixture(self, installed):
+        self.env['VIRTUAL_ENV'] = '/fixture/venv'
+        self.env['CI'] = 'true'
+        self.env['MOCK_TF_INSTALLED'] = '1' if installed else '0'
+        self.stub('python', "import json, os, sys\n"
+                  "with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                  "if any('importlib.metadata' in arg for arg in sys.argv):\n"
+                  "    raise SystemExit(0 if os.environ['MOCK_TF_INSTALLED'] == '1' else 1)\n")
+
+    def test_cached_tensorflow_does_not_run_pip(self):
+        self.tensorflow_fixture(installed=True)
+        self.run_function('prepare_tensorflow')
+        self.assertFalse(any(args[:2] == ['-m', 'pip'] for args in self.commands()))
+        self.assertIn(['-'], self.commands(), 'AOT import/runtime validation must still run')
+
+    def test_missing_tensorflow_installs_pinned_wheel(self):
+        self.tensorflow_fixture(installed=False)
+        self.run_function('prepare_tensorflow')
+        pip = [args for args in self.commands() if args[:2] == ['-m', 'pip']]
+        self.assertEqual(len(pip), 1)
+        self.assertIn('tensorflow==2.15.1', pip[0])
+        self.assertIn('--only-binary=:all:', pip[0])
+        self.assertIn('--disable-pip-version-check', pip[0])
+
+    def test_prepare_checks_tensorflow_before_model(self):
+        result = self.run_function("prepare_tensorflow() { echo tensorflow; }; "
+                                   "prepare_model() { echo model; }; prepare")
+        self.assertEqual(result.stdout.splitlines(), ['tensorflow', 'model'])
+
+    def pipeline_overrides(self, failed_configure=False):
+        names = ('verify_host', 'prepare', 'test_unit', 'cache_start', 'cache_report',
+                 'build_deps', 'build', 'runtime', 'test_compiler', 'stage', 'check',
+                 'test_package', 'archive')
+        code = ''.join(f'{name}() {{ echo {name}; }}; ' for name in names)
+        code += 'configure() { printf "configure:%s\\n" "$*"; '
+        code += 'return 19; ' if failed_configure else ''
+        return code + '}; '
+
+    def test_full_build_runs_compiler_and_package_regressions_before_archive(self):
+        self.env['SBE_LLVM_DEPS_DIR'] = str(self.root)
+        result = self.run_function(self.pipeline_overrides() + 'main all -DTEST=ON')
+        self.assertEqual(result.stdout.splitlines(), [
+            'verify_host', 'prepare', 'test_unit', 'cache_start', 'configure:-DTEST=ON', 'build_deps',
+            'build', 'runtime', 'test_compiler', 'stage', 'check', 'test_package',
+            'archive', 'cache_report'])
+
+    def test_failed_configure_preserves_failure_and_reports_cache(self):
+        self.env['SBE_LLVM_DEPS_DIR'] = str(self.root)
+        result = self.run_function(self.pipeline_overrides(failed_configure=True) + 'main all', expected=19)
+        self.assertEqual(result.stdout.splitlines(), [
+            'verify_host', 'prepare', 'test_unit', 'cache_start', 'configure:', 'cache_report'])
+
     def test_unknown_phase_fails(self):
         result = subprocess.run(['bash', str(DRIVER), 'invalid'], env=dict(self.env,
                                 SBE_LLVM_DEPS_DIR=str(self.root)), capture_output=True)
