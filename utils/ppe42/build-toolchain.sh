@@ -63,6 +63,11 @@ rustup default stable
 rustup target add powerpc-unknown-linux-gnu
 }
 
+extract_inliner_model() {
+  # Release archive owner IDs may be unmapped in a rootless container.
+  tar --no-same-owner -xzf "$DEPS_DIR/inliner.tar.gz" -C "$DEPS_DIR"
+}
+
 prepare() {
 # TensorFlow 2.15 AOT wheels require Python 3.11. Isolate local installs.
 if [[ -z "${CI:-}" && -z "${VIRTUAL_ENV:-}" && ! -x /opt/ppe42-python/bin/python ]]; then
@@ -92,7 +97,7 @@ printf '%s  %s\n' \
   308e5fbe2c4382d6f9c154c7afbea46624dac32b95609144ba1160836e906cd2 \
   "$DEPS_DIR/inliner.tar.gz" | sha256sum --check
 if [[ ! -f "$MLGO_MODEL_PATH/saved_model.pb" ]]; then
-  tar -xzf "$DEPS_DIR/inliner.tar.gz" -C "$DEPS_DIR"
+  extract_inliner_model
 fi
 test -f "$DEPS_DIR/model/saved_model.pb"
 printf 'MLGO_MODEL_PATH=%s\n' "$DEPS_DIR/model" >> "${GITHUB_ENV:-/dev/null}"
