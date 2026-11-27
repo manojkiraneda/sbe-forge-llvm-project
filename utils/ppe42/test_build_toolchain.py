@@ -148,6 +148,33 @@ with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\
         result = self.run_function('bundle_linux_dependencies', expected=1)
         self.assertIn('Unable to inspect', result.stderr)
 
+    def test_model_extraction_ignores_release_archive_owner_ids(self):
+        import io
+        import tarfile
+        real_tar = shutil.which('tar')
+        self.assertIsNotNone(real_tar)
+        files = {'model/saved_model.pb': b'model fixture',
+                 'model/variables/variables.data-00000-of-00001': b'weights fixture'}
+        with tarfile.open(self.root / 'inliner.tar.gz', 'w:gz') as archive:
+            for name, data in files.items():
+                member = tarfile.TarInfo(name)
+                member.uid, member.gid = 796054, 89939
+                member.size = len(data)
+                member.mode = 0o644
+                archive.addfile(member, io.BytesIO(data))
+        self.env['REAL_TAR'] = real_tar
+        self.stub('tar', "import json, os, subprocess, sys\n"
+                  "with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                  "raise SystemExit(subprocess.call([os.environ['REAL_TAR'], *sys.argv[1:]]))\n")
+        self.run_function('extract_inliner_model')
+        self.assertIn('--no-same-owner', self.commands()[0])
+        for name, data in files.items():
+            with self.subTest(name=name):
+                target = self.root / name
+                self.assertEqual(target.read_bytes(), data)
+                self.assertEqual(target.stat().st_uid, os.geteuid())
+                self.assertEqual(target.stat().st_gid, self.root.stat().st_gid)
+
     def test_unknown_phase_fails(self):
         result = subprocess.run(['bash', str(DRIVER), 'invalid'], env=dict(self.env,
                                 SBE_LLVM_DEPS_DIR=str(self.root)), capture_output=True)
