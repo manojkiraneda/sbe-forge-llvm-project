@@ -42,17 +42,20 @@ jobs:
           - host: linux-x86_64
             host_arch: x86_64
             runner: ubuntu-24.04
-            cache_suffix: ''
+            cache_suffix: '-clang-linux-x86_64'
+            host_compiler: clang
             container: ''
           - host: linux-aarch64
             host_arch: aarch64
             runner: ubuntu-24.04-arm
-            cache_suffix: '-fedora45-linux-aarch64'
+            cache_suffix: '-clang-fedora45-linux-aarch64'
+            host_compiler: clang
             container: fedora:45
           - host: darwin-arm64
             host_arch: arm64
             runner: macos-latest
             cache_suffix: '-darwin-arm64'
+            host_compiler: system
             container: ''
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -62,8 +65,9 @@ jobs:
     env:
       ASSET_NAME: sbe-ppe42-toolchain-${{ matrix.host }}
       SBE_LLVM_SOURCE_DIR: ${{ github.workspace }}
-      # Preserve the existing x86 and Darwin keys. Each other host has its own
-      # namespace, including architecture-specific restore prefixes.
+      SBE_LLVM_HOST_COMPILER: ${{ matrix.host_compiler }}
+      # Compiler-specific Linux namespaces keep GCC build trees separate.
+      # Darwin retains its existing Apple Clang cache.
       CACHE_NAMESPACE: ppe42${{ matrix.cache_suffix }}
     permissions:
       contents: write
@@ -85,7 +89,7 @@ jobs:
         with:
           repository: manojkiraneda/sbe-forge
           # Pin the entry-point API; compiler sources always come from this job.
-          ref: de70368707f329284ca7929deaa5cabe3e0abdd3
+          ref: 5ffd836bd030406f0456e84288f30b3a5098a0fd
           path: sbe-forge-integration
           persist-credentials: false
 
