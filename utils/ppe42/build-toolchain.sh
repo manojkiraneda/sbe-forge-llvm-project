@@ -142,6 +142,9 @@ bundle_linux_dependencies() {
       sub(/^[^=]*=>[ \t]*/, ""); sub(/[ \t]+\([^)]*\)[ \t]*$/, ""); print
     }' | sort -u
   )
+  # Keep dynamic exports while removing unneeded symbols from Linux libraries.
+  find "$PACKAGE_DIR/lib" -maxdepth 1 -name '*.so*' -type f \
+    -exec strip --strip-unneeded {} +
   for tool in "${PPE42_PACKAGE_TOOLS[@]}"; do
     patchelf --set-rpath '$ORIGIN/../lib' "$PACKAGE_DIR/bin/$tool"
   done
