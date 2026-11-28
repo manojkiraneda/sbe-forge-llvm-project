@@ -120,6 +120,7 @@ with open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\
         self.env['DEPENDENCY_LIST'] = str(listing)
         self.stub('ldd', "import os, pathlib; print(pathlib.Path(os.environ['DEPENDENCY_LIST']).read_text())\n")
         self.stub('patchelf', "import os, sys, json\nwith open(os.environ['RECORD'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n")
+        self.stub('strip', '')
         return listing
 
     def test_linux_bundles_xml_and_transitive_dependencies_without_glibc(self):
