@@ -15,6 +15,12 @@ initialize() {
   DEPS_DIR="$(cd "$DEPS_DIR" && pwd)"
   MLGO_MODEL_PATH="$DEPS_DIR/model"
   RUNNER_OS="${RUNNER_OS:-$(case "$(uname -s)" in Darwin) echo macOS;; *) echo Linux;; esac)}"
+  case "${SBE_LLVM_HOST_COMPILER:-system}" in
+    system) ;;
+    clang) export CC=clang CXX=clang++;;
+    gcc) export CC=gcc CXX=g++;;
+    *) echo 'SBE_LLVM_HOST_COMPILER must be system, clang or gcc' >&2; return 2;;
+  esac
   SCALAR_RUNTIME=OFF
   case "$(uname -m)" in aarch64|arm64) SCALAR_RUNTIME=ON;; esac
   FEDORA=
@@ -40,7 +46,7 @@ as_root() {
 deps() {
   if [ -n "$FEDORA" ]; then
     as_root dnf install -y \
-      gcc gcc-c++ binutils cmake ccache git ninja-build libedit-devel \
+      gcc gcc-c++ clang binutils cmake ccache git ninja-build libedit-devel \
       zlib-devel libzstd-devel libxml2-devel patchelf rustup \
       python3.11 python3-pip jq tar gzip zstd which findutils diffutils \
       curl-minimal ca-certificates
@@ -64,7 +70,7 @@ deps() {
       "$PPE42_BREW_PREFIX/opt/rustup/bin" >> "${GITHUB_PATH:-/dev/null}"
   elif [ -z "$FEDORA" ]; then
     as_root apt-get update
-    as_root apt-get install -y build-essential binutils git ccache cmake libedit-dev \
+    as_root apt-get install -y build-essential clang binutils git ccache cmake libedit-dev \
       zlib1g-dev libzstd-dev libxml2-dev ninja-build meson patchelf rustup zstd jq curl ca-certificates
   fi
   # ccache otherwise defaults to ~/Library/Caches/ccache on macOS.
